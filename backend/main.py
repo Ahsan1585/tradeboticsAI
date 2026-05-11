@@ -11,21 +11,27 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from google import genai
 
+# --- ⚙️ CONFIGURATION ---
 load_dotenv()
 gemini_key = os.getenv("GEMINI_API_KEY")
-client = genai.Client(api_key=gemini_key) if gemini_key else None
 finnhub_key = os.getenv("FINNHUB_API_KEY")
 
+# --- 🧠 AI CLIENT SETUP ---
+client = genai.Client(api_key=gemini_key) if gemini_key else None
+
+# --- 🚀 APP INITIALIZATION ---
 app = FastAPI(title="TradeBotics AI Terminal", version="16.6.0")
 
+# --- 🛡️ CORS FIX (CRITICAL FOR BACKEND CONNECTIVITY) ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Allows Vercel to connect to Render
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# --- 📦 DATA MODELS ---
 class TranslationRequest(BaseModel):
     ticker: str
     mode: str
@@ -36,12 +42,12 @@ class NewsRequest(BaseModel):
     ticker: str
     content: str = ""
 
-# --- 🛡️ DUAL MEMORY CACHE (15 MINUTES) ---
+# --- 💾 DUAL MEMORY CACHE (15 MINUTES) ---
 scanned_data_cache = {}
 ai_translation_cache = {}
 CACHE_LIFETIME_SECONDS = 900 
 
-# --- 🧠 DETERMINISTIC REASONING ---
+# --- 🔬 DETERMINISTIC REASONING ---
 def get_detailed_reasoning(factor, status, ticker):
     reasoning = {
         "Market Anchor": {"Bullish": "50-day SMA is above 200-day (Golden Cross). The long-term trend is strong.", "Bearish": "Price is below the Death Cross (50/200 SMA). The structural trend is weak."},
@@ -77,7 +83,7 @@ def run_confidence_check(ticker, df):
     prefix = "+" if avg_gain > 0 else ""
     return {"win_rate": f"{round(win_rate, 0)}%", "avg_gain": f"{prefix}{round(avg_gain, 1)}%", "total_signals": len(signals)}
 
-# --- 🤖 PHASE 2: ON-DEMAND AI ENDPOINTS (TOKEN SPEND) ---
+# --- 🤖 PHASE 2: AI ENDPOINTS ---
 @app.post("/translate")
 def translate_to_retail(req: TranslationRequest):
     if not client: return {"analysis": "AI Engine Offline."}
@@ -90,7 +96,6 @@ def translate_to_retail(req: TranslationRequest):
             return {"analysis": cached_item['text']}
 
     ctx = req.data_context
-    
     prompts = {
         "sentiment": f"Analyze the following news headlines for {req.ticker}: {ctx.get('news_titles')}. Declare emotion as 'FEAR-DRIVEN' or 'GREED-DRIVEN'. Provide 2 bullet points and a 1-sentence strategic takeaway. Use 2026 context.",
         "strike_zone": f"Technical entry check for {req.ticker}. Price: ${ctx.get('price')}, RSI: {ctx.get('rsi')}. Calculate a specific entry price for a good deal.",
@@ -108,12 +113,12 @@ def translate_to_retail(req: TranslationRequest):
         CONTENT RULES:
         1. Start with the Verdict.
         2. If YELLOW, describe as 'Elite Asset, Awaiting Tactical Entry'.
-        3. MANDATORY FOR YELLOW: Define a specific 'GREEN ENTRY TARGET' price (cross-reference the Support Level or suggest a 5% dip from current price) that would transition this ticker to a GREEN LIGHT.
-        4. Citations: Use a 2026 headline or the P/E ratio for the 'Hard Data Reason'. No 2024 data."""
+        3. MANDATORY FOR YELLOW: Define a specific 'GREEN ENTRY TARGET' price.
+        4. Citations: Use a 2026 headline or the P/E ratio for the 'Hard Data Reason'."""
     }
     
     try:
-        res = client.models.generate_content(model='gemini-2.5-flash', contents=prompts.get(req.mode, "Analyze stock."))
+        res = client.models.generate_content(model='gemini-2.0-flash', contents=prompts.get(req.mode, "Analyze stock."))
         ai_text = res.text.strip()
         ai_translation_cache[cache_key] = {'timestamp': current_time, 'text': ai_text}
         return {"analysis": ai_text}
@@ -123,14 +128,14 @@ def translate_to_retail(req: TranslationRequest):
 def summarize_article(req: NewsRequest):
     if not client: return {"summary": ["Offline."]}
     try:
-        res = client.models.generate_content(model='gemini-2.5-flash', contents=f"Analyze this news for {req.ticker}. Headline: '{req.title}'. Write 2 simple paragraphs.")
+        res = client.models.generate_content(model='gemini-2.0-flash', contents=f"Analyze this news for {req.ticker}. Headline: '{req.title}'. Write 2 simple paragraphs.")
         return {"summary": [p.strip() for p in res.text.strip().split('\n') if p.strip()]}
     except: return {"summary": ["Error creating AI summary."]}
 
 @app.get("/market-briefing")
 def get_briefing(): return extract_news()
 
-# --- 🔬 PHASE 1: DETERMINISTIC MASTER ENGINE (0 TOKENS) ---
+# --- 🧪 PHASE 1: MASTER ANALYZER ---
 @app.get("/analyze/{ticker}")
 def analyze(ticker: str):
     ticker = ticker.upper()
@@ -175,11 +180,13 @@ def analyze(ticker: str):
         tech_score += 20 if vr == "Value Zone" else 10 if vr == "Normal" else 0
         ledger.append({"factor": "Volatility Range", "status": vr, "val": "Bollinger Bands", "reasoning": get_detailed_reasoning("Volatility Range", vr, ticker)})
 
-        fund_score = 0
-        pe = info.get('trailingPE') or info.get('forwardPE') or 0; dte = info.get('debtToEquity', 100) or 100
-        margin = info.get('profitMargins', 0) or 0; fcf = info.get('freeCashflow', 0) or 0
+        pe = info.get('trailingPE') or info.get('forwardPE') or 0
+        dte = info.get('debtToEquity', 100) or 100
+        margin = info.get('profitMargins', 0) or 0
+        fcf = info.get('freeCashflow', 0) or 0
         sent = info.get('recommendationKey', 'none')
 
+        fund_score = 0
         fund_score += 20 if 0 < pe < 25 else 10 if pe > 0 else 0
         fund_score += 20 if dte < 100 else 10 if dte < 200 else 0
         fund_score += 20 if margin > 0.10 else 10 if margin > 0 else 0
@@ -187,14 +194,12 @@ def analyze(ticker: str):
         fund_score += 20 if sent in ['buy', 'strong_buy'] else 10 if sent == 'hold' else 0
 
         total_score = tech_score + fund_score
-
         holding_status = "HOLD"; exit_guidance = "Trend is intact."
         if rsi_v > 75: 
             holding_status = "TRIM PROFITS"; exit_guidance = "Overextended momentum."
         elif latest['Close'] < latest.get('SMA_50', 0):
             holding_status = "REDUCE POSITION"; exit_guidance = "Below 50-day support."
 
-        # THE FIX: Restoring the Volume Calculations
         current_vol = info.get('volume', 0)
         avg_vol = info.get('averageVolume', 1)
         vol_surge = round((current_vol / avg_vol) * 100, 1) if avg_vol else 0
