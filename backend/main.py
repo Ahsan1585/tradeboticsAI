@@ -25,7 +25,7 @@ app = FastAPI(title="TradeBotics AI Terminal", version="16.6.0")
 # --- 🛡️ CORS FIX (CRITICAL FOR BACKEND CONNECTIVITY) ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows Vercel to connect to Render
+    allow_origins=["*"],  # Allows Vercel to connect to your deployed backend
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -83,13 +83,17 @@ def run_confidence_check(ticker, df):
     prefix = "+" if avg_gain > 0 else ""
     return {"win_rate": f"{round(win_rate, 0)}%", "avg_gain": f"{prefix}{round(avg_gain, 1)}%", "total_signals": len(signals)}
 
-# --- 🤖 PHASE 2: AI ENDPOINTS ---
+# --- 🤖 PHASE 2: AI ENDPOINTS (UPDATED TO GEMINI-2.0-FLASH) ---
 @app.post("/translate")
 def translate_to_retail(req: TranslationRequest):
-    if not client: return {"analysis": "AI Engine Offline."}
+    if not client: 
+        print("DEBUG: Client not initialized. Check GEMINI_API_KEY.")
+        return {"analysis": "AI Engine Offline. Check backend keys."}
     
+    print(f"DEBUG: Processing translation for {req.ticker} in mode: {req.mode}")
     cache_key = f"{req.ticker}_{req.mode}"
     current_time = time.time()
+    
     if cache_key in ai_translation_cache:
         cached_item = ai_translation_cache[cache_key]
         if current_time - cached_item['timestamp'] < CACHE_LIFETIME_SECONDS:
@@ -97,13 +101,13 @@ def translate_to_retail(req: TranslationRequest):
 
     ctx = req.data_context
     prompts = {
-        "sentiment": f"Analyze the following news headlines for {req.ticker}: {ctx.get('news_titles')}. Declare emotion as 'FEAR-DRIVEN' or 'GREED-DRIVEN'. Provide 2 bullet points and a 1-sentence strategic takeaway. Use 2026 context.",
-        "strike_zone": f"Technical entry check for {req.ticker}. Price: ${ctx.get('price')}, RSI: {ctx.get('rsi')}. Calculate a specific entry price for a good deal.",
+        "sentiment": f"Analyze the following news headlines for {req.ticker}: {ctx.get('news_titles', 'No news')}. Declare emotion as 'FEAR-DRIVEN' or 'GREED-DRIVEN'. Provide 2 bullet points and a 1-sentence strategic takeaway. Use 2026 context.",
+        "strike_zone": f"Technical entry check for {req.ticker}. Price: ${ctx.get('price', 0)}, RSI: {ctx.get('rsi', 50)}. Calculate a specific entry price for a good deal.",
         "verdict": f"""Provide a definitive AI Verdict for {req.ticker}. 
-        Live Price: ${ctx.get('price')}. Quant Score: {ctx.get('score')}/200. Stance: {ctx.get('stance')}. 
+        Live Price: ${ctx.get('price', 0)}. Quant Score: {ctx.get('score', 0)}/200. Stance: {ctx.get('stance', 'HOLD')}. 
         P/E Ratio: {ctx.get('fundamentals', {}).get('pe_ratio', 'N/A')}. 
         Support Level: ${ctx.get('stop_loss', 'N/A')}. Target: ${ctx.get('trailing_target', 'N/A')}.
-        News: {ctx.get('news_titles')}.
+        News: {ctx.get('news_titles', 'No news')}.
 
         VERDICT LOGIC:
         - Score > 130 AND Stance 'BUY' -> Output '**AI VERDICT: GREEN LIGHT**'.
@@ -122,7 +126,9 @@ def translate_to_retail(req: TranslationRequest):
         ai_text = res.text.strip()
         ai_translation_cache[cache_key] = {'timestamp': current_time, 'text': ai_text}
         return {"analysis": ai_text}
-    except: return {"analysis": "AI synchronization error."}
+    except Exception as e: 
+        print(f"CRITICAL AI ERROR (Translate): {str(e)}")
+        return {"analysis": f"AI synchronization error. Check terminal logs."}
 
 @app.post("/summarize")
 def summarize_article(req: NewsRequest):
@@ -130,7 +136,9 @@ def summarize_article(req: NewsRequest):
     try:
         res = client.models.generate_content(model='gemini-2.0-flash', contents=f"Analyze this news for {req.ticker}. Headline: '{req.title}'. Write 2 simple paragraphs.")
         return {"summary": [p.strip() for p in res.text.strip().split('\n') if p.strip()]}
-    except: return {"summary": ["Error creating AI summary."]}
+    except Exception as e: 
+        print(f"CRITICAL AI ERROR (Summarize): {str(e)}")
+        return {"summary": ["Error creating AI summary. Check terminal logs."]}
 
 @app.get("/market-briefing")
 def get_briefing(): return extract_news()
