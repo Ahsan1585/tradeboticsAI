@@ -1,0 +1,5 @@
+# Security
+.env
+
+# Python Cache
+__pycache__/
