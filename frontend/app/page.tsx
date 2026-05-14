@@ -4,6 +4,9 @@ import { useState, useEffect, useRef } from "react";
 import { supabase } from "./lib/supabase";
 import Link from "next/link";
 
+// Centralized Backend URL handling
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+
 function TickerTape() {
   const container = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -51,7 +54,6 @@ export default function Home() {
   const [user, setUser] = useState<any>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [inviteCode, setInviteCode] = useState(""); // THE FIX: Closed Beta State
   const [isSignUp, setIsSignUp] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
   const [hasAcceptedTerms, setHasAcceptedTerms] = useState(false); 
@@ -83,17 +85,9 @@ export default function Home() {
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthLoading(true);
-    
     if (isSignUp) {
-      // THE VAULT DOOR: Check the key before allowing sign-up
-      if (inviteCode !== "GENESIS-2026") {
-          alert("Access Denied: Invalid clearance code.");
-          setAuthLoading(false);
-          return;
-      }
-
       const { error } = await supabase.auth.signUp({ email, password });
-      if (error) alert(error.message); else alert("Clearance granted. Check email for link.");
+      if (error) alert(error.message); else alert("Check email for link.");
     } else {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) alert(error.message); else setUser(data.user);
@@ -108,11 +102,11 @@ export default function Home() {
     if (!target) return;
     setLoading(true);
     try {
-      const res = await fetch(`http://localhost:8000/analyze/${target}`);
+      const res = await fetch(`${BACKEND_URL}/analyze/${target}`);
       const result = await res.json();
       if (res.ok) { setData(result); setConfirmedTicker(target); }
       else { alert(`Terminal: ${result.detail || "Error."}`); }
-    } catch { alert("Backend Offline."); }
+    } catch { alert("Backend Offline. Check Production URL configuration."); }
     setLoading(false);
   };
 
@@ -120,7 +114,7 @@ export default function Home() {
     if (!data) return;
     setDeepDiveResult(null);
     try {
-        const res = await fetch("http://localhost:8000/translate", {
+        const res = await fetch(`${BACKEND_URL}/translate`, {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ 
                 ticker: confirmedTicker, mode, 
@@ -128,8 +122,6 @@ export default function Home() {
                     score: data.score, 
                     price: data.price, 
                     stance: data.holding_analysis.status,
-                    stop_loss: data.holding_analysis.stop_loss,
-                    trailing_target: data.holding_analysis.trailing_target,
                     fundamentals: data.fundamentals, 
                     rsi: data.ledger?.find((l:any)=>l.factor==="Momentum")?.val, 
                     news_titles: data.news?.map((n:any)=>n.title).join(" | ") 
@@ -145,19 +137,35 @@ export default function Home() {
     setSelectedArticle({ ...item, summary: null });
     setIsSummarizing(true);
     try {
-        const res = await fetch("http://localhost:8000/summarize", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: item.title, ticker: confirmedTicker || "Macro", content: item.content || "" }) });
+        const res = await fetch(`${BACKEND_URL}/summarize`, { 
+          method: "POST", 
+          headers: { "Content-Type": "application/json" }, 
+          body: JSON.stringify({ title: item.title, ticker: confirmedTicker || "Macro", content: item.content || "" }) 
+        });
         const result = await res.json();
         setSelectedArticle({ ...item, summary: result.summary });
-    } catch {}
+    } catch {
+        setSelectedArticle({ ...item, summary: ["Failed to retrieve summary from backend."] });
+    }
     setIsSummarizing(false);
   };
 
-  const fetchGlobalNews = async () => { try { const res = await fetch("http://localhost:8000/market-briefing"); if (res.ok) setGlobalNews(await res.json()); } catch {} };
-  const fetchWatchlist = async (userId: string) => { const { data } = await supabase.from('watchlist').select('*').eq('user_id', userId).order('created_at', { ascending: false }); if (data) setWatchlist(data); };
+  const fetchGlobalNews = async () => { 
+    try { 
+      const res = await fetch(`${BACKEND_URL}/market-briefing`); 
+      if (res.ok) setGlobalNews(await res.json()); 
+    } catch {
+      console.warn("UAT Note: Global news briefing unavailable.");
+    } 
+  };
+
+  const fetchWatchlist = async (userId: string) => { 
+    const { data } = await supabase.from('watchlist').select('*').eq('user_id', userId).order('created_at', { ascending: false }); 
+    if (data) setWatchlist(data); 
+  };
   
   const newsToDisplay = data?.news?.length > 0 ? data.news : globalNews;
 
-  // LOGIN SCREEN (WITH VAULT DOOR LOGIC)
   if (!user) return (
     <main className="min-h-screen bg-[#020617] flex items-center justify-center p-6">
       <div className="w-full max-w-md bg-slate-900/40 border border-slate-800 p-10 rounded-[48px] shadow-2xl">
@@ -165,21 +173,13 @@ export default function Home() {
         <form onSubmit={handleAuth} className="space-y-6">
           <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-5 text-white outline-none" placeholder="Personnel ID" required />
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-5 text-white outline-none" placeholder="Access Key" required />
-          
-          {isSignUp && (
-              <input type="text" value={inviteCode} onChange={(e) => setInviteCode(e.target.value.toUpperCase())} className="w-full bg-blue-900/10 border border-blue-500/50 rounded-2xl px-6 py-5 text-blue-400 font-black tracking-widest outline-none placeholder:text-blue-900" placeholder="INVITE CLEARANCE CODE" required />
-          )}
-
-          <button type="submit" disabled={authLoading} className="w-full bg-blue-600 text-white font-black py-5 rounded-2xl uppercase tracking-widest text-xs">
-            {isSignUp ? "Initialize Operative Profile" : "Access Terminal"}
-          </button>
+          <button type="submit" disabled={authLoading} className="w-full bg-blue-600 text-white font-black py-5 rounded-2xl uppercase tracking-widest text-xs">Access Terminal</button>
         </form>
         <button onClick={() => setIsSignUp(!isSignUp)} className="w-full mt-6 text-[10px] text-slate-400 uppercase font-bold">{isSignUp ? "Sign In" : "Request Access"}</button>
       </div>
     </main>
   );
 
-  // DISCLAIMER
   if (!hasAcceptedTerms) return (
     <main className="min-h-screen bg-[#020617] flex items-center justify-center p-6">
       <div className="w-full max-w-lg bg-[#0f172a] border border-slate-800 rounded-[32px] p-10 shadow-2xl relative">
@@ -249,7 +249,6 @@ export default function Home() {
 
       <div className="grid grid-cols-12 gap-8 flex-1">
         
-        {/* LEFT COLUMN */}
         <div className="col-span-12 lg:col-span-3 space-y-8">
           {data && (
             <div className="bg-slate-900/40 border border-slate-800 rounded-[40px] p-8 shadow-inner animate-in fade-in">
@@ -283,10 +282,9 @@ export default function Home() {
           </div>
         </div>
 
-        {/* CENTER COLUMN */}
         <div className="col-span-12 lg:col-span-6 flex flex-col gap-8">
           {!data ? (
-             <div className="flex flex-col gap-8 h-full"><div className="bg-slate-900/30 border border-slate-800 p-10 rounded-[48px] text-center"><h3 className="text-3xl font-bold text-white uppercase tracking-widest">Market Pulse</h3></div><MarketScreener /></div>
+              <div className="flex flex-col gap-8 h-full"><div className="bg-slate-900/30 border border-slate-800 p-10 rounded-[48px] text-center"><h3 className="text-3xl font-bold text-white uppercase tracking-widest">Market Pulse</h3></div><MarketScreener /></div>
           ) : (
             <>
               <TradingViewWidget symbol={confirmedTicker} />
@@ -308,7 +306,6 @@ export default function Home() {
           )}
         </div>
 
-        {/* RIGHT COLUMN */}
         <div className="col-span-12 lg:col-span-3 space-y-8">
           <div className="bg-slate-900 border border-slate-800 rounded-[40px] p-10 shadow-2xl">
              <div className="flex items-center gap-3 mb-10 text-blue-500"><div className="w-2.5 h-2.5 bg-blue-500 rounded-full animate-pulse" /><p className="text-[10px] font-black uppercase tracking-[0.3em]">AI Market Intercept</p></div>
