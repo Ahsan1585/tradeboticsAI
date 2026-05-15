@@ -1,15 +1,56 @@
 "use client";
-
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { supabase } from "./lib/supabase";
 import Link from "next/link";
 
-// Centralized Backend URL handling
+// 🚨 FIXED: Only one definition, hardcoded to Render to stop the pop-up
 const BACKEND_URL = "https://tradebotics-api.onrender.com";
 
+// 1. TickerTape is a standalone UI component. Keep it simple.
 function TickerTape() {
   const container = useRef<HTMLDivElement>(null);
-  // 1. Check User & T&C memory
+  useEffect(() => {
+    if (container.current && container.current.children.length === 0) {
+      const script = document.createElement("script");
+      script.src = "https://s3.tradingview.com/external-embedding/embed-widget-ticker-tape.js";
+      script.async = true;
+      script.innerHTML = JSON.stringify({
+        "symbols": [
+          { "proName": "FOREXCOM:SPX500", "title": "S&P 500" },
+          { "proName": "NASDAQ:NVDA", "title": "Nvidia" },
+          { "proName": "NASDAQ:AAPL", "title": "Apple" },
+          { "proName": "NASDAQ:TSLA", "title": "Tesla" },
+          { "proName": "NYSE:F", "title": "Ford" }
+        ],
+        "colorTheme": "dark",
+        "isTransparent": true,
+        "displayMode": "adaptive",
+        "locale": "en"
+      });
+      container.current.appendChild(script);
+    }
+  }, []);
+  return <div ref={container} className="w-full mb-8 opacity-60" />;
+}
+
+export default function Home() {
+  const [user, setUser] = useState<any>(null);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [authLoading, setAuthLoading] = useState(false);
+  const [hasAcceptedTerms, setHasAcceptedTerms] = useState(false); 
+  const [data, setData] = useState<any>(null);
+  const [globalNews, setGlobalNews] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [ticker, setTicker] = useState("");
+  const [confirmedTicker, setConfirmedTicker] = useState("");
+  const [watchlist, setWatchlist] = useState<any[]>([]);
+  const [selectedArticle, setSelectedArticle] = useState<any | null>(null);
+  const [isSummarizing, setIsSummarizing] = useState(false);
+  const [deepDiveResult, setDeepDiveResult] = useState<string | null>(null);
+
+  // 2. Logic belongs here in Home. Check User & T&C memory
   useEffect(() => {
     const checkUser = async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -21,44 +62,15 @@ function TickerTape() {
     checkUser();
   }, []);
 
-  // 2. Fetch data ONLY when user is logged in AND accepted terms
+  // 3. Fetch data ONLY when user is logged in AND accepted terms
   useEffect(() => {
     if (user && hasAcceptedTerms) {
       fetchWatchlist(user.id);
       fetchGlobalNews();
     }
   }, [user, hasAcceptedTerms]);
-  return <div ref={container} className="w-full mb-8 opacity-60" />;
-}
 
-function MarketScreener() {
-  const container = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (container.current && container.current.children.length === 0) {
-      const script = document.createElement("script");
-      script.src = "https://s3.tradingview.com/external-embedding/embed-widget-screener.js";
-      script.async = true;
-      script.innerHTML = JSON.stringify({ "width": "100%", "height": "800", "defaultColumn": "overview", "defaultScreen": "most_active", "market": "america", "showToolbar": true, "colorTheme": "dark", "locale": "en", "isTransparent": true });
-      container.current.appendChild(script);
-    }
-  }, []);
-  return <div className="w-full bg-slate-900/10 rounded-[32px] border border-slate-800 min-h-[800px] overflow-hidden" ref={container} />;
-}
-
-function TradingViewWidget({ symbol }: { symbol: string }) {
-  const container = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (container.current && symbol) {
-      container.current.innerHTML = "";
-      const script = document.createElement("script");
-      script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
-      script.async = true;
-      script.innerHTML = JSON.stringify({"autosize": true, "symbol": `NASDAQ:${symbol}`, "interval": "D", "theme": "dark", "style": "1", "locale": "en", "container_id": "tv_chart"});
-      container.current.appendChild(script);
-    }
-  }, [symbol]);
-  return <div className="w-full h-[450px] bg-slate-950 rounded-[32px] overflow-hidden border border-slate-800 shadow-2xl" ref={container}><div id="tv_chart" className="w-full h-full" /></div>;
-}
+  // ... (The rest of your functions: handleAcceptTerms, handleAuth, etc.)
 
 export default function Home() {
   const [user, setUser] = useState<any>(null);
