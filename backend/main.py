@@ -22,7 +22,7 @@ app = FastAPI(title="TradeBotics AI Terminal", version="16.6.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://tradebotics.vercel.app", # <-- Replace with your ACTUAL Vercel URL
+        "https://tradebotics-ai.vercel.app", # <-- Replace with your ACTUAL Vercel URL
         "http://localhost:3000",          # For local testing
     ],
     allow_credentials=True,
