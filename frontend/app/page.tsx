@@ -3,10 +3,10 @@ import React, { useState, useEffect, useRef } from "react";
 import { supabase } from "./lib/supabase";
 import Link from "next/link";
 
-// 🚨 PRODUCTION URL (Hardwired to prevent browser security pop-ups)
+// 🚨 PRODUCTION URL (Hardwired to eliminate browser security pop-ups)
 const BACKEND_URL = "https://tradebotics-api.onrender.com";
 
-// --- PREMIUM UI COMPONENTS ---
+// --- HIGH-FIDELITY UI COMPONENTS ---
 
 function TickerTape() {
   const container = useRef<HTMLDivElement>(null);
@@ -88,7 +88,7 @@ export default function Home() {
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [deepDiveResult, setDeepDiveResult] = useState<string | null>(null);
 
-  // 1. Initial State Check (LocalStorage memory check)
+  // 1. Initial State Check
   useEffect(() => {
     const checkUser = async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -197,7 +197,7 @@ export default function Home() {
   
   const newsToDisplay = data?.news?.length > 0 ? data.news : globalNews;
 
-  // --- RENDERING LOGIC ---
+  // --- RENDERING ---
 
   if (!user) return (
     <main className="min-h-screen bg-[#020617] flex items-center justify-center p-6">
@@ -222,22 +222,10 @@ export default function Home() {
         </div>
         <div className="space-y-6 max-h-[60vh] overflow-y-auto pr-4 custom-scrollbar">
             <p className="text-sm font-bold text-white mb-6">Please read and accept the following terms before accessing the TradeBotics Terminal:</p>
-            <div>
-              <p className="text-white font-black text-sm mb-2">1. No Financial Advice</p>
-              <p className="text-slate-400 text-[13px] leading-relaxed">TradeBotics AI is strictly an educational and analytical software tool. We are not registered financial advisors, broker-dealers, or investment fiduciaries.</p>
-            </div>
-            <div>
-              <p className="text-white font-black text-sm mb-2">2. Assumption of Risk</p>
-              <p className="text-slate-400 text-[13px] leading-relaxed">Trading in financial markets involves a high degree of risk and may not be suitable for all investors. You may lose some or all of your initial investment.</p>
-            </div>
-            <div>
-              <p className="text-white font-black text-sm mb-2">3. Limitation of Liability</p>
-              <p className="text-slate-400 text-[13px] leading-relaxed">By accessing this platform, you expressly agree that TradeBotics AI, its developers, operators, and affiliated members bear absolutely no legal responsibility or liability for any financial losses.</p>
-            </div>
-            <div>
-              <p className="text-white font-black text-sm mb-2">4. Data Accuracy</p>
-              <p className="text-slate-400 text-[13px] leading-relaxed">While we strive for high-fidelity accuracy, market data is inherently volatile. Information reflects official exchange closes and aggregated sources, which may be delayed.</p>
-            </div>
+            <div><p className="text-white font-black text-sm mb-2">1. No Financial Advice</p><p className="text-slate-400 text-[13px] leading-relaxed">TradeBotics AI is strictly an educational and analytical software tool. We are not registered financial advisors, broker-dealers, or investment fiduciaries.</p></div>
+            <div><p className="text-white font-black text-sm mb-2">2. Assumption of Risk</p><p className="text-slate-400 text-[13px] leading-relaxed">Trading in financial markets involves a high degree of risk and may not be suitable for all investors. You may lose some or all of your initial investment.</p></div>
+            <div><p className="text-white font-black text-sm mb-2">3. Limitation of Liability</p><p className="text-slate-400 text-[13px] leading-relaxed">By accessing this platform, you expressly agree that TradeBotics AI, its developers, operators, and affiliated members bear absolutely no legal responsibility or liability for any financial losses.</p></div>
+            <div><p className="text-white font-black text-sm mb-2">4. Data Accuracy</p><p className="text-slate-400 text-[13px] leading-relaxed">While we strive for high-fidelity accuracy, market data is inherently volatile. Information reflects official exchange closes and aggregated sources, which may be delayed.</p></div>
         </div>
         <button onClick={handleAcceptTerms} className="w-full bg-red-600 hover:bg-red-500 text-white font-black py-4 mt-8 rounded-xl uppercase tracking-widest text-[11px] transition-all">I Agree & Accept Terms</button>
       </div>
@@ -276,6 +264,13 @@ export default function Home() {
       
       <div className="flex justify-between items-center mb-12">
         <div><h1 className="text-5xl font-black text-white tracking-tighter">TRADEBOTICS<span className="text-blue-500">AI</span></h1><p className="text-[9px] uppercase tracking-[0.5em] text-slate-400 italic">Operative // {user?.email?.split('@')[0]}</p></div>
+        
+        {/* RESTORED HEADER PORTFOLIO BUTTON */}
+        <Link href="/portfolio" className="hidden lg:flex items-center gap-3 px-6 py-3 bg-slate-900/50 border border-slate-800 rounded-full hover:border-blue-500/50 hover:bg-blue-900/10 transition-all group">
+            <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse group-hover:bg-blue-400" />
+            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-300 group-hover:text-white">Portfolio Intelligence</span>
+        </Link>
+
         <div className="flex gap-3 bg-slate-900/80 p-3 rounded-[24px] border border-slate-800 focus-within:border-blue-500/50">
           <input value={ticker} onChange={(e) => setTicker(e.target.value.toUpperCase())} onKeyDown={(e) => e.key === 'Enter' && runAnalysis()} className="bg-transparent border-none text-white font-black w-48 px-4 outline-none text-lg" placeholder="TICKER..." />
           <button onClick={() => runAnalysis()} className="bg-blue-600 text-white px-10 py-4 rounded-xl font-black text-xs uppercase hover:bg-blue-500">{loading ? "..." : "SCAN"}</button>
@@ -352,13 +347,36 @@ export default function Home() {
                      <p className="text-7xl font-mono font-black text-white tracking-tighter mb-4">${data?.price}</p>
                      <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest bg-blue-500/10 px-3 py-2 rounded-lg inline-block">{data?.company_name}</p>
                   </div>
+
                   <div className="grid grid-cols-2 gap-8 border-t border-slate-800 pt-8 mb-8">
                      <div><p className="text-[9px] font-bold text-slate-400 uppercase mb-2">24H Volume</p><p className="text-white font-black text-sm">{data?.volume}</p></div>
                      <div><p className="text-[9px] font-bold text-slate-400 uppercase mb-2">Rel Surge</p><p className="text-blue-400 font-black text-sm">{data?.vol_surge}</p></div>
                   </div>
+
+                  {data?.holding_analysis && (
+                    <div className="mb-8 p-6 bg-orange-500/5 border border-orange-500/10 rounded-3xl">
+                      <div className="flex justify-between items-center mb-4"><p className="text-[10px] font-black text-orange-500 uppercase">Exit Stance</p><span className="text-white font-black text-xs uppercase">{data.holding_analysis.status}</span></div>
+                      <p className="text-slate-300 text-[11px] italic mb-6 border-l border-slate-800 pl-3">"{data.holding_analysis.guidance}"</p>
+                      <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-800">
+                          <div><p className="text-[8px] font-bold text-slate-400 uppercase mb-1">Stop</p><p className="text-white font-mono font-black text-xs">${data.holding_analysis.stop_loss}</p></div>
+                          <div><p className="text-[8px] font-bold text-slate-400 uppercase mb-1">Target</p><p className="text-white font-mono font-black text-xs">${data.holding_analysis.trailing_target}</p></div>
+                      </div>
+                    </div>
+                  )}
+
                   <button onClick={() => runDeepDive('verdict')} className="w-full mb-4 bg-blue-600/10 border border-blue-500/20 py-3 rounded-xl text-blue-500 font-black text-[10px] uppercase hover:bg-blue-600 hover:text-white transition-all">Execute AI Verdict</button>
                   <div className="mb-10 p-5 bg-blue-500/5 border-l-2 border-blue-500 rounded-r-2xl min-h-[50px]">
                       <p className="text-slate-200 text-sm font-bold italic leading-relaxed">"{data?.ai_tactical}"</p>
+                  </div>
+
+                  <div className="p-8 bg-gradient-to-br from-slate-900 to-slate-950 border border-slate-800 rounded-[32px] shadow-2xl relative overflow-hidden group">
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-blue-600/10 rounded-full blur-3xl group-hover:bg-blue-600/20 transition-all" />
+                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">Portfolio Intelligence</p>
+                    <h3 className="text-white font-black text-xl mb-3">Tailor Your AI Experience.</h3>
+                    <p className="text-slate-400 text-[11px] leading-relaxed mb-8">Upload holdings to unlock personalized exit strategies and cost-basis mapping.</p>
+                    <Link href="/portfolio">
+                      <button className="w-full py-4 bg-slate-800 text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-blue-600 transition-all text-white border border-slate-700 hover:border-blue-500 shadow-lg">Sync Portfolio Data</button>
+                    </Link>
                   </div>
                 </>
              ) : ( <p className="text-slate-600 font-bold uppercase text-[10px] tracking-widest italic text-center">Scan required...</p> )}
@@ -372,7 +390,7 @@ export default function Home() {
                     <div key={i} onClick={() => handleArticleClick(item)} className="bg-slate-950 border border-slate-800 p-5 rounded-3xl cursor-pointer hover:border-blue-500/50 group transition-all">
                         <p className="text-sm font-bold text-slate-200 group-hover:text-blue-400 leading-snug line-clamp-3">{item.title}</p>
                         <div className="flex justify-between items-center mt-4 pt-4 border-t border-slate-800/30">
-                            <p className="text-[9px] font-black text-slate-400 uppercase">{item.publisher}</p>
+                            <p className="text-[9px] font-black text-slate-400 group-hover:text-slate-200 uppercase">{item.publisher}</p>
                             <span className="text-[8px] bg-blue-600/10 text-blue-500 px-2 py-0.5 rounded-full uppercase font-black">AI Synthesis</span>
                         </div>
                     </div>
@@ -380,6 +398,7 @@ export default function Home() {
              </div>
           </div>
         </div>
+
       </div>
     </main>
   );
