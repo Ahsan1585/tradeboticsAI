@@ -5,19 +5,29 @@ import { supabase } from "./lib/supabase";
 import Link from "next/link";
 
 // Centralized Backend URL handling
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+const BACKEND_URL = "https://tradebotics-api.onrender.com";
 
 function TickerTape() {
   const container = useRef<HTMLDivElement>(null);
+  // 1. Check User & T&C memory
   useEffect(() => {
-    if (container.current && container.current.children.length === 0) {
-      const script = document.createElement("script");
-      script.src = "https://s3.tradingview.com/external-embedding/embed-widget-ticker-tape.js";
-      script.async = true;
-      script.innerHTML = JSON.stringify({"symbols": [{"proName": "FOREXCOM:SPX500", "title": "S&P 500"}, {"proName": "NASDAQ:NVDA", "title": "Nvidia"}, {"proName": "NASDAQ:AAPL", "title": "Apple"}, {"proName": "NASDAQ:TSLA", "title": "Tesla"}, {"proName": "NYSE:F", "title": "Ford"}], "colorTheme": "dark", "isTransparent": true, "displayMode": "adaptive", "locale": "en"});
-      container.current.appendChild(script);
-    }
+    const checkUser = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      setUser(user);
+      if (localStorage.getItem('termsAccepted') === 'true') {
+        setHasAcceptedTerms(true);
+      }
+    };
+    checkUser();
   }, []);
+
+  // 2. Fetch data ONLY when user is logged in AND accepted terms
+  useEffect(() => {
+    if (user && hasAcceptedTerms) {
+      fetchWatchlist(user.id);
+      fetchGlobalNews();
+    }
+  }, [user, hasAcceptedTerms]);
   return <div ref={container} className="w-full mb-8 opacity-60" />;
 }
 
