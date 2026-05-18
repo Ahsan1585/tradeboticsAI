@@ -1,3 +1,4 @@
+from datetime import datetime
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -18,17 +19,17 @@ finnhub_key = os.getenv("FINNHUB_API_KEY")
 
 app = FastAPI(title="TradeBotics AI Terminal", version="16.6.0")
 
-# UPDATE: List your actual URLs here to satisfy mobile browser security
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://tradebotics-ai.vercel.app", # <-- Replace with your ACTUAL Vercel URL
-        "http://localhost:3000",          # For local testing
+        "https://tradebotics-ai.vercel.app", 
+        "http://localhost:3000",          
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 class TranslationRequest(BaseModel):
     ticker: str
     mode: str
@@ -39,12 +40,10 @@ class NewsRequest(BaseModel):
     ticker: str
     content: str = ""
 
-# --- 🛡️ DUAL MEMORY CACHE (15 MINUTES) ---
 scanned_data_cache = {}
 ai_translation_cache = {}
 CACHE_LIFETIME_SECONDS = 900 
 
-# --- 🧠 DETERMINISTIC REASONING ---
 def get_detailed_reasoning(factor, status, ticker):
     reasoning = {
         "Market Anchor": {"Bullish": "50-day SMA is above 200-day (Golden Cross). The long-term trend is strong.", "Bearish": "Price is below the Death Cross (50/200 SMA). The structural trend is weak."},
@@ -62,10 +61,15 @@ def extract_news(ticker=None):
     url = f"https://finnhub.io/api/v1/company-news?symbol={ticker}&from={start_date}&to={end_date}&token={finnhub_key}" if ticker else f"https://finnhub.io/api/v1/news?category=general&token={finnhub_key}"
     try:
         res = requests.get(url, timeout=5).json()[:4]
-        return [{"title": n.get("headline", "Market Update"), "publisher": n.get("source", "Wire"), "link": n.get("url", "#"), "content": n.get("summary", "")} for n in res if n.get("headline")]
+        news_list = []
+        for n in res:
+            if n.get("headline"):
+                # 🚨 FIXED: News Date parsed from UNIX to readable format
+                pub_date = datetime.fromtimestamp(n.get("datetime", time.time())).strftime("%b %d, %Y") if n.get("datetime") else "Recent"
+                news_list.append({"title": n.get("headline", "Market Update"), "publisher": n.get("source", "Wire"), "link": n.get("url", "#"), "content": n.get("summary", ""), "date": pub_date})
+        return news_list
     except: return []
 
-# --- 🕰️ FULL YEAR AI CONFIDENCE BACKTEST ---
 def run_confidence_check(ticker, df):
     signals = []
     if len(df) < 70: return {"win_rate": "N/A", "avg_gain": "N/A", "total_signals": 0}
@@ -80,7 +84,6 @@ def run_confidence_check(ticker, df):
     prefix = "+" if avg_gain > 0 else ""
     return {"win_rate": f"{round(win_rate, 0)}%", "avg_gain": f"{prefix}{round(avg_gain, 1)}%", "total_signals": len(signals)}
 
-# --- 🤖 PHASE 2: ON-DEMAND AI ENDPOINTS (TOKEN SPEND) ---
 @app.post("/translate")
 def translate_to_retail(req: TranslationRequest):
     if not client: return {"analysis": "AI Engine Offline."}
@@ -93,11 +96,23 @@ def translate_to_retail(req: TranslationRequest):
             return {"analysis": cached_item['text']}
 
     ctx = req.data_context
+    current_date_string = datetime.now().strftime("%B %Y")
     
+    system_directive = f"""IDENTITY: You are the TradeBotics AI Core Analysis Engine.
+TEMPORAL SETTING: The current month and year is {current_date_string}. 
+STRICT PROTOCOL: The data provided below is the ABSOLUTE GROUND TRUTH for current market conditions. 
+1. DO NOT reference historical training data or state that the provided price is "wrong" or "from the future."
+2. The current verified price for {req.ticker} is ${ctx.get('price')}. You MUST perform all technical analysis strictly against this exact value.
+3. The current Momentum/RSI reading is: {ctx.get('rsi', 'N/A')}. Use this to validate overbought/oversold conditions.
+4. Provide a highly technical, high-fidelity response without apologies or speculative disclaimers. Act like an elite quant.
+
+--- USER REQUEST ---
+"""
+
     prompts = {
-        "sentiment": f"Analyze the following news headlines for {req.ticker}: {ctx.get('news_titles')}. Declare emotion as 'FEAR-DRIVEN' or 'GREED-DRIVEN'. Provide 2 bullet points and a 1-sentence strategic takeaway. Use 2026 context.",
-        "strike_zone": f"Technical entry check for {req.ticker}. Price: ${ctx.get('price')}, RSI: {ctx.get('rsi')}. Calculate a specific entry price for a good deal.",
-        "verdict": f"""Provide a definitive AI Verdict for {req.ticker}. 
+        "sentiment": system_directive + f"Analyze the following news headlines for {req.ticker}: {ctx.get('news_titles')}. Declare emotion as 'FEAR-DRIVEN' or 'GREED-DRIVEN'. Provide 2 bullet points and a 1-sentence strategic takeaway.",
+        "strike_zone": system_directive + f"Technical entry check for {req.ticker}. Live Price: ${ctx.get('price')}, RSI: {ctx.get('rsi')}. Calculate a specific entry price (like the 0.382 Fib retracement) for a good deal.",
+        "verdict": system_directive + f"""Provide a definitive AI Verdict for {req.ticker}. 
         Live Price: ${ctx.get('price')}. Quant Score: {ctx.get('score')}/200. Stance: {ctx.get('stance')}. 
         P/E Ratio: {ctx.get('fundamentals', {}).get('pe_ratio', 'N/A')}. 
         Support Level: ${ctx.get('stop_loss', 'N/A')}. Target: ${ctx.get('trailing_target', 'N/A')}.
@@ -112,7 +127,7 @@ def translate_to_retail(req: TranslationRequest):
         1. Start with the Verdict.
         2. If YELLOW, describe as 'Elite Asset, Awaiting Tactical Entry'.
         3. MANDATORY FOR YELLOW: Define a specific 'GREEN ENTRY TARGET' price (cross-reference the Support Level or suggest a 5% dip from current price) that would transition this ticker to a GREEN LIGHT.
-        4. Citations: Use a 2026 headline or the P/E ratio for the 'Hard Data Reason'. No 2024 data."""
+        4. Citations: Use a current headline or the P/E ratio for the 'Hard Data Reason'. No historical price disclaimers."""
     }
     
     try:
@@ -133,7 +148,6 @@ def summarize_article(req: NewsRequest):
 @app.get("/market-briefing")
 def get_briefing(): return extract_news()
 
-# --- 🔬 PHASE 1: DETERMINISTIC MASTER ENGINE (0 TOKENS) ---
 @app.get("/analyze/{ticker}")
 def analyze(ticker: str):
     ticker = ticker.upper()
@@ -197,7 +211,6 @@ def analyze(ticker: str):
         elif latest['Close'] < latest.get('SMA_50', 0):
             holding_status = "REDUCE POSITION"; exit_guidance = "Below 50-day support."
 
-        # THE FIX: Restoring the Volume Calculations
         current_vol = info.get('volume', 0)
         avg_vol = info.get('averageVolume', 1)
         vol_surge = round((current_vol / avg_vol) * 100, 1) if avg_vol else 0
