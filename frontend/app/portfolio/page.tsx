@@ -3,6 +3,9 @@ import React, { useState, useEffect, useRef } from "react";
 import { supabase } from "../lib/supabase";
 import Link from "next/link";
 
+// 🚨 PRODUCTION URL (Change to http://localhost:8000 for local testing)
+const BACKEND_URL = "https://tradebotics-api.onrender.com";
+
 export default function PortfolioPage() {
   const [user, setUser] = useState<any>(null);
   const [mode, setMode] = useState<'csv' | 'manual'>('manual');
@@ -20,14 +23,30 @@ export default function PortfolioPage() {
   const [loading, setLoading] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // State: Dead Capital Reallocator
+  const [swapThesis, setSwapThesis] = useState<any>(null);
+  const [isGeneratingSwap, setIsGeneratingSwap] = useState<string | null>(null);
+
+  // 🚨 FIXED: Auth Error Failsafe added here as well
   useEffect(() => {
     const checkUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      setUser(user);
-      if (user) {
-        fetchHoldings(user.id);
+      const { data: { session }, error } = await supabase.auth.getSession();
+      
+      if (error) {
+          console.warn("Auth Token Corrupted. Purging local cache.");
+          await supabase.auth.signOut();
+          setUser(null);
+          return;
+      }
+      
+      if (session) {
+        setUser(session.user);
+        fetchHoldings(session.user.id);
+      } else {
+        setUser(null);
       }
     };
+    
     checkUser();
   }, []);
 
@@ -63,6 +82,37 @@ export default function PortfolioPage() {
           showToast("Tax lot purged from Vault.");
           fetchHoldings(user.id); 
       }
+  };
+
+  const runSwapThesis = async (id: string, ticker: string, shares: number) => {
+      setIsGeneratingSwap(id);
+      setSwapThesis(null);
+      
+      try {
+          const analyzeRes = await fetch(`${BACKEND_URL}/analyze/${ticker}`);
+          if (!analyzeRes.ok) throw new Error("Failed to pull live pricing.");
+          const analyzeData = await analyzeRes.json();
+
+          const res = await fetch(`${BACKEND_URL}/swap-thesis`, {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                  ticker: ticker,
+                  shares: shares,
+                  price: analyzeData.price
+              })
+          });
+          
+          if (res.ok) {
+              const result = await res.json();
+              setSwapThesis({ ...result, original_ticker: ticker });
+              window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+          } else {
+              showToast("Swap Analysis Failed.");
+          }
+      } catch {
+          showToast("Network Error: Could not generate swap thesis.");
+      }
+      setIsGeneratingSwap(null);
   };
 
   // --- MANUAL ENTRY LOGIC ---
@@ -288,8 +338,32 @@ export default function PortfolioPage() {
             </div>
         </div>
 
+        {/* The Dead Capital Reallocator Thesis Display */}
+        {swapThesis && (
+            <div className="bg-[#020617] border-2 border-purple-500/50 rounded-[40px] p-10 mb-8 shadow-[0_0_50px_rgba(168,85,247,0.1)] relative overflow-hidden animate-in fade-in zoom-in-95">
+                <div className="absolute top-0 right-0 w-64 h-64 bg-purple-600/10 rounded-full blur-3xl pointer-events-none" />
+                
+                <div className="flex justify-between items-start mb-6">
+                    <div className="flex items-center gap-3">
+                        <div className="w-3 h-3 bg-purple-500 rounded-full animate-pulse shadow-[0_0_10px_#a855f7]" />
+                        <h3 className="text-xl font-black text-white uppercase tracking-widest">Tactical Sector Swap Analysis</h3>
+                    </div>
+                    <button onClick={() => setSwapThesis(null)} className="text-slate-500 hover:text-white font-black text-xs uppercase tracking-widest transition-colors">Close</button>
+                </div>
+
+                <p className="text-lg text-slate-300 leading-relaxed italic mb-10 border-l-2 border-purple-500 pl-4 relative z-10">"{swapThesis.thesis}"</p>
+
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-6 relative z-10 border-t border-slate-800/50 pt-8">
+                    <div><p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Liquidating</p><p className="text-white font-black text-xl">{swapThesis.original_ticker}</p></div>
+                    <div><p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Freed Capital</p><p className="text-white font-mono font-black text-xl">${swapThesis.freed_capital.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</p></div>
+                    <div className="bg-purple-500/10 px-4 py-2 rounded-xl border border-purple-500/20"><p className="text-[10px] font-bold text-purple-400 uppercase tracking-widest mb-1">Target Asset</p><p className="text-white font-black text-xl">{swapThesis.target_ticker}</p></div>
+                    <div className="bg-purple-500/10 px-4 py-2 rounded-xl border border-purple-500/20"><p className="text-[10px] font-bold text-purple-400 uppercase tracking-widest mb-1">New Quant Score</p><p className="text-white font-black text-xl">{swapThesis.target_score}</p></div>
+                </div>
+            </div>
+        )}
+
         {/* Existing Holdings Viewer & Editor */}
-        <div className="bg-slate-900/30 border border-slate-800 rounded-[40px] p-10 mt-8 shadow-2xl">
+        <div className="bg-slate-900/30 border border-slate-800 rounded-[40px] p-10 shadow-2xl relative z-10">
             <h3 className="text-2xl font-black text-white mb-8 tracking-tighter">Current Vault Holdings</h3>
             
             {existingHoldings.length === 0 ? (
@@ -305,7 +379,7 @@ export default function PortfolioPage() {
                                 <th className="pb-4 font-black px-4">Asset Ticker</th>
                                 <th className="pb-4 font-black px-4">Position Size</th>
                                 <th className="pb-4 font-black px-4">Cost Basis</th>
-                                <th className="pb-4 font-black text-right px-4">Action</th>
+                                <th className="pb-4 font-black text-right px-4">Actions</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -323,12 +397,20 @@ export default function PortfolioPage() {
                                     <td className="py-4 px-4 font-mono font-medium text-white">
                                         ${item.cost_basis}
                                     </td>
-                                    <td className="py-4 px-4 text-right">
+                                    <td className="py-4 px-4 text-right space-x-2">
+                                        <button 
+                                            onClick={() => runSwapThesis(item.id, item.ticker, item.shares)} 
+                                            disabled={isGeneratingSwap === item.id}
+                                            className="text-purple-400 hover:text-white bg-purple-900/20 px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest border border-purple-500/30 hover:bg-purple-600 transition-all opacity-50 group-hover:opacity-100 disabled:opacity-30"
+                                        >
+                                            {isGeneratingSwap === item.id ? "Analyzing..." : "Find Sector Swap"}
+                                        </button>
+
                                         <button 
                                             onClick={() => deleteHolding(item.id)} 
-                                            className="text-slate-500 hover:text-red-500 bg-slate-950 px-5 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest border border-slate-800 hover:border-red-500 transition-all opacity-50 group-hover:opacity-100"
+                                            className="text-slate-500 hover:text-red-500 bg-slate-950 px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest border border-slate-800 hover:border-red-500 transition-all opacity-50 group-hover:opacity-100"
                                         >
-                                            Purge Row
+                                            Purge
                                         </button>
                                     </td>
                                 </tr>
@@ -341,7 +423,6 @@ export default function PortfolioPage() {
 
       </div>
       
-      {/* 🚨 UPDATED COPYRIGHT */}
       <footer className="border-t border-slate-800/50 py-8 mt-12 text-center w-full">
           <p className="text-[10px] uppercase tracking-[0.2em] font-black text-slate-600">© 2026 TradeBotics AI. All Systems Operational.</p>
       </footer>
