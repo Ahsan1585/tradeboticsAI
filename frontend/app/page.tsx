@@ -511,7 +511,8 @@ export default function Home() {
     setIsRefreshingWatchlist(false);
   };
 
-  const runDeepDive = async (mode: string) => {
+  // 🚨 FIXED: Consolidated Master Analysis Function
+  const runMasterAnalysis = async () => {
     if (!data) return;
     setDeepDiveResult(null);
     setIsAnalyzing(true); 
@@ -519,14 +520,12 @@ export default function Home() {
         const res = await fetch(`${BACKEND_URL}/translate`, {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ 
-                ticker: confirmedTicker, mode, 
+                ticker: confirmedTicker,
                 data_context: { 
                     score: data.score, 
                     price: data.price, 
-                    stance: data.holding_analysis?.status,
                     fundamentals: data.fundamentals, 
                     ledger: data.ledger,
-                    news_titles: data.news?.map((n:any)=>n.title).join(" | "),
                     user_shares: currentPosition?.shares || 0,
                     user_avg_cost: currentPosition?.avg_cost || 0
                 } 
@@ -900,7 +899,7 @@ export default function Home() {
                       </div>
                     ))}
                   </div>
-                                 </>
+                                                 </>
               )}
             </div>
 
@@ -952,10 +951,11 @@ export default function Home() {
                       )}
 
                       <button 
-    onClick={() => runDeepDive('verdict')} 
-    className="w-full mb-4 bg-blue-600 border border-blue-500 py-3 rounded-xl text-white font-black text-[10px] uppercase tracking-widest hover:bg-blue-500 hover:text-white transition-all shadow-[0_0_15px_rgba(59,130,246,0.3)]"
->
-                        Execute AI Analysis Verdict
+                          onClick={() => runMasterAnalysis()} 
+                          disabled={isAnalyzing}
+                          className="w-full mb-4 bg-blue-600 border border-blue-500 py-3 rounded-xl text-white font-black text-[10px] uppercase tracking-widest hover:bg-blue-500 hover:text-white transition-all shadow-[0_0_15px_rgba(59,130,246,0.3)] disabled:opacity-50"
+                      >
+                          {isAnalyzing ? "🧠 ANALYZING..." : "🧠 RUN AI ANALYSIS"}
                       </button>
                       
                       <div className="mb-10 p-5 bg-blue-500/5 border-l-2 border-blue-500 rounded-r-2xl min-h-[50px]">
@@ -969,7 +969,7 @@ export default function Home() {
               <div className="bg-slate-900/40 border border-slate-800 rounded-[40px] p-8 flex flex-col h-[600px] overflow-hidden shrink-0">
                  <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-6 text-center">AI Intelligence Wire</p>
                  
-                 <button onClick={() => runDeepDive('sentiment')} className="w-full mb-6 bg-blue-900/30 border border-blue-500/50 py-4 rounded-2xl text-blue-400 font-black text-[10px] uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all shadow-[0_0_15px_rgba(59,130,246,0.15)]">
+                 <button onClick={() => runMasterAnalysis()} className="w-full mb-6 bg-blue-900/30 border border-blue-500/50 py-4 rounded-2xl text-blue-400 font-black text-[10px] uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all shadow-[0_0_15px_rgba(59,130,246,0.15)]">
                     🌐 Global AI Sentiment Check
                  </button>
 
