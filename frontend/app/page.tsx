@@ -53,7 +53,7 @@ function TradingViewWidget({ symbol }: { symbol: string }) {
       const script = document.createElement("script");
       script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
       script.async = true;
-      script.innerHTML = JSON.stringify({ "autosize": true, "symbol": `NASDAQ:${symbol}`, "interval": "D", "theme": "dark", "style": "1", "locale": "en", "container_id": "tv_chart" });
+      script.innerHTML = JSON.stringify({ "autosize": true, "symbol": symbol, "interval": "D", "theme": "dark", "style": "1", "locale": "en", "container_id": "tv_chart" });
       container.current.appendChild(script);
     }
   }, [symbol]);
@@ -297,17 +297,40 @@ export default function Home() {
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [deepDiveResult, setDeepDiveResult] = useState<string | null>(null);
 
+  // 🚨 FIXED: Auth Listener implementation for robust session management
   useEffect(() => {
     const checkUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single();
-        setUserProfile(profile);
+      const { data: { session }, error } = await supabase.auth.getSession();
+      
+      if (error || !session) {
+          setUser(null);
+          setUserProfile(null);
+      } else {
+          setUser(session.user);
+          const { data: profile } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
+          setUserProfile(profile);
       }
-      setUser(user);
-      if (localStorage.getItem('termsAccepted') === 'true') { setHasAcceptedTerms(true); }
+      
+      if (localStorage.getItem('termsAccepted') === 'true') { 
+          setHasAcceptedTerms(true); 
+      }
     };
+    
     checkUser();
+
+    // Background Listener for Token Rotation
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_OUT') {
+          setUser(null);
+          setUserProfile(null);
+      } else if (session && (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED')) {
+          setUser(session.user);
+      }
+    });
+
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -578,7 +601,6 @@ export default function Home() {
             {isSignUp ? "← Return to Login" : "Request Access"}
         </button>
       </div>
-      {/* 🚨 UPDATED COPYRIGHT */}
       <div className="absolute bottom-6 w-full text-center pointer-events-none">
           <p className="text-[10px] uppercase tracking-[0.2em] font-black text-slate-600">© 2026 TradeBotics AI. All Systems Operational.</p>
       </div>
@@ -599,7 +621,6 @@ export default function Home() {
             Sign Out
         </button>
       </div>
-      {/* 🚨 UPDATED COPYRIGHT */}
       <div className="absolute bottom-6 w-full text-center pointer-events-none">
           <p className="text-[10px] uppercase tracking-[0.2em] font-black text-slate-600">© 2026 TradeBotics AI. All Systems Operational.</p>
       </div>
@@ -622,7 +643,6 @@ export default function Home() {
         </div>
         <button onClick={handleAcceptTerms} className="w-full bg-red-600 hover:bg-red-500 text-white font-black py-4 mt-8 rounded-xl uppercase tracking-widest text-[11px] transition-all">I Agree & Accept Terms</button>
       </div>
-      {/* 🚨 UPDATED COPYRIGHT */}
       <div className="absolute bottom-6 w-full text-center pointer-events-none">
           <p className="text-[10px] uppercase tracking-[0.2em] font-black text-slate-600">© 2026 TradeBotics AI. All Systems Operational.</p>
       </div>
@@ -744,7 +764,6 @@ export default function Home() {
                 </div>
             </div>
             
-            {/* 🚨 UPDATED COPYRIGHT */}
             <footer className="border-t border-slate-800/50 py-8 text-center w-full mt-auto relative z-10 bg-[#020617]">
                 <p className="text-[10px] uppercase tracking-[0.2em] font-black text-slate-600">© 2026 TradeBotics AI. All Systems Operational.</p>
             </footer>
@@ -790,7 +809,6 @@ export default function Home() {
                 </div>
               )}
 
-              {/* 🚨 RESTORED: Institutional DNA Block */}
               {data?.fundamentals && (
                 <div className="bg-[#020617] border border-blue-500/20 rounded-[40px] p-10 shadow-[inset_0_0_20px_rgba(59,130,246,0.05)] animate-in fade-in">
                     <p className="text-[11px] font-black text-blue-500 uppercase tracking-[0.4em] mb-10 opacity-80">Institutional DNA</p>
@@ -963,7 +981,6 @@ export default function Home() {
 
           </div>
           
-          {/* 🚨 UPDATED COPYRIGHT */}
           <footer className="border-t border-slate-800/50 pt-8 mt-12 text-center w-full">
               <p className="text-[10px] uppercase tracking-[0.2em] font-black text-slate-600">© 2026 TradeBotics AI. All Systems Operational.</p>
           </footer>

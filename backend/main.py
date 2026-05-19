@@ -94,7 +94,6 @@ async def analyze_ticker(ticker: str):
                 "stop_loss": str(round(current_price * 0.92, 2)),
                 "trailing_target": str(round(current_price * 1.15, 2))
             },
-            # 🚨 EXPANDED: Full 5-Point Technical Ledger
             "ledger": [
                 {"factor": "Momentum (RSI)", "val": "62.5", "status": "NEUTRAL", "reasoning": "RSI indicates healthy momentum without entering overbought territory."},
                 {"factor": "Institutional Flow", "val": "High", "status": "BULLISH", "reasoning": "Dark pool block trades detected above the 20-day moving average."},
@@ -114,44 +113,39 @@ async def analyze_ticker(ticker: str):
 @app.post("/translate")
 async def translate_ai(req: TranslationRequest):
     """
-    ENTERPRISE AI DEEP DIVE ENGINE
+    ENTERPRISE AI DEEP DIVE ENGINE (Restored to Pure Asset Analysis)
     """
     if not model:
         return {"analysis": "AI Node Offline: Missing API Key."}
 
     try:
-        prompt = f"Act as an elite quantitative institutional risk manager. Provide a highly analytical briefing on {req.ticker} focusing on '{req.mode}'.\n\n"
+        prompt = f"Act as an elite quantitative analyst. Provide a highly analytical briefing on {req.ticker}.\n\n"
         
         prompt += f"CURRENT MARKET CONTEXT:\n"
         prompt += f"- Current Price: ${req.data_context.get('price', 'N/A')}\n"
         prompt += f"- Quant Score: {req.data_context.get('score', 'N/A')}\n"
 
-        full_portfolio = req.data_context.get("full_portfolio", [])
-        
-        if full_portfolio:
-            total_invested = sum(float(pos.get("shares", 0)) * float(pos.get("avg_cost", 0)) for pos in full_portfolio)
-            num_positions = len(full_portfolio)
-            
-            target_pos = next((pos for pos in full_portfolio if pos.get("ticker") == req.ticker), None)
-            
-            prompt += f"\n🚨 FIDUCIARY PORTFOLIO CONTEXT 🚨\n"
-            prompt += f"The user's total invested capital across {num_positions} tracked assets is roughly ${total_invested:,.2f}.\n"
-            
-            if target_pos:
-                shares = float(target_pos.get("shares", 0))
-                avg_cost = float(target_pos.get("avg_cost", 0))
-                pos_value = shares * avg_cost
-                weight = (pos_value / total_invested * 100) if total_invested > 0 else 0
-                
-                prompt += f"They currently hold {shares} shares of {req.ticker} at an average cost basis of ${avg_cost:,.2f}. "
-                prompt += f"This specific asset represents {weight:.1f}% of their total portfolio exposure.\n"
-                prompt += "You MUST mathematically incorporate their specific cost basis and portfolio weighting into your advice. If they are over-exposed, suggest risk management. Give precise tactical advice on whether to hold, trim, add, or exit.\n"
-            else:
-                prompt += f"The user does NOT currently own {req.ticker} in their Vault. Frame your advice around whether this represents a safe new entry given their existing market exposure.\n"
-        else:
-             prompt += "\nPORTFOLIO CONTEXT:\nThe user's Vault is currently empty. Frame your advice around whether this asset represents a safe new entry point based on risk/reward.\n"
+        shares = float(req.data_context.get("user_shares", 0))
+        avg_cost = float(req.data_context.get("user_avg_cost", 0))
 
-        prompt += "\nOUTPUT FORMAT: Provide a concise, highly analytical, 2-paragraph briefing. Speak directly to the operative using stark, professional financial terminology. Remove all standard AI fluff and generic legal disclaimers."
+        if shares > 0:
+            prompt += f"\nPOSITION CONTEXT:\n"
+            prompt += f"The user currently holds {shares} shares of {req.ticker} at an average cost basis of ${avg_cost:,.2f}. "
+            prompt += "Analyze this specific asset's technical indicators, company fundamentals, and global sentiment to determine its forward trajectory.\n"
+        else:
+             prompt += "\nPOSITION CONTEXT:\nThe user does NOT currently own this asset. Frame your advice around whether this represents a safe new entry based strictly on technicals, fundamentals, and sentiment.\n"
+
+        prompt += f"\n🚨 STRICT OUTPUT FORMATTING RULES 🚨\n"
+        
+        if req.mode == "strike_zone":
+            prompt += "Line 1 of your response MUST BE EXACTLY: '🎯 AI STRIKE ZONE: $[low price target] - $[high price target]'. You must calculate and provide this specific mathematical price range based on technical support levels. Do not write anything before this line.\n"
+            prompt += "Following that line, provide a concise, 1-2 paragraph briefing analyzing the asset based STRICTLY on its stock indicators, company fundamentals, and overall global sentiment. Do not lecture on portfolio risk.\n"
+        elif req.mode == "verdict":
+            prompt += "Provide a definitive tactical verdict (BUY, HOLD, TRIM, or SELL) based strictly on technical indicators, company fundamentals, and overall global sentiment, followed by a 1-2 paragraph analytical briefing.\n"
+        elif req.mode == "sentiment":
+            prompt += "Focus strictly on institutional flow, news sentiment, and macro context. Provide a 1-2 paragraph briefing tying sentiment back to whether it supports the asset's current price trajectory.\n"
+
+        prompt += "\nTONE: Speak directly to the operative using stark, professional financial terminology. Remove all conversational fluff, pleasantries, and generic legal disclaimers."
 
         response = model.generate_content(prompt)
         return {"analysis": response.text.strip()}
