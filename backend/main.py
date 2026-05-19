@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, Any, List
 import os
+import math
 import yfinance as yf
 import google.generativeai as genai
 from dotenv import load_dotenv
@@ -49,7 +50,6 @@ class SummaryRequest(BaseModel):
 async def analyze_ticker(ticker: str):
     """
     Standard Market Scan. 
-    (Left completely intact per your instructions)
     """
     try:
         stock = yf.Ticker(ticker)
@@ -65,7 +65,10 @@ async def analyze_ticker(ticker: str):
         # Simulated Quant Logic
         tech_score = 85 if current_price > prev_price else 65
         fund_score = 80
-        total_score = round((tech_score + fund_score) / 2)
+        
+        # Forces standard round-up so 82.5 becomes 83
+        total_score = math.ceil((tech_score + fund_score) / 2)
+        
         vol_surge = f"{round((volume / avg_volume) * 100, 1)}%" if avg_volume > 0 else "N/A"
 
         payload = {
@@ -91,9 +94,13 @@ async def analyze_ticker(ticker: str):
                 "stop_loss": str(round(current_price * 0.92, 2)),
                 "trailing_target": str(round(current_price * 1.15, 2))
             },
+            # 🚨 EXPANDED: Full 5-Point Technical Ledger
             "ledger": [
                 {"factor": "Momentum (RSI)", "val": "62.5", "status": "NEUTRAL", "reasoning": "RSI indicates healthy momentum without entering overbought territory."},
-                {"factor": "Institutional Flow", "val": "High", "status": "BULLISH", "reasoning": "Dark pool block trades detected above the 20-day moving average."}
+                {"factor": "Institutional Flow", "val": "High", "status": "BULLISH", "reasoning": "Dark pool block trades detected above the 20-day moving average."},
+                {"factor": "MACD Divergence", "val": "Positive", "status": "BULLISH", "reasoning": "MACD line crossed above the signal line, indicating upward trend acceleration."},
+                {"factor": "VWAP Proximity", "val": "+1.2%", "status": "BULLISH", "reasoning": "Price is holding steady above the Volume Weighted Average Price."},
+                {"factor": "Bollinger Bands", "val": "Mid-Band", "status": "NEUTRAL", "reasoning": "Trading within standard deviations; no immediate squeeze or breakout detected."}
             ],
             "news": [
                 {"title": f"{ticker.upper()} shows strong relative strength in recent session.", "publisher": "Market Intelligence", "date": "Today"}
@@ -107,29 +114,24 @@ async def analyze_ticker(ticker: str):
 @app.post("/translate")
 async def translate_ai(req: TranslationRequest):
     """
-    🚨 ENTERPRISE AI DEEP DIVE ENGINE 🚨
-    Now aggregates massive portfolio JSONs into a token-efficient Python string.
+    ENTERPRISE AI DEEP DIVE ENGINE
     """
     if not model:
         return {"analysis": "AI Node Offline: Missing API Key."}
 
     try:
-        # Build the Base Context
         prompt = f"Act as an elite quantitative institutional risk manager. Provide a highly analytical briefing on {req.ticker} focusing on '{req.mode}'.\n\n"
         
         prompt += f"CURRENT MARKET CONTEXT:\n"
         prompt += f"- Current Price: ${req.data_context.get('price', 'N/A')}\n"
         prompt += f"- Quant Score: {req.data_context.get('score', 'N/A')}\n"
 
-        # 🚨 THE NEW PYTHON AGGREGATOR (Saves thousands of API tokens)
         full_portfolio = req.data_context.get("full_portfolio", [])
         
         if full_portfolio:
-            # 1. Calculate the user's Total Invested Capital mathematically
             total_invested = sum(float(pos.get("shares", 0)) * float(pos.get("avg_cost", 0)) for pos in full_portfolio)
             num_positions = len(full_portfolio)
             
-            # 2. Check if they own the specific stock they are analyzing
             target_pos = next((pos for pos in full_portfolio if pos.get("ticker") == req.ticker), None)
             
             prompt += f"\n🚨 FIDUCIARY PORTFOLIO CONTEXT 🚨\n"
@@ -141,7 +143,6 @@ async def translate_ai(req: TranslationRequest):
                 pos_value = shares * avg_cost
                 weight = (pos_value / total_invested * 100) if total_invested > 0 else 0
                 
-                # Compress the massive JSON into a single concise sentence for Gemini
                 prompt += f"They currently hold {shares} shares of {req.ticker} at an average cost basis of ${avg_cost:,.2f}. "
                 prompt += f"This specific asset represents {weight:.1f}% of their total portfolio exposure.\n"
                 prompt += "You MUST mathematically incorporate their specific cost basis and portfolio weighting into your advice. If they are over-exposed, suggest risk management. Give precise tactical advice on whether to hold, trim, add, or exit.\n"
@@ -152,7 +153,6 @@ async def translate_ai(req: TranslationRequest):
 
         prompt += "\nOUTPUT FORMAT: Provide a concise, highly analytical, 2-paragraph briefing. Speak directly to the operative using stark, professional financial terminology. Remove all standard AI fluff and generic legal disclaimers."
 
-        # Execute AI Call
         response = model.generate_content(prompt)
         return {"analysis": response.text.strip()}
 

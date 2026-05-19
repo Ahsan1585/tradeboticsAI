@@ -14,7 +14,7 @@ export default function PortfolioPage() {
   const [parsedCsvData, setParsedCsvData] = useState<any[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // 🚨 NEW: State for existing portfolio holdings
+  // State for existing portfolio holdings (Individual Tax Lots)
   const [existingHoldings, setExistingHoldings] = useState<any[]>([]);
 
   const [loading, setLoading] = useState(false);
@@ -36,7 +36,6 @@ export default function PortfolioPage() {
     setTimeout(() => setToastMessage(null), 3500); 
   };
 
-  // 🚨 NEW: Fetch current vault holdings
   const fetchHoldings = async (userId: string) => {
     const { data, error } = await supabase
         .from('portfolio')
@@ -49,7 +48,6 @@ export default function PortfolioPage() {
     }
   };
 
-  // 🚨 NEW: Delete specific holding
   const deleteHolding = async (id: string) => {
       if (!user) return;
       
@@ -62,8 +60,8 @@ export default function PortfolioPage() {
       if (error) {
           showToast(`Delete Error: ${error.message}`);
       } else {
-          showToast("Position purged from Vault.");
-          fetchHoldings(user.id); // Refresh the ledger
+          showToast("Tax lot purged from Vault.");
+          fetchHoldings(user.id); 
       }
   };
 
@@ -144,13 +142,13 @@ export default function PortfolioPage() {
         showToast(`SUCCESS: ${validData.length} assets synced to Neural Vault.`);
         setManualEntries([{ ticker: "", shares: "", cost: "" }]);
         setParsedCsvData([]);
-        fetchHoldings(user.id); // 🚨 Refresh the ledger after successful sync
+        fetchHoldings(user.id); 
     }
     setLoading(false);
   };
 
   return (
-    <main className="min-h-screen bg-[#020617] text-slate-300 font-sans selection:bg-blue-500/30 pb-20">
+    <main className="min-h-screen bg-[#020617] text-slate-300 font-sans selection:bg-blue-500/30 flex flex-col">
       
       {/* Toast Notifications */}
       {toastMessage && (
@@ -175,7 +173,7 @@ export default function PortfolioPage() {
       </nav>
 
       {/* Main Content Area */}
-      <div className="max-w-7xl mx-auto px-6 pt-20">
+      <div className="max-w-7xl mx-auto px-6 pt-20 flex-1 w-full">
           
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 mb-16">
             {/* LEFT COLUMN: Instructions */}
@@ -290,7 +288,7 @@ export default function PortfolioPage() {
             </div>
         </div>
 
-        {/* 🚨 NEW: Existing Holdings Viewer & Editor */}
+        {/* Existing Holdings Viewer & Editor */}
         <div className="bg-slate-900/30 border border-slate-800 rounded-[40px] p-10 mt-8 shadow-2xl">
             <h3 className="text-2xl font-black text-white mb-8 tracking-tighter">Current Vault Holdings</h3>
             
@@ -342,6 +340,11 @@ export default function PortfolioPage() {
         </div>
 
       </div>
+      
+      {/* 🚨 UPDATED COPYRIGHT */}
+      <footer className="border-t border-slate-800/50 py-8 mt-12 text-center w-full">
+          <p className="text-[10px] uppercase tracking-[0.2em] font-black text-slate-600">© 2026 TradeBotics AI. All Systems Operational.</p>
+      </footer>
     </main>
   );
 }

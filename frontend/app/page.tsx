@@ -111,7 +111,6 @@ function MarketingLanding({ onLoginClick, onRegisterClick }: { onLoginClick: () 
         setDemoLoading(false);
     };
 
-    // 🚨 NEW: Expanded Testimonials Array
     const testimonials = [
         { name: "Marcus T.", title: "Quant Trader", img: "https://randomuser.me/api/portraits/men/32.jpg", quote: "The Tactical Exit Strategy alone saved my portfolio during the last tech correction. It accurately predicted the NVDA pullback three days before the broader market reacted." },
         { name: "Sarah J.", title: "Retail Investor", img: "https://randomuser.me/api/portraits/women/44.jpg", quote: "Having fundamental DNA and real-time global sentiment synthesized into a single terminal is a game changer. I don't execute a trade without running it through TradeBotics first." },
@@ -123,7 +122,6 @@ function MarketingLanding({ onLoginClick, onRegisterClick }: { onLoginClick: () 
 
     return (
         <div className="min-h-screen bg-[#020617] text-slate-300 font-sans overflow-x-hidden selection:bg-blue-500/30">
-            {/* 🚨 CSS Animation Block for the Scrolling Marquee */}
             <style dangerouslySetInnerHTML={{__html: `
                 @keyframes scroll {
                     0% { transform: translateX(0); }
@@ -206,7 +204,6 @@ function MarketingLanding({ onLoginClick, onRegisterClick }: { onLoginClick: () 
                 </div>
             </section>
 
-            {/* 🚨 UPDATED: Infinite Scrolling Marquee Testimonials */}
             <section className="border-t border-slate-800/50 bg-[#060b1f] py-24 overflow-hidden">
                 <div className="flex flex-col items-center justify-center mb-16 px-6 text-center">
                     <div className="flex gap-1 text-blue-500 text-2xl mb-4 drop-shadow-[0_0_10px_rgba(59,130,246,0.8)]">
@@ -217,12 +214,10 @@ function MarketingLanding({ onLoginClick, onRegisterClick }: { onLoginClick: () 
                 </div>
                 
                 <div className="flex overflow-hidden w-full relative group">
-                    {/* Left/Right Fade Overlays */}
                     <div className="absolute top-0 left-0 w-32 h-full bg-gradient-to-r from-[#060b1f] to-transparent z-10 pointer-events-none" />
                     <div className="absolute top-0 right-0 w-32 h-full bg-gradient-to-l from-[#060b1f] to-transparent z-10 pointer-events-none" />
                     
                     <div className="flex gap-8 min-w-max animate-scroll">
-                        {/* Render array twice to create seamless infinite loop */}
                         {[...testimonials, ...testimonials].map((t, i) => (
                             <div key={i} className="bg-slate-900/40 border border-slate-800 p-8 rounded-[32px] text-left flex flex-col w-[400px] shrink-0 whitespace-normal hover:border-blue-500/50 transition-colors shadow-xl">
                                 <div className="flex items-center gap-1 text-blue-500 mb-4 text-lg">★★★★★</div>
@@ -261,7 +256,7 @@ function MarketingLanding({ onLoginClick, onRegisterClick }: { onLoginClick: () 
             </section>
             
             <footer className="border-t border-slate-800/50 py-10 text-center">
-                <p className="text-[10px] uppercase tracking-[0.2em] font-black text-slate-600">© 2024 TradeBotics AI. All Systems Operational.</p>
+                <p className="text-[10px] uppercase tracking-[0.2em] font-black text-slate-600">© 2026 TradeBotics AI. All Systems Operational.</p>
             </footer>
         </div>
     );
@@ -545,7 +540,7 @@ export default function Home() {
   }
 
   if (!user && showAuth) return (
-    <main className="min-h-screen bg-[#020617] flex items-center justify-center p-6 relative">
+    <main className="min-h-screen bg-[#020617] flex flex-col items-center justify-center p-6 relative">
       <button onClick={() => setShowAuth(false)} className="absolute top-8 left-8 text-slate-500 font-bold hover:text-white transition-colors text-sm">← Back to Home</button>
       {toastMessage && (
         <div className="fixed inset-0 z-[150] flex items-center justify-center pointer-events-none">
@@ -555,7 +550,7 @@ export default function Home() {
            </div>
         </div>
       )}
-      <div className="w-full max-w-md bg-slate-900/40 border border-slate-800 p-10 rounded-[48px] shadow-2xl text-center">
+      <div className="w-full max-w-md bg-slate-900/40 border border-slate-800 p-10 rounded-[48px] shadow-2xl text-center z-10">
         <h1 className="text-4xl font-black text-white tracking-tighter mb-2">TRADEBOTICS<span className="text-blue-500">AI</span></h1>
         
         <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-8">
@@ -583,12 +578,16 @@ export default function Home() {
             {isSignUp ? "← Return to Login" : "Request Access"}
         </button>
       </div>
+      {/* 🚨 UPDATED COPYRIGHT */}
+      <div className="absolute bottom-6 w-full text-center pointer-events-none">
+          <p className="text-[10px] uppercase tracking-[0.2em] font-black text-slate-600">© 2026 TradeBotics AI. All Systems Operational.</p>
+      </div>
     </main>
   );
 
   if (user && userProfile?.status === 'pending') return (
-    <main className="min-h-screen bg-[#020617] flex items-center justify-center p-6">
-      <div className="w-full max-w-md bg-slate-900/40 border border-orange-500/50 p-10 rounded-[48px] shadow-2xl text-center animate-in fade-in zoom-in-95">
+    <main className="min-h-screen bg-[#020617] flex flex-col items-center justify-center p-6 relative">
+      <div className="w-full max-w-md bg-slate-900/40 border border-orange-500/50 p-10 rounded-[48px] shadow-2xl text-center animate-in fade-in zoom-in-95 z-10">
         <div className="w-16 h-16 bg-orange-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
             <div className="w-6 h-6 border-4 border-orange-500 border-t-transparent rounded-full animate-spin" />
         </div>
@@ -600,12 +599,16 @@ export default function Home() {
             Sign Out
         </button>
       </div>
+      {/* 🚨 UPDATED COPYRIGHT */}
+      <div className="absolute bottom-6 w-full text-center pointer-events-none">
+          <p className="text-[10px] uppercase tracking-[0.2em] font-black text-slate-600">© 2026 TradeBotics AI. All Systems Operational.</p>
+      </div>
     </main>
   );
 
   if (!hasAcceptedTerms) return (
-    <main className="min-h-screen bg-[#020617] flex items-center justify-center p-6">
-      <div className="w-full max-w-lg bg-[#0f172a] border border-slate-800 rounded-[32px] p-10 shadow-2xl relative">
+    <main className="min-h-screen bg-[#020617] flex flex-col items-center justify-center p-6 relative">
+      <div className="w-full max-w-lg bg-[#0f172a] border border-slate-800 rounded-[32px] p-10 shadow-2xl relative z-10">
         <div className="flex justify-between items-center mb-8">
             <h2 className="text-xl font-bold text-white flex items-center gap-3">⚖️ Terms of Service & Legal Disclaimer</h2>
             <button onClick={handleSignOut} className="text-slate-500 text-xl font-bold">×</button>
@@ -618,6 +621,10 @@ export default function Home() {
             <div><p className="text-white font-black text-sm mb-2">4. Data Accuracy</p><p className="text-slate-400 text-[13px] leading-relaxed">While we strive for high-fidelity accuracy, market data is inherently volatile. Information reflects official exchange closes and aggregated sources, which may be delayed.</p></div>
         </div>
         <button onClick={handleAcceptTerms} className="w-full bg-red-600 hover:bg-red-500 text-white font-black py-4 mt-8 rounded-xl uppercase tracking-widest text-[11px] transition-all">I Agree & Accept Terms</button>
+      </div>
+      {/* 🚨 UPDATED COPYRIGHT */}
+      <div className="absolute bottom-6 w-full text-center pointer-events-none">
+          <p className="text-[10px] uppercase tracking-[0.2em] font-black text-slate-600">© 2026 TradeBotics AI. All Systems Operational.</p>
       </div>
     </main>
   );
@@ -684,7 +691,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* 🚨 REDESIGNED: OPERATIVE COMMAND HUB */}
+      {/* OPERATIVE COMMAND HUB */}
       {currentView === 'landing' ? (
         
         <div className="min-h-screen bg-[#020617] text-slate-300 font-sans selection:bg-blue-500/30 flex flex-col absolute inset-0 z-50">
@@ -736,6 +743,11 @@ export default function Home() {
                     </Link>
                 </div>
             </div>
+            
+            {/* 🚨 UPDATED COPYRIGHT */}
+            <footer className="border-t border-slate-800/50 py-8 text-center w-full mt-auto relative z-10 bg-[#020617]">
+                <p className="text-[10px] uppercase tracking-[0.2em] font-black text-slate-600">© 2026 TradeBotics AI. All Systems Operational.</p>
+            </footer>
         </div>
 
       ) : (
@@ -775,6 +787,20 @@ export default function Home() {
                     <div><p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Tech</p><p className="text-white font-black text-sm">{data.tech_score}/100</p></div>
                     <div><p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Fund</p><p className="text-white font-black text-sm">{data.fund_score}/100</p></div>
                   </div>
+                </div>
+              )}
+
+              {/* 🚨 RESTORED: Institutional DNA Block */}
+              {data?.fundamentals && (
+                <div className="bg-[#020617] border border-blue-500/20 rounded-[40px] p-10 shadow-[inset_0_0_20px_rgba(59,130,246,0.05)] animate-in fade-in">
+                    <p className="text-[11px] font-black text-blue-500 uppercase tracking-[0.4em] mb-10 opacity-80">Institutional DNA</p>
+                    <div className="space-y-8">
+                        <Stat label="P/E Ratio" val={data.fundamentals.pe_ratio} />
+                        <Stat label="Debt/Equity" val={data.fundamentals.debt_equity} />
+                        <Stat label="Profit Margin" val={data.fundamentals.margin} />
+                        <Stat label="Sentiment" val={data.fundamentals.sentiment} color="text-blue-500" />
+                        <Stat label="Cash Flow" val={data.fundamentals.cash_flow} />
+                    </div>
                 </div>
               )}
 
@@ -936,6 +962,11 @@ export default function Home() {
             </div>
 
           </div>
+          
+          {/* 🚨 UPDATED COPYRIGHT */}
+          <footer className="border-t border-slate-800/50 pt-8 mt-12 text-center w-full">
+              <p className="text-[10px] uppercase tracking-[0.2em] font-black text-slate-600">© 2026 TradeBotics AI. All Systems Operational.</p>
+          </footer>
         </div>
       )}
 
