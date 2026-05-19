@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { supabase } from "./lib/supabase";
 import Link from "next/link";
 
-// 🚨 PRODUCTION URL
+// 🚨 PRODUCTION URL (Change to http://localhost:8000 for local testing)
 const BACKEND_URL = "https://tradebotics-api.onrender.com";
 
 // --- HIGH-FIDELITY UI COMPONENTS ---
@@ -297,12 +297,20 @@ export default function Home() {
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [deepDiveResult, setDeepDiveResult] = useState<string | null>(null);
 
-  // 🚨 FIXED: Auth Listener implementation for robust session management
+  // 🚨 FIXED: Auth Error Failsafe
   useEffect(() => {
     const checkUser = async () => {
       const { data: { session }, error } = await supabase.auth.getSession();
       
-      if (error || !session) {
+      if (error) {
+          console.warn("Auth Token Corrupted. Purging local cache.");
+          await supabase.auth.signOut();
+          setUser(null);
+          setUserProfile(null);
+          return;
+      }
+      
+      if (!session) {
           setUser(null);
           setUserProfile(null);
       } else {
@@ -318,7 +326,6 @@ export default function Home() {
     
     checkUser();
 
-    // Background Listener for Token Rotation
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_OUT') {
           setUser(null);
@@ -518,9 +525,10 @@ export default function Home() {
                     price: data.price, 
                     stance: data.holding_analysis?.status,
                     fundamentals: data.fundamentals, 
-                    rsi: data.ledger?.find((l:any) => l.factor.toLowerCase().includes("momentum"))?.val || "N/A",
+                    ledger: data.ledger,
                     news_titles: data.news?.map((n:any)=>n.title).join(" | "),
-                    full_portfolio: portfolioVault
+                    user_shares: currentPosition?.shares || 0,
+                    user_avg_cost: currentPosition?.avg_cost || 0
                 } 
             })
         });
@@ -909,7 +917,7 @@ export default function Home() {
                       </div>
 
                       {currentPosition && (
-                          <div className={`mb-8 p-6 border rounded-3xl ${((data.price - currentPosition.avg_cost) * currentPosition.shares) >= 0 ? 'bg-green-500/5 border-green-500/20' : 'bg-red-500/5 border-red-500/20'}`}>
+                          <div className={`mb-6 p-6 border rounded-3xl ${((data.price - currentPosition.avg_cost) * currentPosition.shares) >= 0 ? 'bg-green-500/5 border-green-500/20' : 'bg-red-500/5 border-red-500/20'}`}>
                               <p className="text-[10px] font-black uppercase mb-4 text-slate-400">Vault Position Data</p>
                               <div className="flex justify-between items-end mb-4">
                                   <div>
