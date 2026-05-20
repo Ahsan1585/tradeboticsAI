@@ -161,37 +161,49 @@ async def generate_swap_thesis(req: SwapRequest):
 async def translate_ai(req: TranslationRequest):
     if not model: return {"analysis": "AI Node Offline."}
     try:
+        # 1. Extract Data
         funds = req.data_context.get("fundamentals", {})
         ledger = req.data_context.get("ledger", [])
         shares = float(req.data_context.get("user_shares", 0))
         cost = req.data_context.get("user_avg_cost", "0")
         
-        # Compress ledger into a tight string
-        ledg_str = "|".join([f"{i.get('factor')}:{i.get('val')}({i.get('status')[:1]})" for i in ledger])
+        # 2. Minify Ledger to save Input Tokens
+        ledg_str = " | ".join([f"{i.get('factor')}: {i.get('val')} ({i.get('status')})" for i in ledger])
         
-        # 🚨 UPDATED PROMPT: Forced Fill-in-the-blank template
+        # 3. Construct Payload
+        payload = (
+            f"- Price: ${req.data_context.get('price')}\n"
+            f"- Quant Score: {req.data_context.get('score')}/100\n"
+            f"- Fundamentals: PE {funds.get('pe_ratio')}, Margin {funds.get('margin')}\n"
+            f"- Technicals: {ledg_str}\n"
+        )
+        if shares > 0:
+            payload += f"- Vault Position: {shares} shares at ${cost} avg.\n"
+
+        # 4. The "Cohesive Blending" Prompt
         prompt = (
-            f"You are an elite quantitative AI. Provide a clinical, 4-part briefing for {req.ticker}.\n"
-            f"RAW DATA: Price=${req.data_context.get('price')} | Score={req.data_context.get('score')} | "
-            f"PE={funds.get('pe_ratio')} | Margin={funds.get('margin')} | Ledger=[{ledg_str}]\n\n"
-            "YOU MUST OUTPUT EXACTLY THIS FORMAT:\n"
-            "🎯 AI STRIKE ZONE: $[low] - $[high]\n"
-            "⚖️ TACTICAL VERDICT: [BUY, HOLD, TRIM, or SELL]\n"
-            "• [1 strict, professional sentence analyzing the fundamental data]\n"
-            "• [1 strict, professional sentence analyzing the technical ledger]"
+            f"Act as a ruthless quantitative AI. Synthesize this data for {req.ticker} into a cohesive, institutional-grade briefing.\n\n"
+            f"DATA PAYLOAD:\n{payload}\n\n"
+            "OUTPUT FORMAT REQUIRED:\n"
+            "🎯 AI STRIKE ZONE: $[Lower Bound] - $[Upper Bound]\n"
+            "⚖️ TACTICAL VERDICT: [BUY, HOLD, TRIM, or SELL]\n\n"
+            "BRIEFING:\n"
+            "Write exactly two concise, high-density paragraphs.\n"
+            "1. Fundamental DNA: Blend the Quant Score, PE, and Margin into a cohesive analysis of the company's valuation and operational health against the current macro backdrop.\n"
+            "2. Technical Execution: Synthesize the technical indicators (RSI, Volume, VWAP, MACD) to justify your Tactical Verdict. You MUST explicitly explain why you chose your specific Strike Zone prices based on these technicals. If the user has a Vault Position, advise on how it impacts their cost basis."
         )
 
-        # 🚨 UPDATED CONFIG: Gave it slightly more room to finish its sentences
+        # 5. Safe Generation Config (Guarantees no cutoff, extremely low cost)
         response = model.generate_content(
             prompt,
             generation_config=genai.types.GenerationConfig(
-                max_output_tokens=400,
-                temperature=0.2,
+                max_output_tokens=600, # Safe ceiling, prevents sentence decapitation
+                temperature=0.3,       # Slightly elevated to allow for cohesive narrative blending
             )
         )
         return {"analysis": response.text.strip()}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return {"analysis": f"Neural Synthesis Failed: {str(e)}"}
 
 @app.post("/summarize")
 async def summarize_article(req: SummaryRequest):
