@@ -781,6 +781,7 @@ export default function Home() {
         <div className="p-6 flex flex-col flex-1">
           <TickerTape />
           
+          {/* UPDATED HEADER WITH MARKET PULSE NAV */}
           <div className="flex justify-between items-center mb-12">
             <div>
                 <h1 className="text-5xl font-black text-white tracking-tighter cursor-pointer hover:text-blue-500 transition-colors" onClick={() => setCurrentView('landing')}>
@@ -790,6 +791,11 @@ export default function Home() {
             </div>
             
             <div className="flex gap-4 items-center">
+              {/* 🚨 NEW NAVIGATIONAL STEP */}
+              <button onClick={() => { setData(null); setTicker(""); setConfirmedTicker(""); }} className="flex items-center gap-3 px-6 py-3 bg-slate-900/50 border border-slate-800 rounded-full hover:border-blue-500/50 transition-all group">
+                  <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-300 group-hover:text-white">Market Pulse</span>
+              </button>
+
               <button onClick={() => setCurrentView('landing')} className="hidden lg:flex items-center gap-3 px-6 py-3 bg-slate-900/50 border border-slate-800 rounded-full hover:border-blue-500/50 transition-all group">
                   <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-300 group-hover:text-white">← Return to Hub</span>
               </button>
@@ -959,7 +965,9 @@ export default function Home() {
                       </button>
                       
                       <div className="mb-10 p-5 bg-blue-500/5 border-l-2 border-blue-500 rounded-r-2xl min-h-[50px]">
-                          <p className="text-slate-200 text-sm font-bold italic leading-relaxed">"{data.ai_tactical}"</p>
+                          <p className="text-slate-200 text-sm font-bold italic leading-relaxed">
+                              "{data.ai_tactical || "Market conditions currently being synthesized by the neural engine. Please wait for signal calibration."}"
+                          </p>
                       </div>
 
                     </>
