@@ -204,25 +204,23 @@ async def translate_ai(req: TranslationRequest):
 async def summarize_article(req: SummaryRequest):
     if not model: return {"summary": ["AI Node Offline."]}
     try:
-        # 🚨 UPDATED PROMPT: Requesting a cohesive, short paragraph instead of bullets
+        # 🚨 Enforce low-cost length via Strict Prompting rather than a hard API kill-switch
         prompt = (
-            f"Act as a financial analyst. Write a concise, 2-to-3 sentence institutional "
-            f"summary expanding on this headline: '{req.title}'"
+            f"Act as a financial analyst. Write a concise, institutional summary "
+            f"expanding on this headline: '{req.title}'.\n\n"
+            f"STRICT RULES:\n"
+            f"- Output exactly one cohesive paragraph.\n"
+            f"- Maximum 3 sentences.\n"
+            f"- Be highly informative but extremely brief."
         )
         
-        response = model.generate_content(
-            prompt,
-            generation_config=genai.types.GenerationConfig(
-                max_output_tokens=150, # Costs ~$0.000045, well under your $0.0003 budget
-                temperature=0.2
-            )
-        )
+        # Removed generation_config to prevent mid-sentence cutoffs
+        response = model.generate_content(prompt)
         
-        # The frontend expects an array of strings to map into <p> tags
-        # We strip the text and wrap the single paragraph in a list
+        # Wrap the single paragraph in a list so the frontend renders it correctly
         return {"summary": [response.text.strip()]}
         
-    except Exception: 
+    except Exception as e: 
         return {"summary": ["Summary temporarily unavailable."]}
 
 @app.get("/market-briefing")
