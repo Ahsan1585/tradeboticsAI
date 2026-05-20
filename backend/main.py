@@ -161,7 +161,6 @@ async def generate_swap_thesis(req: SwapRequest):
 async def translate_ai(req: TranslationRequest):
     if not model: return {"analysis": "AI Node Offline."}
     try:
-        # 🚨 ENHANCEMENT: Extreme Token Minimization (Lowers cost per scan by ~70%)
         funds = req.data_context.get("fundamentals", {})
         ledger = req.data_context.get("ledger", [])
         shares = float(req.data_context.get("user_shares", 0))
@@ -170,23 +169,23 @@ async def translate_ai(req: TranslationRequest):
         # Compress ledger into a tight string
         ledg_str = "|".join([f"{i.get('factor')}:{i.get('val')}({i.get('status')[:1]})" for i in ledger])
         
+        # 🚨 UPDATED PROMPT: Forced Fill-in-the-blank template
         prompt = (
-            f"TASK: Quant Briefing for {req.ticker}.\n"
-            f"DATA:[P:${req.data_context.get('price')}|QS:{req.data_context.get('score')}|"
-            f"PE:{funds.get('pe_ratio')}|MGN:{funds.get('margin')}|{ledg_str}|POS:{shares}x${cost}]\n\n"
-            "RULES:\n"
-            "Line 1: '🎯 AI STRIKE ZONE: $[low] - $[high]'\n"
-            "Line 2: '⚖️ TACTICAL VERDICT: [BUY/HOLD/TRIM/SELL]'\n"
-            "Line 3: 2 bullet points on Macro/Fundamentals.\n"
-            "Line 4: 2 bullet points on Technicals.\n"
-            "STRICT: No essays. Be clinical, concise, and ruthless."
+            f"You are an elite quantitative AI. Provide a clinical, 4-part briefing for {req.ticker}.\n"
+            f"RAW DATA: Price=${req.data_context.get('price')} | Score={req.data_context.get('score')} | "
+            f"PE={funds.get('pe_ratio')} | Margin={funds.get('margin')} | Ledger=[{ledg_str}]\n\n"
+            "YOU MUST OUTPUT EXACTLY THIS FORMAT:\n"
+            "🎯 AI STRIKE ZONE: $[low] - $[high]\n"
+            "⚖️ TACTICAL VERDICT: [BUY, HOLD, TRIM, or SELL]\n"
+            "• [1 strict, professional sentence analyzing the fundamental data]\n"
+            "• [1 strict, professional sentence analyzing the technical ledger]"
         )
 
-        # 🚨 ENHANCEMENT: Output Token Restriction
+        # 🚨 UPDATED CONFIG: Gave it slightly more room to finish its sentences
         response = model.generate_content(
             prompt,
             generation_config=genai.types.GenerationConfig(
-                max_output_tokens=250,
+                max_output_tokens=400,
                 temperature=0.2,
             )
         )
