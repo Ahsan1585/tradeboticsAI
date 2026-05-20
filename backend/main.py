@@ -204,10 +204,26 @@ async def translate_ai(req: TranslationRequest):
 async def summarize_article(req: SummaryRequest):
     if not model: return {"summary": ["AI Node Offline."]}
     try:
-        prompt = f"Summarize this financial headline into 2 professional bullet points. Headline: {req.title}"
-        response = model.generate_content(prompt)
-        return {"summary": [p.strip() for p in response.text.split('\n') if p.strip()]}
-    except Exception: return {"summary": ["Summary unavailable."]}
+        # 🚨 UPDATED PROMPT: Requesting a cohesive, short paragraph instead of bullets
+        prompt = (
+            f"Act as a financial analyst. Write a concise, 2-to-3 sentence institutional "
+            f"summary expanding on this headline: '{req.title}'"
+        )
+        
+        response = model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                max_output_tokens=150, # Costs ~$0.000045, well under your $0.0003 budget
+                temperature=0.2
+            )
+        )
+        
+        # The frontend expects an array of strings to map into <p> tags
+        # We strip the text and wrap the single paragraph in a list
+        return {"summary": [response.text.strip()]}
+        
+    except Exception: 
+        return {"summary": ["Summary temporarily unavailable."]}
 
 @app.get("/market-briefing")
 async def market_briefing():
