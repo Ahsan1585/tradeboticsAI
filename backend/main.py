@@ -89,7 +89,7 @@ async def analyze_ticker(ticker: str):
         
         vol_surge = f"{round((volume / avg_volume) * 100, 1)}%" if avg_volume > 0 else "N/A"
 
-        # --- PLACE THIS LIST CREATION BEFORE YOUR RETURN ---
+        # --- PRECISE LEDGER CONSTRUCTION ---
         ledger = [
             {"factor": "Momentum (RSI)", "val": "62.5" if tech_score > 50 else "38.2", "status": "BULLISH" if tech_score > 50 else "BEARISH", "reasoning": "Evaluates relative strength index based on recent price action."},
             {"factor": "Institutional Flow", "val": "High" if volume > avg_volume else "Low", "status": "BULLISH" if volume > avg_volume else "NEUTRAL", "reasoning": "Measures real-time volume divergence from historical baseline."},
@@ -98,7 +98,7 @@ async def analyze_ticker(ticker: str):
             {"factor": "Bollinger Bands", "val": "Upper Band" if tech_score > 70 else "Lower Band" if tech_score < 40 else "Mid-Band", "status": "BULLISH" if tech_score > 70 else "BEARISH" if tech_score < 40 else "NEUTRAL", "reasoning": "Evaluates standard deviation channels for immediate squeeze or breakout."}
         ]
 
-        # --- ENSURE 'ledger': ledger IS IN YOUR RETURN DICTIONARY ---
+        # 3. UNIFIED RETURN STATEMENT
         return {
             "ticker": ticker.upper(),
             "company_name": stock.info.get("shortName", ticker.upper()),
@@ -108,31 +108,16 @@ async def analyze_ticker(ticker: str):
             "fund_score": int(fund_score),
             "volume": f"{volume:,}",
             "vol_surge": vol_surge,
-            "ledger": ledger,  # <--- THIS IS THE KEY PART
-            "ai_tactical": f"Market conditions evaluated...",
-            "fundamentals": { ... }
-        }
-
-        # 3. RETURN EVERYTHING AT THE VERY END
-        return {
-            "ticker": ticker.upper(),
-            "company_name": stock.info.get("shortName", ticker.upper()),
-            "price": current_price,
-            "score": total_score,
-            "tech_score": int(tech_score),
-            "fund_score": int(fund_score),
-            "volume": f"{volume:,}",
-            "vol_surge": vol_surge,
+            "ledger": ledger,
             "ai_tactical": f"Market conditions evaluated for {ticker.upper()}. Execution guidance dynamically adjusting to real-time volatility.",
             "fundamentals": {
-                "market_cap": formatted_mcap, # Market Cap is now safely included
+                "market_cap": formatted_mcap, 
                 "pe_ratio": str(round(pe, 2)) if pe else "N/A",
                 "debt_equity": str(stock.info.get("debtToEquity", "N/A")),
                 "margin": f"{round(margins * 100, 2)}%" if margins else "N/A",
                 "sentiment": "BULLISH" if total_score > 65 else "BEARISH" if total_score < 40 else "NEUTRAL",
                 "cash_flow": "POSITIVE" if margins and margins > 0 else "NEGATIVE"
-            },
-            # ... (keep your holding_analysis, ledger, and news arrays here as they were in your master build)
+            }
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
