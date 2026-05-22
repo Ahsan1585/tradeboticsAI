@@ -7,18 +7,25 @@ import math
 import yfinance as yf
 import google.generativeai as genai
 from dotenv import load_dotenv
+import requests_cache
 
 load_dotenv()
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"], # In production, replace "*" with your Vercel URL
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# --- CACHE INITIALIZATION ---
+# Protects against Yahoo Finance HTTP 429 Rate Limits
+yf_cache = requests_cache.CachedSession('yfinance.cache', backend='sqlite', expire_after=300)
+yf_cache.headers['User-agent'] = 'TradeBotics-AI-Engine/1.0'
+
+# --- AI CONFIGURATION ---
 GOOGLE_API_KEY = os.getenv("GEMINI_API_KEY")
 if GOOGLE_API_KEY:
     genai.configure(api_key=GOOGLE_API_KEY)
@@ -26,6 +33,7 @@ if GOOGLE_API_KEY:
 else:
     model = None
 
+# --- REQUEST MODELS ---
 class TranslationRequest(BaseModel):
     ticker: str
     data_context: Dict[str, Any]
@@ -42,12 +50,15 @@ class SwapRequest(BaseModel):
 
 class PortfolioRequest(BaseModel):
     holdings: List[Dict[str, Any]]
-    trade_style: str = "Long Term" # Added the new variable with a default
+    trade_style: str = "Long Term"
+
+# --- ENDPOINTS ---
 
 @app.get("/analyze/{ticker}")
 async def analyze_ticker(ticker: str):
     try:
-        stock = yf.Ticker(ticker)
+        # Utilizing the cached session
+        stock = yf.Ticker(ticker, session=yf_cache)
         hist = stock.history(period="3mo")
         if hist.empty: raise HTTPException(status_code=404, detail="Ticker data not found.")
 
@@ -56,11 +67,9 @@ async def analyze_ticker(ticker: str):
         volume = int(hist['Volume'].iloc[-1])
         avg_volume = int(hist['Volume'].mean())
 
-        # 1. DEFINE VARIABLES BEFORE USING THEM
         pe = stock.info.get("trailingPE")
         margins = stock.info.get("profitMargins")
         
-        # Grab the raw market cap
         raw_mcap = stock.info.get("marketCap")
         formatted_mcap = "N/A"
         if raw_mcap:
@@ -69,7 +78,6 @@ async def analyze_ticker(ticker: str):
             else:
                 formatted_mcap = f"${raw_mcap / 1e9:.2f} Billion"
 
-        # 2. RUN SCORING LOGIC
         tech_base = 50
         if len(hist) >= 20:
             sma_20 = hist['Close'].rolling(window=20).mean().iloc[-1]
@@ -89,7 +97,7 @@ async def analyze_ticker(ticker: str):
         
         vol_surge = f"{round((volume / avg_volume) * 100, 1)}%" if avg_volume > 0 else "N/A"
 
-        # --- PRECISE LEDGER CONSTRUCTION ---
+        # DYNAMIC NEURAL LEDGER
         ledger = [
             {
                 "factor": "Momentum (RSI)", 
@@ -123,7 +131,6 @@ async def analyze_ticker(ticker: str):
             }
         ]
 
-        # 3. UNIFIED RETURN STATEMENT
         return {
             "ticker": ticker.upper(),
             "company_name": stock.info.get("shortName", ticker.upper()),
@@ -158,16 +165,18 @@ async def generate_swap_thesis(req: SwapRequest):
             "Communication Services": {"ticker": "META", "score": 89},
             "Energy": {"ticker": "XOM", "score": 82}
         }
-        stock = yf.Ticker(req.ticker)
+        stock = yf.Ticker(req.ticker, session=yf_cache)
         sector = stock.info.get("sector", "Technology")
         target = sector_targets.get(sector, sector_targets["Technology"])
         if req.ticker.upper() == target["ticker"]: target = {"ticker": "MSFT", "score": 91}
-        target_stock = yf.Ticker(target["ticker"])
+        
+        target_stock = yf.Ticker(target["ticker"], session=yf_cache)
         target_hist = target_stock.history(period="1d")
         target_price = 150.00 if target_hist.empty else round(target_hist['Close'].iloc[-1], 2)
         freed_capital = req.shares * req.price
         target_shares = math.floor(freed_capital / target_price)
         thesis = f"Liquidating your {req.shares} shares of {req.ticker.upper()} frees up ${freed_capital:,.2f} in capital. Reallocating into {target_shares} shares of {target['ticker']} (Quant Score {target['score']}) upgrades asset quality and increases Alpha potential."
+        
         return {"target_ticker": target["ticker"], "target_price": target_price, "target_score": target["score"], "target_shares": target_shares, "freed_capital": freed_capital, "thesis": thesis}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -243,7 +252,6 @@ async def analyze_portfolio(req: PortfolioRequest):
         if not req.holdings:
             raise HTTPException(status_code=400, detail="No holdings provided.")
 
-        # 1. Fetch and aggregate User Portfolio Data cleanly
         for h in req.holdings:
             try:
                 ticker = str(h.get('ticker', '')).strip().upper()
@@ -252,7 +260,8 @@ async def analyze_portfolio(req: PortfolioRequest):
                 if not ticker: continue
                 if ticker == "ETHU": ticker = "ETH-USD"
                 
-                stock = yf.Ticker(ticker)
+                # Utilizing the cached session
+                stock = yf.Ticker(ticker, session=yf_cache)
                 hist = stock.history(period="1d")
                 if hist.empty: continue 
                 
@@ -273,12 +282,11 @@ async def analyze_portfolio(req: PortfolioRequest):
 
         batch_data = "\n".join([f"{p['ticker']}: {p['shares']} shares @ live ${p['current_price']} (Total: ${p['value']})" for p in portfolio_summary])
         
-        # 2. STRATEGY-SPECIFIC MACRO SCREENER UNIVERSES
         if req.trade_style == "Day Trade":
             screener_universe = ["NVDA", "AMD", "SMCI", "TSLA", "COIN"]
         elif req.trade_style == "Swing Trade":
             screener_universe = ["META", "AVGO", "NFLX", "PLTR", "NOW"]
-        else: # Long Term
+        else: 
             screener_universe = ["LLY", "JPM", "COST", "WMT", "UNH"]
 
         scored_candidates = []
@@ -286,14 +294,14 @@ async def analyze_portfolio(req: PortfolioRequest):
             try:
                 if any(h['ticker'] == t for h in portfolio_summary): continue
 
-                stock = yf.Ticker(t)
+                # Utilizing the cached session
+                stock = yf.Ticker(t, session=yf_cache)
                 hist = stock.history(period="1mo")
                 if hist.empty: continue
 
                 price = round(hist['Close'].iloc[-1], 2)
                 prev_price = round(hist['Close'].iloc[-2], 2)
                 
-                # Tech Base calculation
                 tech_base = 50
                 if len(hist) >= 20:
                     sma_20 = hist['Close'].rolling(window=20).mean().iloc[-1]
@@ -302,7 +310,6 @@ async def analyze_portfolio(req: PortfolioRequest):
                 if price > prev_price: tech_base += 15
                 else: tech_base -= 15
 
-                # Fundamental / Macro DNA
                 info = stock.info
                 pe = info.get("trailingPE", 0)
                 margins = info.get("profitMargins", 0)
@@ -313,17 +320,16 @@ async def analyze_portfolio(req: PortfolioRequest):
                 elif pe and pe > 50: fund_base -= 15
                 if margins and margins > 0.15: fund_base += 20
 
-                # 🚨 HORIZON PROFILE MULTIPLIER (Forcing Macro Alignment)
                 style_bonus = 0
                 if req.trade_style == "Day Trade" and t in ["NVDA", "TSLA", "COIN"]:
-                    style_bonus = 20 # High Beta reward
+                    style_bonus = 20 
                 elif req.trade_style == "Swing Trade" and t in ["META", "AVGO", "PLTR"]:
-                    style_bonus = 20 # High Relative Strength/Velocity reward
+                    style_bonus = 20 
                 elif req.trade_style == "Long Term" and t in ["LLY", "COST", "JPM"]:
-                    style_bonus = 20 # Structural Moat reward
+                    style_bonus = 20 
 
                 total_score = math.ceil(((tech_base + fund_base) / 2) + style_bonus)
-                total_score = max(10, min(99, total_score)) # Keep within bounded index
+                total_score = max(10, min(99, total_score)) 
 
                 health_str = f"Sector: {sector} | P/E: {round(pe, 1) if pe else 'N/A'} | Margin: {round(margins*100, 1) if margins else '0'}%"
 
@@ -336,7 +342,6 @@ async def analyze_portfolio(req: PortfolioRequest):
             except Exception:
                 continue
 
-        # Sort and select the apex macro-aligned candidate
         scored_candidates.sort(key=lambda x: x['score'], reverse=True)
         elite_basket = scored_candidates[:3]
 
@@ -344,7 +349,6 @@ async def analyze_portfolio(req: PortfolioRequest):
         for c in elite_basket:
             basket_str += f"- {c['ticker']}: Live Price ${c['price']} | Quant Score: {c['score']} | {c['health']}\n"
 
-        # 3. CONCISE SPECIFIC EXECUTION PROMPT
         prompt = (
             f"You are a Quantitative Execution Engine. Process this portfolio data:\n{batch_data}\n\n"
             f"Target Strategy Horizon: {req.trade_style}\n\n"
