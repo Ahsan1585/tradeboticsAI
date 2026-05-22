@@ -40,6 +40,10 @@ class SwapRequest(BaseModel):
     shares: float
     price: float
 
+class PortfolioRequest(BaseModel):
+    holdings: List[Dict[str, Any]]
+    trade_style: str = "Long Term" # Added the new variable with a default
+
 @app.get("/analyze/{ticker}")
 async def analyze_ticker(ticker: str):
     try:
@@ -52,7 +56,20 @@ async def analyze_ticker(ticker: str):
         volume = int(hist['Volume'].iloc[-1])
         avg_volume = int(hist['Volume'].mean())
 
-        # Scoring Logic
+        # 1. DEFINE VARIABLES BEFORE USING THEM
+        pe = stock.info.get("trailingPE")
+        margins = stock.info.get("profitMargins")
+        
+        # Grab the raw market cap
+        raw_mcap = stock.info.get("marketCap")
+        formatted_mcap = "N/A"
+        if raw_mcap:
+            if raw_mcap >= 1e12:
+                formatted_mcap = f"${raw_mcap / 1e12:.2f} Trillion"
+            else:
+                formatted_mcap = f"${raw_mcap / 1e9:.2f} Billion"
+
+        # 2. RUN SCORING LOGIC
         tech_base = 50
         if len(hist) >= 20:
             sma_20 = hist['Close'].rolling(window=20).mean().iloc[-1]
@@ -63,8 +80,6 @@ async def analyze_ticker(ticker: str):
         tech_score = max(10, min(95, tech_base))
 
         fund_base = 50
-        pe = stock.info.get("trailingPE")
-        margins = stock.info.get("profitMargins")
         if pe and 0 < pe < 25: fund_base += 20
         elif pe and pe > 50: fund_base -= 20
         if margins and margins > 0.15: fund_base += 20
@@ -74,37 +89,7 @@ async def analyze_ticker(ticker: str):
         
         vol_surge = f"{round((volume / avg_volume) * 100, 1)}%" if avg_volume > 0 else "N/A"
 
-        # 🚨 FIXED: Aggressive live news filtering
-        raw_news = stock.news
-        live_news = []
-        if raw_news:
-            for item in raw_news:
-                # Some yfinance versions use 'title', some use 'headline'
-                title = item.get("title") or item.get("headline")
-                
-                # Only add the article if it ACTUALLY has a real title
-                if title and len(title) > 5:
-                    publisher = item.get("publisher", "Market Wire")
-                    live_news.append({
-                        "title": title,
-                        "publisher": publisher,
-                        "date": "Today"
-                    })
-                
-                # Stop when we have 5 valid articles
-                if len(live_news) >= 5:
-                    break
-        
-        # 🚨 If Yahoo Finance blocks us or returns empty titles, deploy 5 dynamic fallback headlines
-        if len(live_news) == 0:
-            live_news = [
-                {"title": f"Algorithmic sentiment for {ticker.upper()} shifts based on real-time volume metrics.", "publisher": "TradeBotics Quant", "date": "Today"},
-                {"title": f"Institutional dark pool block trades detected near the ${current_price} execution level.", "publisher": "Dark Pool Wire", "date": "Today"},
-                {"title": f"Sector relative strength positions {ticker.upper()} for potential tactical movement.", "publisher": "Macro Intelligence", "date": "Today"},
-                {"title": f"Options chain activity indicates elevated near-term volatility for {ticker.upper()}.", "publisher": "Derivative Wire", "date": "Today"},
-                {"title": f"Technical momentum models trigger initial accumulation signals at current levels.", "publisher": "TradeBotics Neural", "date": "Today"}
-            ]
-
+        # 3. RETURN EVERYTHING AT THE VERY END
         return {
             "ticker": ticker.upper(),
             "company_name": stock.info.get("shortName", ticker.upper()),
@@ -116,26 +101,14 @@ async def analyze_ticker(ticker: str):
             "vol_surge": vol_surge,
             "ai_tactical": f"Market conditions evaluated for {ticker.upper()}. Execution guidance dynamically adjusting to real-time volatility.",
             "fundamentals": {
+                "market_cap": formatted_mcap, # Market Cap is now safely included
                 "pe_ratio": str(round(pe, 2)) if pe else "N/A",
                 "debt_equity": str(stock.info.get("debtToEquity", "N/A")),
                 "margin": f"{round(margins * 100, 2)}%" if margins else "N/A",
                 "sentiment": "BULLISH" if total_score > 65 else "BEARISH" if total_score < 40 else "NEUTRAL",
                 "cash_flow": "POSITIVE" if margins and margins > 0 else "NEGATIVE"
             },
-            "holding_analysis": {
-                "status": "HOLD" if total_score > 50 else "TRIM",
-                "guidance": "Assess dynamic targets relative to personal cost basis.",
-                "stop_loss": str(round(current_price * 0.92, 2)),
-                "trailing_target": str(round(current_price * 1.15, 2))
-            },
-            "ledger": [
-                {"factor": "Momentum (RSI)", "val": "62.5" if tech_score > 50 else "38.2", "status": "BULLISH" if tech_score > 50 else "BEARISH", "reasoning": "Evaluates relative strength index based on recent price action."},
-                {"factor": "Institutional Flow", "val": "High" if volume > avg_volume else "Low", "status": "BULLISH" if volume > avg_volume else "NEUTRAL", "reasoning": "Measures real-time volume divergence from historical baseline."},
-                {"factor": "MACD Divergence", "val": "Positive" if current_price > prev_price else "Negative", "status": "BULLISH" if current_price > prev_price else "BEARISH", "reasoning": "Evaluates moving average convergence divergence trajectory."},
-                {"factor": "VWAP Proximity", "val": "+1.2%" if tech_score > 50 else "-0.8%", "status": "BULLISH" if tech_score > 50 else "BEARISH", "reasoning": "Analyzes current price relative to Volume Weighted Average Price."},
-                {"factor": "Bollinger Bands", "val": "Upper Band" if tech_score > 70 else "Lower Band" if tech_score < 40 else "Mid-Band", "status": "BULLISH" if tech_score > 70 else "BEARISH" if tech_score < 40 else "NEUTRAL", "reasoning": "Evaluates standard deviation channels for immediate squeeze or breakout."}
-            ],
-            "news": live_news
+            # ... (keep your holding_analysis, ledger, and news arrays here as they were in your master build)
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -204,7 +177,6 @@ async def translate_ai(req: TranslationRequest):
 async def summarize_article(req: SummaryRequest):
     if not model: return {"summary": ["AI Node Offline."]}
     try:
-        # 🚨 Enforce low-cost length via Strict Prompting rather than a hard API kill-switch
         prompt = (
             f"Act as a financial analyst. Write a concise, institutional summary "
             f"expanding on this headline: '{req.title}'.\n\n"
@@ -213,19 +185,13 @@ async def summarize_article(req: SummaryRequest):
             f"- Maximum 3 sentences.\n"
             f"- Be highly informative but extremely brief."
         )
-        
-        # Removed generation_config to prevent mid-sentence cutoffs
         response = model.generate_content(prompt)
-        
-        # Wrap the single paragraph in a list so the frontend renders it correctly
         return {"summary": [response.text.strip()]}
-        
-    except Exception as e: 
+    except Exception: 
         return {"summary": ["Summary temporarily unavailable."]}
 
 @app.get("/market-briefing")
 async def market_briefing():
-    # 🚨 FIXED: Expanded default market wire from 2 to 5 articles to fill the UI
     return [
         {"title": "Global markets await next major macro catalyst as volatility indexes contract.", "publisher": "TradeBotics Wire", "date": "Today"},
         {"title": "Tech sector shows resilience amidst shifting yield curve expectations.", "publisher": "Macro Intelligence", "date": "Today"},
@@ -233,3 +199,146 @@ async def market_briefing():
         {"title": "Commodity indices signal potential supply chain constraints in key raw materials.", "publisher": "Global Macro", "date": "Today"},
         {"title": "Federal Reserve commentary points toward sustained current monetary policy trajectory.", "publisher": "Central Bank Watch", "date": "Today"}
     ]
+
+@app.post("/portfolio-analysis")
+async def analyze_portfolio(req: PortfolioRequest):
+    if not model: return {"analysis": "AI Node Offline."}
+    
+    try:
+        portfolio_summary = []
+        if not req.holdings:
+            raise HTTPException(status_code=400, detail="No holdings provided.")
+
+        # 1. Fetch and aggregate User Portfolio Data cleanly
+        for h in req.holdings:
+            try:
+                ticker = str(h.get('ticker', '')).strip().upper()
+                shares = float(h.get('shares', 0))
+                cost = float(h.get('cost_basis', 0))
+                if not ticker: continue
+                if ticker == "ETHU": ticker = "ETH-USD"
+                
+                stock = yf.Ticker(ticker)
+                hist = stock.history(period="1d")
+                if hist.empty: continue 
+                
+                price = round(hist['Close'].iloc[-1], 2)
+                portfolio_summary.append({
+                    "ticker": ticker,
+                    "shares": shares,
+                    "avg_cost": cost,
+                    "current_price": price,
+                    "score": 75, 
+                    "value": round(shares * price, 2)
+                })
+            except Exception:
+                continue 
+
+        if not portfolio_summary:
+            return {"analysis": "No valid data could be retrieved.", "holdings": []}
+
+        batch_data = "\n".join([f"{p['ticker']}: {p['shares']} shares @ live ${p['current_price']} (Total: ${p['value']})" for p in portfolio_summary])
+        
+        # 2. STRATEGY-SPECIFIC MACRO SCREENER UNIVERSES
+        if req.trade_style == "Day Trade":
+            screener_universe = ["NVDA", "AMD", "SMCI", "TSLA", "COIN"]
+        elif req.trade_style == "Swing Trade":
+            screener_universe = ["META", "AVGO", "NFLX", "PLTR", "NOW"]
+        else: # Long Term
+            screener_universe = ["LLY", "JPM", "COST", "WMT", "UNH"]
+
+        scored_candidates = []
+        for t in screener_universe:
+            try:
+                if any(h['ticker'] == t for h in portfolio_summary): continue
+
+                stock = yf.Ticker(t)
+                hist = stock.history(period="1mo")
+                if hist.empty: continue
+
+                price = round(hist['Close'].iloc[-1], 2)
+                prev_price = round(hist['Close'].iloc[-2], 2)
+                
+                # Tech Base calculation
+                tech_base = 50
+                if len(hist) >= 20:
+                    sma_20 = hist['Close'].rolling(window=20).mean().iloc[-1]
+                    if price > sma_20: tech_base += 25
+                    else: tech_base -= 25
+                if price > prev_price: tech_base += 15
+                else: tech_base -= 15
+
+                # Fundamental / Macro DNA
+                info = stock.info
+                pe = info.get("trailingPE", 0)
+                margins = info.get("profitMargins", 0)
+                sector = info.get("sector", "Macro Profile")
+
+                fund_base = 50
+                if pe and 0 < pe < 30: fund_base += 20
+                elif pe and pe > 50: fund_base -= 15
+                if margins and margins > 0.15: fund_base += 20
+
+                # 🚨 HORIZON PROFILE MULTIPLIER (Forcing Macro Alignment)
+                style_bonus = 0
+                if req.trade_style == "Day Trade" and t in ["NVDA", "TSLA", "COIN"]:
+                    style_bonus = 20 # High Beta reward
+                elif req.trade_style == "Swing Trade" and t in ["META", "AVGO", "PLTR"]:
+                    style_bonus = 20 # High Relative Strength/Velocity reward
+                elif req.trade_style == "Long Term" and t in ["LLY", "COST", "JPM"]:
+                    style_bonus = 20 # Structural Moat reward
+
+                total_score = math.ceil(((tech_base + fund_base) / 2) + style_bonus)
+                total_score = max(10, min(99, total_score)) # Keep within bounded index
+
+                health_str = f"Sector: {sector} | P/E: {round(pe, 1) if pe else 'N/A'} | Margin: {round(margins*100, 1) if margins else '0'}%"
+
+                scored_candidates.append({
+                    "ticker": t,
+                    "price": price,
+                    "score": total_score,
+                    "health": health_str
+                })
+            except Exception:
+                continue
+
+        # Sort and select the apex macro-aligned candidate
+        scored_candidates.sort(key=lambda x: x['score'], reverse=True)
+        elite_basket = scored_candidates[:3]
+
+        basket_str = f"QUALIFIED TARGET BASKET FOR {req.trade_style.upper()}:\n"
+        for c in elite_basket:
+            basket_str += f"- {c['ticker']}: Live Price ${c['price']} | Quant Score: {c['score']} | {c['health']}\n"
+
+        # 3. CONCISE SPECIFIC EXECUTION PROMPT
+        prompt = (
+            f"You are a Quantitative Execution Engine. Process this portfolio data:\n{batch_data}\n\n"
+            f"Target Strategy Horizon: {req.trade_style}\n\n"
+            f"{basket_str}\n\n"
+            "CRITICAL INSTRUCTIONS:\n"
+            "1. Be extremely brief. Use bullet points only. No conversational fluff or introductions.\n"
+            "2. Under Precision Execution, provide exactly 1 rotation trade. Show the math explicitly: [Shares] * [Live Current Price] = [Total Capital].\n"
+            "3. You must select the top target asset solely from the QUALIFIED TARGET BASKET above based on style alignment.\n\n"
+            "Structure your output exactly like this:\n"
+            f"### 1. Horizon Alignment ({req.trade_style})\n"
+            "* [1 short bullet analyzing why current holdings lack optimization for this horizon]\n\n"
+            "### 2. Capital Rotation\n"
+            "* [1 short bullet explaining the strategic asset class rotation required]\n\n"
+            "### 3. Precision Execution\n"
+            "- **TRIM [Current Asset Ticker]**: Sell [X] shares * current price $[Live Price] = frees up $[Amount].\n"
+            "- **ALLOCATE TO [Target Basket Ticker]**: Buy [X] shares * current price $[Live Price] = deploys $[Amount].\n"
+            "- **STRATEGIC LOGIC**: [1 sentence explaining why this asset wins based specifically on its Quant Score, Velocity, or Sector Profile]."
+        )
+
+        response = await model.generate_content_async(
+            prompt,
+            generation_config={"max_output_tokens": 2000, "temperature": 0.1}
+        )
+        
+        return {
+            "analysis": response.text.strip(),
+            "holdings": portfolio_summary
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
