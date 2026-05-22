@@ -379,16 +379,26 @@ export default function TerminalPage() {
           {/* MIDDLE PANEL */}
           <div className="col-span-12 lg:col-span-6 flex flex-col gap-8">
             {!data ? (
-                <div className="flex flex-col gap-8 h-full"><div className="bg-slate-900/30 border border-slate-800 p-10 rounded-[48px] text-center"><h3 className="text-3xl font-bold text-white uppercase tracking-widest">Market Pulse</h3></div><MarketScreener /></div>
+                <div className="flex flex-col gap-8 h-full">
+                    <div className="bg-slate-900/30 border border-slate-800 p-10 rounded-[48px] text-center">
+                        <h3 className="text-3xl font-bold text-white uppercase tracking-widest">Market Pulse</h3>
+                    </div>
+                    <MarketScreener />
+                </div>
             ) : (
               <>
                 <TradingViewWidget symbol={confirmedTicker} />
+                
+                {/* THIS RENDERS THE LEDGER WE DEFINED IN PYTHON */}
                 <div className="grid grid-cols-1 gap-4">
                   {data.ledger?.map((item: any, i: number) => (
                     <div key={i} className="bg-slate-900/30 border border-slate-800/50 p-8 rounded-[40px] flex justify-between items-start transition-all hover:border-slate-600">
                       <div className="flex-1">
                           <div className="flex justify-between items-center mb-4">
-                              <div><p className="text-white font-black text-xl">{item.factor}</p><p className="text-[11px] text-blue-500 font-bold uppercase mt-1">{item.status}</p></div>
+                              <div>
+                                  <p className="text-white font-black text-xl">{item.factor}</p>
+                                  <p className="text-[11px] text-blue-500 font-bold uppercase mt-1">{item.status}</p>
+                              </div>
                               <span className="text-white font-black text-xl">{item.val}</span>
                           </div>
                           <p className="text-slate-400 text-sm italic border-l-2 border-slate-800 pl-4 leading-relaxed font-medium">"{item.reasoning}"</p>
