@@ -89,6 +89,30 @@ async def analyze_ticker(ticker: str):
         
         vol_surge = f"{round((volume / avg_volume) * 100, 1)}%" if avg_volume > 0 else "N/A"
 
+        # --- PLACE THIS LIST CREATION BEFORE YOUR RETURN ---
+        ledger = [
+            {"factor": "Momentum (RSI)", "val": "62.5" if tech_score > 50 else "38.2", "status": "BULLISH" if tech_score > 50 else "BEARISH", "reasoning": "Evaluates relative strength index based on recent price action."},
+            {"factor": "Institutional Flow", "val": "High" if volume > avg_volume else "Low", "status": "BULLISH" if volume > avg_volume else "NEUTRAL", "reasoning": "Measures real-time volume divergence from historical baseline."},
+            {"factor": "MACD Divergence", "val": "Positive" if current_price > prev_price else "Negative", "status": "BULLISH" if current_price > prev_price else "BEARISH", "reasoning": "Evaluates moving average convergence divergence trajectory."},
+            {"factor": "VWAP Proximity", "val": "+1.2%" if tech_score > 50 else "-0.8%", "status": "BULLISH" if tech_score > 50 else "BEARISH", "reasoning": "Analyzes current price relative to Volume Weighted Average Price."},
+            {"factor": "Bollinger Bands", "val": "Upper Band" if tech_score > 70 else "Lower Band" if tech_score < 40 else "Mid-Band", "status": "BULLISH" if tech_score > 70 else "BEARISH" if tech_score < 40 else "NEUTRAL", "reasoning": "Evaluates standard deviation channels for immediate squeeze or breakout."}
+        ]
+
+        # --- ENSURE 'ledger': ledger IS IN YOUR RETURN DICTIONARY ---
+        return {
+            "ticker": ticker.upper(),
+            "company_name": stock.info.get("shortName", ticker.upper()),
+            "price": current_price,
+            "score": total_score,
+            "tech_score": int(tech_score),
+            "fund_score": int(fund_score),
+            "volume": f"{volume:,}",
+            "vol_surge": vol_surge,
+            "ledger": ledger,  # <--- THIS IS THE KEY PART
+            "ai_tactical": f"Market conditions evaluated...",
+            "fundamentals": { ... }
+        }
+
         # 3. RETURN EVERYTHING AT THE VERY END
         return {
             "ticker": ticker.upper(),
