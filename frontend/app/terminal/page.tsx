@@ -389,22 +389,37 @@ export default function TerminalPage() {
               <>
                 <TradingViewWidget symbol={confirmedTicker} />
                 
-                {/* THIS RENDERS THE LEDGER WE DEFINED IN PYTHON */}
                 <div className="grid grid-cols-1 gap-4">
-                  {data.ledger?.map((item: any, i: number) => (
-                    <div key={i} className="bg-slate-900/30 border border-slate-800/50 p-8 rounded-[40px] flex justify-between items-start transition-all hover:border-slate-600">
-                      <div className="flex-1">
-                          <div className="flex justify-between items-center mb-4">
-                              <div>
-                                  <p className="text-white font-black text-xl">{item.factor}</p>
-                                  <p className="text-[11px] text-blue-500 font-bold uppercase mt-1">{item.status}</p>
-                              </div>
-                              <span className="text-white font-black text-xl">{item.val}</span>
-                          </div>
-                          <p className="text-slate-400 text-sm italic border-l-2 border-slate-800 pl-4 leading-relaxed font-medium">"{item.reasoning}"</p>
+                  {/* TRY TO RENDER LEDGER, FALLBACK TO FUNDAMENTALS IF EMPTY */}
+                  {data.ledger && data.ledger.length > 0 ? (
+                    data.ledger.map((item: any, i: number) => (
+                      <div key={i} className="bg-slate-900/30 border border-slate-800/50 p-8 rounded-[40px] flex justify-between items-start transition-all hover:border-slate-600">
+                        <div className="flex-1">
+                            <div className="flex justify-between items-center mb-4">
+                                <div>
+                                    <p className="text-white font-black text-xl">{item.factor}</p>
+                                    <p className="text-[11px] text-blue-500 font-bold uppercase mt-1">{item.status}</p>
+                                </div>
+                                <span className="text-white font-black text-xl">{item.val}</span>
+                            </div>
+                            <p className="text-slate-400 text-sm italic border-l-2 border-slate-800 pl-4 leading-relaxed font-medium">"{item.reasoning}"</p>
+                        </div>
                       </div>
+                    ))
+                  ) : (
+                    /* FALLBACK: Render Fundamentals as a list if Ledger is missing */
+                    <div className="bg-slate-900/30 border border-slate-800/50 p-8 rounded-[40px]">
+                        <p className="text-blue-500 font-black uppercase text-xs tracking-widest mb-4">Key Fundamentals</p>
+                        <div className="space-y-4">
+                            {Object.entries(data.fundamentals || {}).map(([key, val], i) => (
+                                <div key={i} className="flex justify-between items-center border-b border-slate-800 pb-2">
+                                    <span className="text-slate-400 font-bold uppercase text-[10px]">{key.replace('_', ' ')}</span>
+                                    <span className="text-white font-black text-sm">{String(val)}</span>
+                                </div>
+                            ))}
+                        </div>
                     </div>
-                  ))}
+                  )}
                 </div>
               </>
             )}
