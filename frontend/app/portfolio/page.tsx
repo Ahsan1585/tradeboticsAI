@@ -299,12 +299,12 @@ export default function PortfolioPage() {
                         </div>
 
                         <button 
-    onClick={runPortfolioAnalysis}
-    disabled={isAnalyzing || portfolio.length === 0}
-    className="w-full bg-purple-600 border border-purple-500 hover:bg-purple-500 py-4 rounded-2xl text-white font-black text-[10px] uppercase tracking-widest transition-all shadow-[0_0_25px_rgba(168,85,247,0.5)] disabled:opacity-50 disabled:bg-purple-600/20 disabled:text-purple-400 mb-8"
->
-    {isAnalyzing ? "Processing Matrix..." : "Execute Rotation Scan"}
-</button>
+                            onClick={runPortfolioAnalysis}
+                            disabled={isAnalyzing || portfolio.length === 0}
+                            className="w-full bg-purple-600 border border-purple-500 hover:bg-purple-500 py-4 rounded-2xl text-white font-black text-[10px] uppercase tracking-widest transition-all shadow-[0_0_25px_rgba(168,85,247,0.5)] disabled:opacity-50 disabled:bg-purple-600/20 disabled:text-purple-400 mb-8"
+                        >
+                            {isAnalyzing ? "Processing Matrix..." : "Execute Rotation Scan"}
+                        </button>
 
                         <div className="flex-1 bg-slate-950 border border-slate-800 rounded-3xl p-6 overflow-y-auto custom-scrollbar relative">
                             {isAnalyzing ? (
