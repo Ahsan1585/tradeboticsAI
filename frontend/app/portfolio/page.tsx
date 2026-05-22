@@ -1,236 +1,336 @@
 "use client";
 import React, { useState, useEffect } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "../lib/supabase";
 
-// Pointing to your local backend for testing. 
-// Change to "https://tradebotics-api.onrender.com" when deploying.
-const BACKEND_URL = "https://tradebotics-api.onrender.com";
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000";
 
 export default function PortfolioPage() {
     const router = useRouter();
     
-    // Auth & Security State
+    // Auth & State
     const [isAuthorized, setIsAuthorized] = useState(false);
-
-    // Data State
-    const [holdings, setHoldings] = useState<any[]>([]);
-    const [analysis, setAnalysis] = useState<string>("");
-    const [loading, setLoading] = useState(true);
-    const [isAnalyzing, setIsAnalyzing] = useState(false);
+    const [userId, setUserId] = useState("");
+    const [userEmail, setUserEmail] = useState("");
     
-    // Form & Strategy State
-    const [ticker, setTicker] = useState("");
-    const [shares, setShares] = useState("");
-    const [cost, setCost] = useState("");
-    const [tradeStyle, setTradeStyle] = useState("Long Term");
+    // Portfolio Data
+    const [portfolio, setPortfolio] = useState<any[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-    // --- SECURITY GUARD ---
+    // Add New Asset State
+    const [newTicker, setNewTicker] = useState("");
+    const [newShares, setNewShares] = useState("");
+    const [newCost, setNewCost] = useState("");
+    const [isAdding, setIsAdding] = useState(false);
+
+    // Edit Asset State
+    const [editingTicker, setEditingTicker] = useState<string | null>(null);
+    const [editShares, setEditShares] = useState("");
+    const [editCost, setEditCost] = useState("");
+
+    // AI Analysis State
+    const [tradeStyle, setTradeStyle] = useState("Long Term");
+    const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
+    const [isAnalyzing, setIsAnalyzing] = useState(false);
+
     useEffect(() => {
         const verifyClearance = async () => {
             const { data: { session }, error } = await supabase.auth.getSession();
-            
             if (error || !session) {
-                console.warn("Unauthorized access attempt. Redirecting to gateway.");
-                router.push('/'); 
+                router.push('/');
             } else {
-                setIsAuthorized(true); 
-                fetchHoldings(session.user.id);
+                setIsAuthorized(true);
+                setUserId(session.user.id);
+                setUserEmail(session.user.email || "OPERATIVE");
+                fetchPortfolio(session.user.id);
             }
         };
-
         verifyClearance();
     }, [router]);
 
-    const fetchHoldings = async (userId: string) => {
+    const showToast = (msg: string) => {
+        setToastMessage(msg);
+        setTimeout(() => setToastMessage(null), 3500);
+    };
+
+    const fetchPortfolio = async (uid: string) => {
         setLoading(true);
-        const { data } = await supabase.from('portfolio').select('*').eq('user_id', userId);
-        if (data) setHoldings(data);
+        const { data, error } = await supabase.from('portfolio').select('*').eq('user_id', uid);
+        
+        if (error) {
+            showToast("Failed to sync vault.");
+        } else if (data) {
+            const aggregated = data.reduce((acc: any, curr: any) => {
+                const t = curr.ticker.toUpperCase();
+                if (!acc[t]) acc[t] = { ticker: t, total_shares: 0, total_cost_dollars: 0 };
+                const shares = parseFloat(curr.shares);
+                const cost = parseFloat(curr.cost_basis);
+                acc[t].total_shares += shares;
+                acc[t].total_cost_dollars += (shares * cost);
+                return acc;
+            }, {});
+
+            const formattedVault = Object.values(aggregated).map((pos: any) => ({
+                ticker: pos.ticker,
+                shares: pos.total_shares,
+                avg_cost: pos.total_shares > 0 ? (pos.total_cost_dollars / pos.total_shares).toFixed(2) : 0
+            })).sort((a: any, b: any) => a.ticker.localeCompare(b.ticker));
+            
+            setPortfolio(formattedVault);
+        }
         setLoading(false);
     };
 
-    const addAsset = async () => {
-        if (!ticker || !shares || !cost) return;
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) return;
-        await supabase.from('portfolio').insert([{ user_id: user.id, ticker, shares, cost_basis: cost }]);
-        setTicker(""); setShares(""); setCost("");
-        fetchHoldings(user.id);
+    const handleAddAsset = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!newTicker || !newShares || !newCost) return;
+        setIsAdding(true);
+
+        const { error } = await supabase.from('portfolio').insert([{
+            user_id: userId,
+            ticker: newTicker.toUpperCase(),
+            shares: parseFloat(newShares),
+            cost_basis: parseFloat(newCost)
+        }]);
+
+        if (error) {
+            showToast("Database Error: " + error.message);
+        } else {
+            showToast(`${newTicker.toUpperCase()} secured in Vault.`);
+            setNewTicker(""); setNewShares(""); setNewCost("");
+            fetchPortfolio(userId);
+        }
+        setIsAdding(false);
+    };
+
+    const handleDeleteAsset = async (ticker: string) => {
+        const { error } = await supabase.from('portfolio').delete().eq('user_id', userId).eq('ticker', ticker);
+        if (error) {
+            showToast("Error liquidating asset: " + error.message);
+        } else {
+            showToast(`${ticker} liquidated from Vault.`);
+            fetchPortfolio(userId);
+        }
+    };
+
+    const handleStartEdit = (item: any) => {
+        setEditingTicker(item.ticker);
+        setEditShares(item.shares.toString());
+        setEditCost(item.avg_cost.toString());
+    };
+
+    const handleSaveEdit = async () => {
+        if (!editingTicker) return;
+        
+        await supabase.from('portfolio').delete().eq('user_id', userId).eq('ticker', editingTicker);
+        
+        const { error } = await supabase.from('portfolio').insert([{
+            user_id: userId,
+            ticker: editingTicker,
+            shares: parseFloat(editShares),
+            cost_basis: parseFloat(editCost)
+        }]);
+
+        if (error) {
+            showToast("Update Error: " + error.message);
+        } else {
+            showToast(`${editingTicker} parameters updated.`);
+            setEditingTicker(null);
+            fetchPortfolio(userId);
+        }
     };
 
     const runPortfolioAnalysis = async () => {
-        if (holdings.length === 0) {
-            setAnalysis("Vault is empty. Add assets to begin neural risk management.");
+        if (portfolio.length === 0) {
+            showToast("Vault is empty. Add assets to analyze.");
             return;
         }
-        
         setIsAnalyzing(true);
+        setAiAnalysis(null);
         try {
-            console.log(`DEBUG: Fetching ${BACKEND_URL}/portfolio-analysis for ${tradeStyle}`);
             const res = await fetch(`${BACKEND_URL}/portfolio-analysis`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ holdings, trade_style: tradeStyle }) 
+                body: JSON.stringify({ holdings: portfolio, trade_style: tradeStyle })
             });
-            
-            if (!res.ok) {
-                const errorData = await res.text();
-                console.error("Backend Error:", errorData);
-                throw new Error(errorData);
-            }
-            
-            const data = await res.json();
-            setAnalysis(data.analysis || "Analysis complete but no data returned.");
-        } catch (e: any) { 
-            console.error("CRITICAL ERROR:", e);
-            setAnalysis(`System Error: ${e.message}`);
+            const result = await res.json();
+            if (res.ok) setAiAnalysis(result.analysis);
+            else showToast("AI Engine Error: " + result.detail);
+        } catch (error) {
+            showToast("Backend Offline. Check connection.");
         }
         setIsAnalyzing(false);
     };
 
-    // --- LOADING INTERCEPT ---
-    // This MUST be right here, before the main return, to prevent the UI flash
-    if (!isAuthorized) {
-        return (
-            <main className="min-h-screen bg-[#020617] flex items-center justify-center">
-                <div className="flex flex-col items-center gap-4">
-                    <div className="w-16 h-16 border-4 border-slate-800 border-t-purple-500 rounded-full animate-spin" />
-                    <p className="text-[10px] text-purple-500 font-black uppercase tracking-widest animate-pulse">Verifying Clearance...</p>
-                </div>
-            </main>
-        );
-    }
+    if (!isAuthorized) return <main className="min-h-screen bg-[#020617] flex items-center justify-center"><div className="w-16 h-16 border-4 border-slate-800 border-t-blue-500 rounded-full animate-spin" /></main>;
 
-    // --- MAIN DASHBOARD RENDER ---
     return (
-        <main className="min-h-screen bg-[#020617] text-slate-300 p-8 flex flex-col relative">
+        <main className="min-h-screen bg-[#020617] text-slate-300 font-sans p-6 md:p-12 relative overflow-x-hidden">
             
-            {/* INJECTED STYLES FOR THEME-MATCHED SCROLLBAR */}
+            {/* INJECTED GLOBAL SCROLLBAR STYLES */}
             <style dangerouslySetInnerHTML={{__html: `
-                .custom-scrollbar::-webkit-scrollbar {
-                    width: 6px;
-                }
-                .custom-scrollbar::-webkit-scrollbar-track {
-                    background: #0f172a; 
-                    border-radius: 10px;
-                }
-                .custom-scrollbar::-webkit-scrollbar-thumb {
-                    background: #334155; 
-                    border-radius: 10px;
-                }
-                .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-                    background: #475569; 
-                }
+                .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+                .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+                .custom-scrollbar::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 10px; }
+                .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #334155; }
             `}} />
 
-            {/* Subtle Purple Background Glow */}
-            <div className="absolute top-[-10%] right-[-5%] w-[500px] h-[500px] rounded-full bg-purple-900/10 blur-[120px] pointer-events-none"></div>
+            {/* TOAST NOTIFICATION */}
+            {toastMessage && (
+                <div className="fixed inset-0 z-[150] flex items-center justify-center pointer-events-none">
+                <div className="bg-slate-900 border border-blue-500/50 px-10 py-6 rounded-3xl shadow-[0_0_40px_rgba(59,130,246,0.3)] animate-in zoom-in-95 fade-in duration-300 flex flex-col items-center">
+                    <p className="text-white font-black uppercase tracking-widest text-sm text-center">{toastMessage}</p>
+                </div>
+                </div>
+            )}
 
-            <div className="max-w-7xl mx-auto w-full relative z-10">
+            {/* HEADER */}
+            <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-start md:items-center mb-12 gap-6">
+                <div>
+                    <h1 className="text-5xl font-black text-white tracking-tighter cursor-pointer hover:text-blue-500 transition-colors" onClick={() => router.push('/hub')}>
+                        TRADEBOTICS<span className="text-blue-500">AI</span>
+                    </h1>
+                    <p className="text-[10px] uppercase tracking-[0.5em] text-slate-400 italic mt-2">Operative Vault // {userEmail.split('@')[0]}</p>
+                </div>
+                <button onClick={() => router.push('/hub')} className="flex items-center gap-3 px-6 py-3 bg-slate-900/50 border border-slate-800 rounded-full hover:border-blue-500/50 transition-all group">
+                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-300 group-hover:text-white">← Return to Hub</span>
+                </button>
+            </div>
+
+            <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8">
                 
-                {/* TOP NAVIGATION / HUB LINK ONLY */}
-                <div className="flex justify-between items-center mb-12 border-b border-slate-800/50 pb-6">
-                    <div className="select-none">
-                        <span className="text-4xl font-black tracking-[-0.08em] text-white">
-                            TRADEBOTICS<span className="text-blue-500">AI</span>
-                        </span>
-                    </div>
-                    <Link href="/hub" className="text-[10px] font-black text-slate-400 hover:text-white uppercase tracking-widest transition-colors flex items-center gap-2 bg-slate-900 px-6 py-3 rounded-xl border border-slate-800 hover:border-slate-600 shadow-sm">
-                        <span>←</span> Return to Hub
-                    </Link>
-                </div>
-
-                {/* --- HERO SECTION --- */}
-                <div className="mb-12">
-                    <h1 className="text-5xl font-black text-white tracking-tighter mb-4 uppercase">PORTFOLIO VAULT</h1>
-                    <p className="text-slate-400 max-w-xl text-lg italic border-l-2 border-purple-500 pl-4">
-                        "Your aggregate exposure is constantly shifting. This module synthesizes your holdings against live market data to identify rotation opportunities and institutional-grade risk profiles."
-                    </p>
-                </div>
-
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                {/* LEFT PANEL: INVENTORY MANAGEMENT */}
+                <div className="lg:col-span-7 flex flex-col gap-8">
                     
-                    {/* LEFT COLUMN: MANAGEMENT */}
-                    <div className="lg:col-span-1 space-y-8">
-                        <div className="bg-slate-900/40 border border-slate-800 p-8 rounded-[40px] shadow-2xl">
-                            <h2 className="text-[11px] font-black text-white uppercase tracking-widest mb-6">Vault Management</h2>
-                            <div className="space-y-4">
-                                <input placeholder="TICKER" className="w-full bg-slate-950 border border-slate-800 p-4 rounded-2xl outline-none focus:border-purple-500 text-white font-bold transition-colors" onChange={(e) => setTicker(e.target.value.toUpperCase())} value={ticker}/>
-                                <input placeholder="SHARES" className="w-full bg-slate-950 border border-slate-800 p-4 rounded-2xl outline-none focus:border-purple-500 text-white font-bold transition-colors" onChange={(e) => setShares(e.target.value)} value={shares}/>
-                                <input placeholder="AVG COST" className="w-full bg-slate-950 border border-slate-800 p-4 rounded-2xl outline-none focus:border-purple-500 text-white font-bold transition-colors" onChange={(e) => setCost(e.target.value)} value={cost}/>
-                                <button onClick={addAsset} className="w-full bg-purple-600 hover:bg-purple-500 text-white font-black py-4 rounded-2xl uppercase tracking-widest text-[10px] transition-all shadow-[0_0_15px_rgba(147,51,234,0.3)]">Register Asset</button>
-                            </div>
+                    {/* ASSET ENTRY FORM (RESPONSIVE GRID FIX) */}
+                    <div className="bg-slate-900/40 border border-slate-800 p-8 rounded-[40px] shadow-2xl">
+                        <p className="text-[11px] font-black text-blue-500 uppercase tracking-[0.4em] mb-6">Register Asset</p>
+                        <form onSubmit={handleAddAsset} className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 w-full">
+                            <input type="text" placeholder="TICKER" value={newTicker} onChange={(e) => setNewTicker(e.target.value)} required className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-4 text-white font-black outline-none focus:border-blue-500 uppercase" />
+                            <input type="number" step="any" placeholder="SHARES" value={newShares} onChange={(e) => setNewShares(e.target.value)} required className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-4 text-white font-black outline-none focus:border-blue-500" />
+                            <input type="number" step="any" placeholder="AVG COST" value={newCost} onChange={(e) => setNewCost(e.target.value)} required className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-4 text-white font-black outline-none focus:border-blue-500" />
+                            <button type="submit" disabled={isAdding} className="w-full bg-blue-600 hover:bg-blue-500 text-white px-8 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all">
+                                {isAdding ? "..." : "ADD"}
+                            </button>
+                        </form>
+                    </div>
+
+                    {/* CURRENT INVENTORY LEDGER */}
+                    <div className="bg-slate-900/40 border border-slate-800 p-8 rounded-[40px] shadow-2xl min-h-[400px]">
+                        <div className="flex justify-between items-center mb-6 border-b border-slate-800/50 pb-4">
+                            <p className="text-[11px] font-black text-slate-400 uppercase tracking-[0.4em]">Current Inventory</p>
+                            <span className="text-[10px] bg-slate-800 text-slate-400 px-3 py-1 rounded-full font-bold uppercase">{portfolio.length} Assets</span>
                         </div>
 
-                        <div className="bg-slate-900/40 border border-slate-800 p-8 rounded-[40px] shadow-2xl">
-                            <h2 className="text-[11px] font-black text-white uppercase tracking-widest mb-6">Current Inventory</h2>
-                            <div className="space-y-2 max-h-[300px] overflow-y-auto custom-scrollbar pr-2">
-                                {holdings.map((h, i) => (
-                                    <div key={i} className="flex justify-between items-center bg-slate-950 p-4 rounded-2xl border border-slate-800 group hover:border-purple-500/50 transition-colors">
-                                        <span className="font-black text-white group-hover:text-purple-400 transition-colors">{h.ticker}</span>
-                                        <span className="text-[10px] font-bold text-slate-500">{h.shares} @ ${h.cost_basis}</span>
+                        {loading ? (
+                            <div className="flex justify-center items-center h-40"><div className="w-8 h-8 border-2 border-slate-800 border-t-blue-500 rounded-full animate-spin" /></div>
+                        ) : portfolio.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center h-40 text-slate-600">
+                                <span className="text-4xl mb-2">💼</span>
+                                <p className="font-bold uppercase tracking-widest text-[10px]">Vault is Empty</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-3 overflow-y-auto max-h-[500px] pr-2 custom-scrollbar">
+                                {portfolio.map((item, i) => (
+                                    <div key={i} className="bg-slate-950 border border-slate-800 p-5 rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 group hover:border-slate-700 transition-all">
+                                        
+                                        {/* Display Mode vs Edit Mode */}
+                                        {editingTicker === item.ticker ? (
+                                            <div className="flex-1 flex flex-col sm:flex-row gap-3">
+                                                <div className="w-24 bg-slate-900 flex items-center justify-center rounded-xl border border-slate-800"><span className="font-black text-white">{item.ticker}</span></div>
+                                                <input type="number" step="any" value={editShares} onChange={(e) => setEditShares(e.target.value)} className="w-full sm:w-24 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white font-black text-sm outline-none focus:border-blue-500" placeholder="Shares" />
+                                                <input type="number" step="any" value={editCost} onChange={(e) => setEditCost(e.target.value)} className="w-full sm:w-32 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white font-black text-sm outline-none focus:border-blue-500" placeholder="Avg Cost" />
+                                                <div className="flex gap-2">
+                                                    <button onClick={handleSaveEdit} className="bg-emerald-500/20 text-emerald-500 hover:bg-emerald-500 hover:text-white px-4 rounded-xl font-black text-[10px] uppercase transition-all">Save</button>
+                                                    <button onClick={() => setEditingTicker(null)} className="bg-slate-800 text-slate-400 hover:text-white px-4 rounded-xl font-black text-[10px] uppercase transition-all">Cancel</button>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <div className="flex items-center gap-6">
+                                                    <div className="w-16 h-16 bg-slate-900 rounded-2xl flex items-center justify-center border border-slate-800 shrink-0">
+                                                        <span className="font-black text-white text-xl">{item.ticker}</span>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Total Shares</p>
+                                                        <p className="text-xl font-black text-white">{item.shares}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Avg Cost</p>
+                                                        <p className="text-xl font-black text-white">${item.avg_cost}</p>
+                                                    </div>
+                                                </div>
+                                                
+                                                <div className="flex items-center gap-2 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
+                                                    <button onClick={() => handleStartEdit(item)} className="px-4 py-2 bg-slate-800 hover:bg-blue-600 text-slate-400 hover:text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all">Modify</button>
+                                                    <button onClick={() => handleDeleteAsset(item.ticker)} className="px-4 py-2 bg-slate-800 hover:bg-red-500/20 text-slate-400 hover:text-red-500 border hover:border-red-500 border-transparent rounded-xl font-black text-[10px] uppercase tracking-widest transition-all">Liquidate</button>
+                                                </div>
+                                            </>
+                                        )}
                                     </div>
                                 ))}
-                                {holdings.length === 0 && !loading ? (
-                                    <p className="text-slate-600 text-xs text-center font-bold uppercase tracking-widest mt-4">Vault is empty.</p>
-                                ) : null}
                             </div>
-                        </div>
+                        )}
                     </div>
+                </div>
 
-                    {/* RIGHT COLUMN: AI INTELLIGENCE */}
-                    <div className="lg:col-span-2 bg-slate-900/40 border border-slate-800 p-10 rounded-[40px] shadow-2xl flex flex-col">
-                        <div className="flex justify-between items-center mb-10">
-                            <div className="flex items-center gap-4">
-                                <h2 className="text-[11px] font-black text-white uppercase tracking-widest">Neural Risk Synthesis</h2>
-                                <select 
-                                    value={tradeStyle}
-                                    onChange={(e) => setTradeStyle(e.target.value)}
-                                    className="bg-slate-950 border border-slate-700 text-slate-300 text-[10px] font-bold uppercase rounded-lg px-3 py-1.5 outline-none focus:border-purple-500 cursor-pointer transition-colors"
-                                >
-                                    <option value="Day Trade">Day Trade</option>
-                                    <option value="Swing Trade">Swing Trade</option>
-                                    <option value="Long Term">Long Term</option>
-                                </select>
-                            </div>
-                            <button 
-                                onClick={runPortfolioAnalysis} 
-                                disabled={isAnalyzing || holdings.length === 0} 
-                                className="bg-purple-600 px-8 py-3 rounded-xl text-[10px] font-black text-white hover:bg-purple-500 disabled:opacity-50 transition-all shadow-[0_0_15px_rgba(147,51,234,0.3)]"
-                            >
-                                {isAnalyzing ? "SYNTHESIZING..." : "INITIATE RISK ANALYSIS"}
-                            </button>
+                {/* RIGHT PANEL: AI ANALYSIS ENGINE */}
+                <div className="lg:col-span-5 flex flex-col gap-8">
+                    <div className="bg-[#020617] border border-purple-500/30 p-8 rounded-[40px] shadow-[inset_0_0_30px_rgba(168,85,247,0.05)] h-full flex flex-col">
+                        <div className="flex items-center gap-3 mb-8">
+                            <div className="w-2.5 h-2.5 bg-purple-500 rounded-full animate-pulse" />
+                            <p className="text-[11px] font-black uppercase tracking-[0.4em] text-purple-500">Neural Portfolio Synthesis</p>
                         </div>
-                        
-                        <div className="flex-1 bg-slate-950 p-8 rounded-3xl border border-slate-800 overflow-y-auto custom-scrollbar min-h-[500px] pr-4">
-                            {analysis ? (
-                                <div className="text-slate-300 leading-relaxed whitespace-pre-wrap max-w-none font-medium">
-                                    {analysis}
+
+                        <div className="mb-8">
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Target Horizon Profile</p>
+                            <div className="flex flex-wrap gap-2">
+                                {["Day Trade", "Swing Trade", "Long Term"].map(style => (
+                                    <button 
+                                        key={style} 
+                                        onClick={() => setTradeStyle(style)}
+                                        className={`px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all ${tradeStyle === style ? 'bg-purple-600 text-white border border-purple-500' : 'bg-slate-900 border border-slate-800 text-slate-500 hover:text-white'}`}
+                                    >
+                                        {style}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        <button 
+    onClick={runPortfolioAnalysis}
+    disabled={isAnalyzing || portfolio.length === 0}
+    className="w-full bg-purple-600 border border-purple-500 hover:bg-purple-500 py-4 rounded-2xl text-white font-black text-[10px] uppercase tracking-widest transition-all shadow-[0_0_25px_rgba(168,85,247,0.5)] disabled:opacity-50 disabled:bg-purple-600/20 disabled:text-purple-400 mb-8"
+>
+    {isAnalyzing ? "Processing Matrix..." : "Execute Rotation Scan"}
+</button>
+
+                        <div className="flex-1 bg-slate-950 border border-slate-800 rounded-3xl p-6 overflow-y-auto custom-scrollbar relative">
+                            {isAnalyzing ? (
+                                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                                    <div className="w-8 h-8 border-2 border-slate-800 border-t-purple-500 rounded-full animate-spin mb-4" />
+                                    <p className="text-[9px] text-purple-500 uppercase font-black tracking-widest animate-pulse">Calculating Alpha...</p>
+                                </div>
+                            ) : aiAnalysis ? (
+                                <div className="prose prose-invert max-w-none text-sm font-medium leading-relaxed">
+                                    <style dangerouslySetInnerHTML={{__html: `
+                                        .prose h3 { color: #a855f7; font-size: 12px; text-transform: uppercase; letter-spacing: 0.2em; font-weight: 900; margin-top: 1.5rem; margin-bottom: 0.5rem; }
+                                        .prose ul { list-style-type: none; padding: 0; }
+                                        .prose li { position: relative; padding-left: 1.5rem; margin-bottom: 0.5rem; color: #cbd5e1; }
+                                        .prose li::before { content: "→"; position: absolute; left: 0; color: #a855f7; font-weight: 900; }
+                                        .prose strong { color: #fff; }
+                                    `}} />
+                                    <div dangerouslySetInnerHTML={{ __html: aiAnalysis.replace(/\n/g, '<br/>') }} />
                                 </div>
                             ) : (
-                                <div className="h-full flex flex-col items-center justify-center text-slate-600 text-center">
-                                    <span className="text-4xl mb-4 grayscale opacity-50">🛡️</span>
-                                    <p className="font-black uppercase tracking-widest text-xs">Terminal Standby</p>
-                                    <p className="text-[10px] mt-2 max-w-xs font-bold leading-relaxed">Add assets to your inventory and initiate analysis to receive your multi-factor portfolio risk assessment.</p>
-                                </div>
+                                <p className="text-slate-600 text-xs italic text-center mt-10">Analysis offline. Awaiting execution command.</p>
                             )}
-                        </div>
-
-                        {/* HIGH-VISIBILITY LEGAL DISCLAIMER */}
-                        <div className="mt-6 bg-[#0f172a] border border-slate-700/50 p-4 rounded-xl flex items-center justify-center gap-3 shadow-inner">
-                            <span className="text-amber-500 text-lg">⚠️</span>
-                            <p className="text-[10px] text-slate-400 uppercase tracking-widest font-bold">
-                                Intelligence provided for educational purposes only. Not financial advice.
-                            </p>
                         </div>
                     </div>
                 </div>
+
             </div>
-            
-            <footer className="border-t border-slate-800/50 py-8 text-center w-full mt-auto relative z-10">
-                <p className="text-[10px] uppercase tracking-[0.2em] font-black text-slate-600">© 2026 TradeBotics AI. All Systems Operational.</p>
-            </footer>
         </main>
     );
 }
