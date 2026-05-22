@@ -7,7 +7,6 @@ import math
 import yfinance as yf
 import google.generativeai as genai
 from dotenv import load_dotenv
-import requests_cache
 
 load_dotenv()
 app = FastAPI()
@@ -19,11 +18,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# --- CACHE INITIALIZATION ---
-# Protects against Yahoo Finance HTTP 429 Rate Limits
-yf_cache = requests_cache.CachedSession('yfinance.cache', backend='sqlite', expire_after=300)
-yf_cache.headers['User-agent'] = 'TradeBotics-AI-Engine/1.0'
 
 # --- AI CONFIGURATION ---
 GOOGLE_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -57,8 +51,8 @@ class PortfolioRequest(BaseModel):
 @app.get("/analyze/{ticker}")
 async def analyze_ticker(ticker: str):
     try:
-        # Utilizing the cached session
-        stock = yf.Ticker(ticker, session=yf_cache)
+        # Reverted back to native handling
+        stock = yf.Ticker(ticker)
         hist = stock.history(period="3mo")
         if hist.empty: raise HTTPException(status_code=404, detail="Ticker data not found.")
 
@@ -165,12 +159,12 @@ async def generate_swap_thesis(req: SwapRequest):
             "Communication Services": {"ticker": "META", "score": 89},
             "Energy": {"ticker": "XOM", "score": 82}
         }
-        stock = yf.Ticker(req.ticker, session=yf_cache)
+        stock = yf.Ticker(req.ticker)
         sector = stock.info.get("sector", "Technology")
         target = sector_targets.get(sector, sector_targets["Technology"])
         if req.ticker.upper() == target["ticker"]: target = {"ticker": "MSFT", "score": 91}
         
-        target_stock = yf.Ticker(target["ticker"], session=yf_cache)
+        target_stock = yf.Ticker(target["ticker"])
         target_hist = target_stock.history(period="1d")
         target_price = 150.00 if target_hist.empty else round(target_hist['Close'].iloc[-1], 2)
         freed_capital = req.shares * req.price
@@ -260,8 +254,7 @@ async def analyze_portfolio(req: PortfolioRequest):
                 if not ticker: continue
                 if ticker == "ETHU": ticker = "ETH-USD"
                 
-                # Utilizing the cached session
-                stock = yf.Ticker(ticker, session=yf_cache)
+                stock = yf.Ticker(ticker)
                 hist = stock.history(period="1d")
                 if hist.empty: continue 
                 
@@ -294,8 +287,7 @@ async def analyze_portfolio(req: PortfolioRequest):
             try:
                 if any(h['ticker'] == t for h in portfolio_summary): continue
 
-                # Utilizing the cached session
-                stock = yf.Ticker(t, session=yf_cache)
+                stock = yf.Ticker(t)
                 hist = stock.history(period="1mo")
                 if hist.empty: continue
 
