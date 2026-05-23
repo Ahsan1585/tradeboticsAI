@@ -22,12 +22,35 @@ app.add_middleware(
 )
 
 # --- SUPABASE CONFIGURATION ---
+import sys
+
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY") 
+
+# Debugging: These will show up in your Render Logs tab
+print(f"DEBUG: Checking Env Variables...", file=sys.stderr)
+print(f"DEBUG: SUPABASE_URL present: {bool(SUPABASE_URL)}", file=sys.stderr)
+print(f"DEBUG: SUPABASE_SERVICE_KEY present: {bool(SUPABASE_KEY)}", file=sys.stderr)
+
 if SUPABASE_URL and SUPABASE_KEY:
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    try:
+        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print("SUCCESS: Supabase client initialized.", file=sys.stderr)
+    except Exception as e:
+        print(f"CRITICAL ERROR: Supabase init failed: {e}", file=sys.stderr)
+        supabase = None
 else:
     supabase = None
+    print("CRITICAL ERROR: SUPABASE_URL or SUPABASE_SERVICE_KEY missing from environment.", file=sys.stderr)
+
+# --- AI CONFIGURATION ---
+GOOGLE_API_KEY = os.getenv("GEMINI_API_KEY")
+if GOOGLE_API_KEY:
+    genai.configure(api_key=GOOGLE_API_KEY)
+    model = genai.GenerativeModel('gemini-2.5-flash')
+else:
+    model = None
+    print("WARNING: GEMINI_API_KEY is missing.", file=sys.stderr)
 
 # --- REQUEST MODELS ---
 class TradeRequest(BaseModel):
@@ -37,15 +60,6 @@ class TradeRequest(BaseModel):
     amount: float    
     mode: str
 
-# --- AI CONFIGURATION ---
-GOOGLE_API_KEY = os.getenv("GEMINI_API_KEY")
-if GOOGLE_API_KEY:
-    genai.configure(api_key=GOOGLE_API_KEY)
-    model = genai.GenerativeModel('gemini-2.5-flash')
-else:
-    model = None
-
-# --- REQUEST MODELS ---
 class TranslationRequest(BaseModel):
     ticker: str
     data_context: Dict[str, Any]
