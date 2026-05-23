@@ -2,9 +2,9 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../lib/supabase";
+import TradeTicket from "../components/TradeTicket"; 
 
-// Pointing to local backend for testing
-const BACKEND_URL = "https://tradebotics-api.onrender.com";
+const BACKEND_URL = "http://127.0.0.1:8000";
 
 // --- WIDGET COMPONENTS ---
 function TickerTape() {
@@ -72,9 +72,53 @@ function Stat({ label, val, color = "text-white" }: { label: string, val: string
 export default function TerminalPage() {
   const router = useRouter();
   
+  // 🚨 NEURAL AUTHORIZATION STATE
+  const [authModal, setAuthModal] = useState({
+      isOpen: false,
+      title: "",
+      cost: 0,
+      actionName: "",
+      onConfirm: () => {}
+  });
+
+  // 🚨 TRADING ENGINE STATE
+  const [showTradeTicket, setShowTradeTicket] = useState(false);
+  const [virtualCash, setVirtualCash] = useState(0);
+  const [currentShares, setCurrentShares] = useState(0);
+  
   // 🚨 SECURITY STATE
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [userEmail, setUserEmail] = useState("");
+  
+  const handleExecuteTrade = async (tradeType: "BUY" | "SELL", amount: number, mode: "DOLLARS" | "SHARES") => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      try {
+          const res = await fetch(`${BACKEND_URL}/execute-trade`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                  user_id: session.user.id,
+                  ticker: confirmedTicker,
+                  trade_type: tradeType,
+                  amount: amount,
+                  mode: mode
+              })
+          });
+          
+          const result = await res.json();
+          if (res.ok) {
+              setVirtualCash(result.remaining_cash);
+              showToast(result.message);
+              runAnalysis(confirmedTicker); 
+          } else {
+              showToast(`Trade Error: ${result.detail}`);
+          }
+      } catch (error) {
+          showToast("Execution Offline. Check Connection.");
+      }
+  };
 
   const [data, setData] = useState<any>(null);
   const [globalNews, setGlobalNews] = useState<any[]>([]);
@@ -103,6 +147,9 @@ export default function TerminalPage() {
               setUserEmail(session.user.email || "OPERATIVE");
               fetchWatchlist(session.user.id);
               fetchGlobalNews();
+              
+              const { data: profile } = await supabase.from('profiles').select('virtual_cash_balance').eq('id', session.user.id).single();
+              if (profile) setVirtualCash(profile.virtual_cash_balance);
           }
       };
       verifyClearance();
@@ -124,29 +171,36 @@ export default function TerminalPage() {
     setLoading(true);
 
     try {
-      const res = await fetch(`${BACKEND_URL}/analyze/${target}`);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+          showToast("Unauthorized Access.");
+          setLoading(false);
+          return;
+      }
+
+      const res = await fetch(`${BACKEND_URL}/analyze/${target}?user_id=${session.user.id}`);
       const result = await res.json();
-      if (res.ok) { setData(result); setConfirmedTicker(target); }
-      else { showToast(`Terminal Error: ${result.detail || "Scan Failed."}`); }
+      
+      if (res.ok) { 
+          setData(result); 
+          setConfirmedTicker(target);
+          
+          const { data: portfolio } = await supabase.from('portfolio')
+              .select('shares')
+              .eq('user_id', session.user.id)
+              .eq('ticker', target)
+              .single();
+          setCurrentShares(portfolio ? portfolio.shares : 0);
+          
+      } else { 
+          if (res.status === 402) {
+              showToast("NEURAL BANDWIDTH DEPLETED. RECHARGE REQUIRED.");
+          } else {
+              showToast(`Terminal Error: ${result.detail || "Scan Failed."}`);
+          }
+      }
     } catch { showToast("Backend Offline. Check Connection."); }
     setLoading(false);
-  };
-
-  const addToWatchlist = async () => {
-    if (!data) return;
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-
-    const { error } = await supabase.from('watchlist').insert([{ 
-        user_id: user.id, 
-        ticker: confirmedTicker, 
-        score: data.score 
-    }]);
-    if (error) showToast("Watchlist Error: " + error.message);
-    else {
-        showToast(`${confirmedTicker} ADDED TO WATCHLIST`);
-        fetchWatchlist(user.id);
-    }
   };
 
   const removeFromWatchlist = async (removeTicker: string, e: React.MouseEvent) => {
@@ -189,17 +243,39 @@ export default function TerminalPage() {
     if (!data) return;
     setDeepDiveResult(null);
     setIsAnalyzing(true); 
+
     try {
-        const res = await fetch(`${BACKEND_URL}/translate`, {
-            method: "POST", headers: { "Content-Type": "application/json" },
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+            showToast("Unauthorized Access.");
+            setIsAnalyzing(false);
+            return;
+        }
+
+        const res = await fetch(`${BACKEND_URL}/translate?user_id=${session.user.id}`, {
+            method: "POST", 
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ 
                 ticker: confirmedTicker,
                 data_context: { score: data.score, price: data.price, fundamentals: data.fundamentals, ledger: data.ledger } 
             })
         });
+        
         const result = await res.json();
-        setDeepDiveResult(result.analysis);
-    } catch { showToast("AI Node Error."); }
+        
+        if (res.ok) {
+            setDeepDiveResult(result.analysis);
+        } else {
+            if (res.status === 402) {
+                showToast("NEURAL BANDWIDTH DEPLETED. RECHARGE REQUIRED.");
+            } else {
+                showToast(`Terminal Error: ${result.detail || "Synthesis Failed."}`);
+            }
+        }
+    } catch { 
+        showToast("AI Node Error. Check Connection."); 
+    }
+    
     setIsAnalyzing(false); 
   };
 
@@ -207,14 +283,81 @@ export default function TerminalPage() {
     setSelectedArticle({ ...item, summary: null });
     setIsSummarizing(true);
     try {
-        const res = await fetch(`${BACKEND_URL}/summarize`, { 
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+            showToast("Unauthorized Access.");
+            setIsSummarizing(false);
+            return;
+        }
+
+        const res = await fetch(`${BACKEND_URL}/summarize?user_id=${session.user.id}`, { 
           method: "POST", headers: { "Content-Type": "application/json" }, 
           body: JSON.stringify({ title: item.title, ticker: confirmedTicker || "Macro", content: item.content || "" }) 
         });
+        
         const result = await res.json();
-        setSelectedArticle({ ...item, summary: result.summary });
+        
+        if (res.ok) {
+            setSelectedArticle({ ...item, summary: result.summary });
+        } else {
+            if (res.status === 402) {
+                showToast("NEURAL BANDWIDTH DEPLETED. RECHARGE REQUIRED.");
+                setSelectedArticle(null);
+            } else {
+                setSelectedArticle({ ...item, summary: ["Synthesis Failed."] });
+            }
+        }
     } catch { setSelectedArticle({ ...item, summary: ["Failed to retrieve summary."] }); }
     setIsSummarizing(false);
+  };
+
+  const triggerArticleAnalysis = (item: any) => {
+      setAuthModal({
+          isOpen: true,
+          title: "News Synthesis",
+          cost: 1,
+          actionName: "DECRYPT ARTICLE",
+          onConfirm: () => handleArticleClick(item)
+      });
+  };
+
+  const addToWatchlist = async () => {
+      if (!data || !data.ticker) return;
+
+      const isDuplicate = watchlist.some((item: any) => item.ticker === data.ticker);
+      
+      if (isDuplicate) {
+          showToast(`${data.ticker} is already secured in your Watchlist.`);
+          return; 
+      }
+      
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+          showToast("Unauthorized. Cannot add to watchlist.");
+          return;
+      }
+
+      try {
+          const { data: newRow, error } = await supabase
+              .from('watchlist')
+              .insert([{ user_id: session.user.id, ticker: data.ticker }])
+              .select() 
+              .single();
+
+          if (error) {
+              if (error.code === '23505') {
+                  showToast(`${data.ticker} is already in your watchlist.`);
+              } else {
+                  throw error;
+              }
+          } else {
+              showToast(`${data.ticker} secured in Watchlist.`);
+              setWatchlist((prevWatchlist: any) => [...prevWatchlist, newRow]); 
+          }
+      } catch (error) {
+          showToast(`Error saving ${data.ticker}.`);
+          console.error(error);
+      }
   };
 
   const fetchGlobalNews = async () => { 
@@ -226,7 +369,6 @@ export default function TerminalPage() {
   
   const newsToDisplay = data?.news?.length > 0 ? data.news : globalNews;
 
-  // 🚨 LOADING INTERCEPT
   if (!isAuthorized) {
       return (
           <main className="min-h-screen bg-[#020617] flex items-center justify-center">
@@ -248,7 +390,7 @@ export default function TerminalPage() {
         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #334155; }
       `}} />
 
-      {/* GLOBAL TOAST & MODALS */}
+      {/* GLOBAL TOAST */}
       {toastMessage && (
         <div className="fixed inset-0 z-[150] flex items-center justify-center pointer-events-none">
            <div className="bg-slate-900 border border-blue-500/50 px-10 py-6 rounded-3xl shadow-[0_0_40px_rgba(59,130,246,0.3)] animate-in zoom-in-95 fade-in duration-300 flex flex-col items-center">
@@ -256,6 +398,18 @@ export default function TerminalPage() {
               <p className="text-white font-black uppercase tracking-widest text-sm text-center">{toastMessage}</p>
            </div>
         </div>
+      )}
+
+      {/* TRADE TICKET MODAL */}
+      {showTradeTicket && data && (
+          <TradeTicket
+              ticker={data.ticker}
+              currentPrice={data.price}
+              buyingPower={virtualCash}
+              currentShares={currentShares}
+              onClose={() => setShowTradeTicket(false)}
+              onExecute={handleExecuteTrade}
+          />
       )}
 
       {(loading || isAnalyzing) && (
@@ -404,10 +558,18 @@ export default function TerminalPage() {
 
           {/* RIGHT PANEL */}
           <div className="col-span-12 lg:col-span-3 space-y-8">
+            
             <div className="bg-slate-900 border border-slate-800 rounded-[40px] p-10 shadow-2xl">
                <div className="flex items-center gap-3 mb-10 text-blue-500"><div className="w-2.5 h-2.5 bg-blue-500 rounded-full animate-pulse" /><p className="text-[10px] font-black uppercase tracking-[0.3em]">AI Market Intercept</p></div>
                {data ? (
                   <>
+                    {/* PAPER TRADING EXECUTION TRIGGER */}
+                    <button 
+                        onClick={() => setShowTradeTicket(true)}
+                        className="w-full mb-8 bg-emerald-600 border border-emerald-500 py-4 rounded-2xl text-white font-black text-lg uppercase tracking-widest hover:bg-emerald-500 transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)]"
+                    >
+                        TRADE {data.ticker}
+                    </button>
                     <div className="mb-8">
                        <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Current Price</p>
                        <p className="text-7xl font-mono font-black text-white tracking-tighter mb-4">${data.price}</p>
@@ -419,8 +581,15 @@ export default function TerminalPage() {
                        <div><p className="text-[9px] font-bold text-slate-400 uppercase mb-2">Rel Surge</p><p className="text-blue-400 font-black text-sm">{data.vol_surge}</p></div>
                     </div>
 
+                    {/* 🚨 TRIGGER AUTH MODAL FOR TACTICAL SCAN (3 TOKENS) */}
                     <button 
-                        onClick={() => runMasterAnalysis()} 
+                        onClick={() => setAuthModal({
+                            isOpen: true,
+                            title: "Tactical Deep Dive",
+                            cost: 3,
+                            actionName: "INITIATE SCAN",
+                            onConfirm: runMasterAnalysis
+                        })}
                         disabled={isAnalyzing}
                         className="w-full mb-4 bg-blue-600 border border-blue-500 py-3 rounded-xl text-white font-black text-[10px] uppercase tracking-widest hover:bg-blue-500 hover:text-white transition-all shadow-[0_0_15px_rgba(59,130,246,0.3)] disabled:opacity-50"
                     >
@@ -440,13 +609,24 @@ export default function TerminalPage() {
             <div className="bg-slate-900/40 border border-slate-800 rounded-[40px] p-8 flex flex-col h-[600px] overflow-hidden shrink-0">
                <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-6 text-center">AI Intelligence Wire</p>
                
-               <button onClick={() => runMasterAnalysis()} className="w-full mb-6 bg-blue-900/30 border border-blue-500/50 py-4 rounded-2xl text-blue-400 font-black text-[10px] uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all shadow-[0_0_15px_rgba(59,130,246,0.15)]">
+               {/* 🚨 TRIGGER AUTH MODAL FOR SENTIMENT CHECK (3 TOKENS) */}
+               <button 
+                  onClick={() => setAuthModal({
+                      isOpen: true,
+                      title: "Global AI Sentiment Check",
+                      cost: 3,
+                      actionName: "INITIATE SCAN",
+                      onConfirm: runMasterAnalysis
+                  })} 
+                  className="w-full mb-6 bg-blue-900/30 border border-blue-500/50 py-4 rounded-2xl text-blue-400 font-black text-[10px] uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all shadow-[0_0_15px_rgba(59,130,246,0.15)]"
+               >
                   🌐 Global AI Sentiment Check
                </button>
 
                <div className="space-y-4 overflow-y-auto custom-scrollbar flex-1">
+                  {/* 🚨 TRIGGER AUTH MODAL FOR NEWS SYNTHESIS (1 TOKEN) */}
                   {newsToDisplay.map((item: any, i: number) => (
-                      <div key={i} onClick={() => handleArticleClick(item)} className="bg-slate-950 border border-slate-800 p-5 rounded-3xl cursor-pointer hover:border-blue-500/50 group transition-all">
+                      <div key={i} onClick={() => triggerArticleAnalysis(item)} className="bg-slate-950 border border-slate-800 p-5 rounded-3xl cursor-pointer hover:border-blue-500/50 group transition-all">
                           <p className="text-sm font-bold text-slate-200 group-hover:text-blue-400 leading-snug line-clamp-3">{item.title}</p>
                           <div className="flex justify-between items-center mt-4 pt-4 border-t border-slate-800/30">
                               <p className="text-[9px] font-black text-slate-400 group-hover:text-slate-200 uppercase">
@@ -458,14 +638,57 @@ export default function TerminalPage() {
                   ))}
                </div>
             </div>
-          </div>
 
+          </div>
         </div>
         
         <footer className="border-t border-slate-800/50 pt-8 mt-12 text-center w-full">
             <p className="text-[10px] uppercase tracking-[0.2em] font-black text-slate-600">© 2026 TradeBotics AI. All Systems Operational.</p>
         </footer>
       </div>
+
+      {/* 🚨 NEURAL AUTHORIZATION MODAL */}
+      {authModal.isOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md">
+              <div className="bg-[#0B0F19] border border-red-900/50 rounded-xl shadow-[0_0_40px_rgba(220,38,38,0.15)] w-full max-w-sm overflow-hidden relative">
+                  
+                  {/* Flashing Warning Header */}
+                  <div className="p-4 border-b border-red-900/30 bg-red-950/20 flex items-center gap-3">
+                      <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.8)]"></div>
+                      <h2 className="text-xs font-bold text-red-500 uppercase tracking-[0.2em]">Bandwidth Authorization Required</h2>
+                  </div>
+
+                  {/* Body */}
+                  <div className="p-6 text-center space-y-4">
+                      <p className="text-sm text-slate-300 font-mono">
+                          Executing the <span className="text-white font-bold">{authModal.title}</span> protocol will consume standard neural bandwidth.
+                      </p>
+                      
+                      <div className="py-4 bg-slate-900/50 rounded-lg border border-slate-800 flex flex-col items-center justify-center">
+                          <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">Compute Cost</p>
+                          <p className="text-3xl font-mono text-purple-400 font-bold">-{authModal.cost} TOKENS</p>
+                      </div>
+                  </div>
+
+                  {/* Action Row */}
+                  <div className="flex border-t border-slate-800">
+                      <button 
+                          onClick={() => setAuthModal({ ...authModal, isOpen: false })}
+                          className="flex-1 py-4 text-xs font-bold text-slate-500 hover:text-white uppercase tracking-widest hover:bg-slate-800/50 transition-colors">
+                          Abort
+                      </button>
+                      <button 
+    onClick={() => {
+        setAuthModal({ ...authModal, isOpen: false });
+        authModal.onConfirm(); 
+    }}
+    className="flex-1 py-4 text-xs font-bold text-blue-400 hover:text-white uppercase tracking-widest hover:bg-blue-600 transition-colors border-l border-slate-800">
+    {authModal.actionName}
+</button>
+                  </div>
+              </div>
+          </div>
+      )}
 
     </main>
   );

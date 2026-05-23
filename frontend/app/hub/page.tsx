@@ -6,8 +6,19 @@ import { supabase } from "../lib/supabase";
 import TermsModal from "../components/TermsModal"; 
 
 export default function HubPage() {
+    
     const router = useRouter();
     const [isAuthorized, setIsAuthorized] = useState(false);
+    // 🚨 ECONOMY STATE
+  const [virtualCash, setVirtualCash] = useState<number>(0);
+  const [aiTokens, setAiTokens] = useState<number>(0);
+  const [authModal, setAuthModal] = useState({
+    isOpen: false,
+    title: "",
+    cost: 0,
+    actionName: "",
+    onConfirm: () => {}
+});
 
     // --- SECURITY GUARD: PREVENT UNAUTHORIZED ACCESS ---
     useEffect(() => {
@@ -33,6 +44,23 @@ export default function HubPage() {
         await supabase.auth.signOut();
         router.push('/'); 
     };
+    const fetchOperativeData = async () => {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (session) {
+              // Fetch their economy balances
+              const { data: profile } = await supabase
+                  .from('profiles')
+                  .select('virtual_cash_balance, ai_token_balance')
+                  .eq('id', session.user.id)
+                  .single();
+                  
+              if (profile) {
+                  setVirtualCash(profile.virtual_cash_balance);
+                  setAiTokens(profile.ai_token_balance);
+              }
+          }
+      };
+      fetchOperativeData();
 
     // Keep the screen blank/loading while the security check runs
     if (!isAuthorized) {
@@ -88,6 +116,54 @@ export default function HubPage() {
                         "Welcome to the central interface. Select a module below to initiate real-time market synthesis, analyze algorithmic order flow, or manage your aggregate risk architecture."
                     </p>
                 </div>
+                {/* 🚨 INSTITUTIONAL ECONOMY HUD */}
+      <div className="w-full max-w-5xl mx-auto mb-10 mt-8 px-4">
+          <div className="bg-[#0B0F19] border border-slate-800 rounded-xl shadow-2xl flex flex-col md:flex-row overflow-hidden">
+              
+              {/* LEFT: VIRTUAL CAPITAL */}
+              <div className="flex-1 p-6 md:p-8 md:border-r border-slate-800 relative bg-gradient-to-br from-slate-900/50 to-transparent">
+                  <div className="flex items-center gap-3 mb-6">
+                      <div className="w-1.5 h-1.5 bg-emerald-500 rounded-sm shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
+                      <p className="text-[10px] font-bold text-slate-300 uppercase tracking-[0.2em]">Virtual Capital</p>
+                  </div>
+                  
+                  {/* Data and Button Row */}
+                  <div className="flex justify-between items-center gap-4">
+                      <div className="flex items-baseline truncate">
+                          <p className="text-5xl font-mono text-white tracking-tight truncate">
+                              ${(virtualCash || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                          </p>
+                          <span className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-3 shrink-0">USD</span>
+                      </div>
+                      <button className="w-32 h-10 shrink-0 flex items-center justify-center text-[10px] font-bold text-white uppercase tracking-widest bg-purple-600 hover:bg-purple-500 rounded transition-colors shadow-[0_0_15px_rgba(147,51,234,0.2)]">
+                          Add Funds
+                      </button>
+                  </div>
+              </div>
+
+              {/* RIGHT: NEURAL BANDWIDTH */}
+              <div className="flex-1 p-6 md:p-8 relative bg-gradient-to-br from-slate-900/50 to-transparent">
+                  <div className="flex items-center gap-3 mb-6">
+                      <div className="w-1.5 h-1.5 bg-purple-500 rounded-sm shadow-[0_0_8px_rgba(168,85,247,0.5)]"></div>
+                      <p className="text-[10px] font-bold text-slate-300 uppercase tracking-[0.2em]">Neural Bandwidth</p>
+                  </div>
+                  
+                  {/* Data and Button Row */}
+                  <div className="flex justify-between items-center gap-4">
+                      <div className="flex items-baseline truncate">
+                          <p className="text-5xl font-mono text-white tracking-tight truncate">
+                              {aiTokens || 0}
+                          </p>
+                          <span className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-3 shrink-0">Tokens</span>
+                      </div>
+                      <button className="w-32 h-10 shrink-0 flex items-center justify-center text-[10px] font-bold text-white uppercase tracking-widest bg-purple-600 hover:bg-purple-500 rounded transition-colors shadow-[0_0_15px_rgba(147,51,234,0.2)]">
+                          Recharge
+                      </button>
+                  </div>
+              </div>
+
+          </div>
+      </div>
 
                 {/* --- MODULE LAUNCH GRID --- */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">

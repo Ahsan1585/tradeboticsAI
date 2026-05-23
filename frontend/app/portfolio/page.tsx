@@ -34,6 +34,15 @@ export default function PortfolioPage() {
     const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
 
+    // 🚨 NEURAL AUTHORIZATION STATE
+    const [authModal, setAuthModal] = useState({
+        isOpen: false,
+        title: "",
+        cost: 0,
+        actionName: "",
+        onConfirm: () => {}
+    });
+
     useEffect(() => {
         const verifyClearance = async () => {
             const { data: { session }, error } = await supabase.auth.getSession();
@@ -149,14 +158,24 @@ export default function PortfolioPage() {
         setIsAnalyzing(true);
         setAiAnalysis(null);
         try {
-            const res = await fetch(`${BACKEND_URL}/portfolio-analysis`, {
+            // 🚨 APPENDED user_id TO URL
+            const res = await fetch(`${BACKEND_URL}/portfolio-analysis?user_id=${userId}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ holdings: portfolio, trade_style: tradeStyle })
             });
             const result = await res.json();
-            if (res.ok) setAiAnalysis(result.analysis);
-            else showToast("AI Engine Error: " + result.detail);
+            
+            if (res.ok) {
+                setAiAnalysis(result.analysis);
+            } else {
+                // 🚨 INTERCEPT EMPTY WALLET (402 ERROR)
+                if (res.status === 402) {
+                    showToast("NEURAL BANDWIDTH DEPLETED. RECHARGE REQUIRED.");
+                } else {
+                    showToast("AI Engine Error: " + result.detail);
+                }
+            }
         } catch (error) {
             showToast("Backend Offline. Check connection.");
         }
@@ -203,7 +222,7 @@ export default function PortfolioPage() {
                 {/* LEFT PANEL: INVENTORY MANAGEMENT */}
                 <div className="lg:col-span-7 flex flex-col gap-8">
                     
-                    {/* ASSET ENTRY FORM (RESPONSIVE GRID FIX) */}
+                    {/* ASSET ENTRY FORM */}
                     <div className="bg-slate-900/40 border border-slate-800 p-8 rounded-[40px] shadow-2xl">
                         <p className="text-[11px] font-black text-blue-500 uppercase tracking-[0.4em] mb-6">Register Asset</p>
                         <form onSubmit={handleAddAsset} className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 w-full">
@@ -298,8 +317,15 @@ export default function PortfolioPage() {
                             </div>
                         </div>
 
+                        {/* 🚨 TRIGGER AUTH MODAL FOR PORTFOLIO SCAN (5 TOKENS) */}
                         <button 
-                            onClick={runPortfolioAnalysis}
+                            onClick={() => setAuthModal({
+                                isOpen: true,
+                                title: "Portfolio Rotation Matrix",
+                                cost: 5,
+                                actionName: "AUTHORIZE ROTATION",
+                                onConfirm: runPortfolioAnalysis
+                            })}
                             disabled={isAnalyzing || portfolio.length === 0}
                             className="w-full bg-purple-600 border border-purple-500 hover:bg-purple-500 py-4 rounded-2xl text-white font-black text-[10px] uppercase tracking-widest transition-all shadow-[0_0_25px_rgba(168,85,247,0.5)] disabled:opacity-50 disabled:bg-purple-600/20 disabled:text-purple-400 mb-8"
                         >
@@ -331,6 +357,47 @@ export default function PortfolioPage() {
                 </div>
 
             </div>
+
+            {/* 🚨 NEURAL AUTHORIZATION MODAL */}
+            {authModal.isOpen && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md">
+                    <div className="bg-[#0B0F19] border border-red-900/50 rounded-xl shadow-[0_0_40px_rgba(220,38,38,0.15)] w-full max-w-sm overflow-hidden relative">
+                        
+                        <div className="p-4 border-b border-red-900/30 bg-red-950/20 flex items-center gap-3">
+                            <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.8)]"></div>
+                            <h2 className="text-xs font-bold text-red-500 uppercase tracking-[0.2em]">Bandwidth Authorization Required</h2>
+                        </div>
+
+                        <div className="p-6 text-center space-y-4">
+                            <p className="text-sm text-slate-300 font-mono">
+                                Executing the <span className="text-white font-bold">{authModal.title}</span> protocol will consume standard neural bandwidth.
+                            </p>
+                            
+                            <div className="py-4 bg-slate-900/50 rounded-lg border border-slate-800 flex flex-col items-center justify-center">
+                                <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">Compute Cost</p>
+                                <p className="text-3xl font-mono text-purple-400 font-bold">-{authModal.cost} TOKENS</p>
+                            </div>
+                        </div>
+
+                        <div className="flex border-t border-slate-800">
+                            <button 
+                                onClick={() => setAuthModal({ ...authModal, isOpen: false })}
+                                className="flex-1 py-4 text-xs font-bold text-slate-500 hover:text-white uppercase tracking-widest hover:bg-slate-800/50 transition-colors">
+                                Abort
+                            </button>
+                            <button 
+                                onClick={() => {
+                                    setAuthModal({ ...authModal, isOpen: false });
+                                    authModal.onConfirm(); 
+                                }}
+                                className="flex-1 py-4 text-xs font-bold text-red-400 hover:text-red-300 uppercase tracking-widest hover:bg-red-950/30 transition-colors border-l border-slate-800">
+                                {authModal.actionName}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
         </main>
     );
 }
