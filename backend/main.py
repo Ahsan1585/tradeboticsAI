@@ -7,17 +7,35 @@ import math
 import yfinance as yf
 import google.generativeai as genai
 from dotenv import load_dotenv
+from supabase import create_client, Client  
+from fastapi import Query, HTTPException
 
 load_dotenv()
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # In production, replace "*" with your Vercel URL
+    allow_origins=["*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- SUPABASE CONFIGURATION ---
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY") 
+if SUPABASE_URL and SUPABASE_KEY:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+else:
+    supabase = None
+
+# --- REQUEST MODELS ---
+class TradeRequest(BaseModel):
+    user_id: str
+    ticker: str
+    trade_type: str  
+    amount: float    
+    mode: str
 
 # --- AI CONFIGURATION ---
 GOOGLE_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -49,9 +67,14 @@ class PortfolioRequest(BaseModel):
 # --- ENDPOINTS ---
 
 @app.get("/analyze/{ticker}")
-async def analyze_ticker(ticker: str):
+async def analyze_ticker(ticker: str): 
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Database connection offline.")
+
     try:
-        # Reverted back to native handling
+        # ==========================================
+        # YOUR EXISTING LOGIC START (No Token Gate Here)
+        # ==========================================
         stock = yf.Ticker(ticker)
         hist = stock.history(period="3mo")
         if hist.empty: raise HTTPException(status_code=404, detail="Ticker data not found.")
@@ -124,6 +147,9 @@ async def analyze_ticker(ticker: str):
                 "reasoning": f"Price is riding the upper standard deviation channel, suggesting a potential breakout for {ticker.upper()}." if tech_score > 70 else f"Price is testing the lower standard deviation channel, indicating oversold conditions." if tech_score < 40 else f"{ticker.upper()} is consolidating near the mean, awaiting a volatility catalyst."
             }
         ]
+        # ==========================================
+        # YOUR EXISTING LOGIC END
+        # ==========================================
 
         return {
             "ticker": ticker.upper(),
@@ -145,6 +171,9 @@ async def analyze_ticker(ticker: str):
                 "cash_flow": "POSITIVE" if margins and margins > 0 else "NEGATIVE"
             }
         }
+        
+    except HTTPException as he:
+        raise he
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -176,9 +205,18 @@ async def generate_swap_thesis(req: SwapRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/translate")
-async def translate_ai(req: TranslationRequest):
+async def translate_ai(req: TranslationRequest, user_id: str = Query(...)): 
     if not model: return {"analysis": "AI Node Offline."}
     try:
+        # 🚨 1. GATEKEEPER: Check for 3 Tokens
+        profile_res = supabase.table('profiles').select('ai_token_balance').eq('id', user_id).execute()
+        if not profile_res.data:
+            raise HTTPException(status_code=404, detail="Operative profile not found.")
+            
+        current_tokens = int(profile_res.data[0]['ai_token_balance'])
+        if current_tokens < 3:
+            raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 3 Tokens required for AI Deep Dive.")
+
         prompt = f"Act as an elite quantitative analyst. Provide a definitive briefing on {req.ticker}.\n\n"
         prompt += f"CURRENT MARKET CONTEXT:\n- Current Price: ${req.data_context.get('price', 'N/A')}\n- Quant Score: {req.data_context.get('score', 'N/A')}\n\n"
         
@@ -206,14 +244,34 @@ async def translate_ai(req: TranslationRequest):
             "Keep it professional, data-driven, and ruthless. No pleasantries."
         )
         response = model.generate_content(prompt)
-        return {"analysis": response.text.strip()}
+
+        # 🚨 2. DEDUCT 3 TOKENS
+        new_token_balance = current_tokens - 3
+        supabase.table('profiles').update({'ai_token_balance': new_token_balance}).eq('id', user_id).execute()
+
+        return {
+            "analysis": response.text.strip(),
+            "remaining_tokens": new_token_balance
+        }
+        
+    except HTTPException as he:
+        raise he
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/summarize")
-async def summarize_article(req: SummaryRequest):
+async def summarize_article(req: SummaryRequest, user_id: str = Query(...)): 
     if not model: return {"summary": ["AI Node Offline."]}
     try:
+        # 🚨 1. GATEKEEPER: Check for 1 Token
+        profile_res = supabase.table('profiles').select('ai_token_balance').eq('id', user_id).execute()
+        if not profile_res.data:
+            raise HTTPException(status_code=404, detail="Operative profile not found.")
+            
+        current_tokens = int(profile_res.data[0]['ai_token_balance'])
+        if current_tokens < 1:
+            raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 1 Token required for News Synthesis.")
+
         prompt = (
             f"Act as a financial analyst. Write a concise, institutional summary "
             f"expanding on this headline: '{req.title}'.\n\n"
@@ -223,7 +281,18 @@ async def summarize_article(req: SummaryRequest):
             f"- Be highly informative but extremely brief."
         )
         response = model.generate_content(prompt)
-        return {"summary": [response.text.strip()]}
+
+        # 🚨 2. DEDUCT 1 TOKEN
+        new_token_balance = current_tokens - 1
+        supabase.table('profiles').update({'ai_token_balance': new_token_balance}).eq('id', user_id).execute()
+
+        return {
+            "summary": [response.text.strip()],
+            "remaining_tokens": new_token_balance
+        }
+        
+    except HTTPException as he:
+        raise he
     except Exception: 
         return {"summary": ["Summary temporarily unavailable."]}
 
@@ -237,11 +306,123 @@ async def market_briefing():
         {"title": "Federal Reserve commentary points toward sustained current monetary policy trajectory.", "publisher": "Central Bank Watch", "date": "Today"}
     ]
 
+@app.post("/execute-trade")
+async def execute_trade(req: TradeRequest):
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Database connection offline.")
+    
+    try:
+        ticker = req.ticker.upper()
+        
+        # 1. INDEPENDENT PRICE VERIFICATION (Zero Trust)
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period="1d")
+        if hist.empty:
+            raise HTTPException(status_code=404, detail="Asset pricing unavailable.")
+        live_price = float(hist['Close'].iloc[-1])
+
+        # 2. FRACTIONAL MATH ENGINE
+        if req.mode == "DOLLARS":
+            trade_cost = req.amount
+            trade_shares = req.amount / live_price
+        else: # SHARES
+            trade_shares = req.amount
+            trade_cost = req.amount * live_price
+
+        # 3. FETCH OPERATIVE'S CURRENT STATUS
+        profile_res = supabase.table('profiles').select('virtual_cash_balance').eq('id', req.user_id).execute()
+        if not profile_res.data:
+            raise HTTPException(status_code=404, detail="Operative profile not found.")
+        current_cash = float(profile_res.data[0]['virtual_cash_balance'])
+
+        portfolio_res = supabase.table('portfolio').select('*').eq('user_id', req.user_id).eq('ticker', ticker).execute()
+        current_position = portfolio_res.data[0] if portfolio_res.data else None
+        current_shares_held = float(current_position['shares']) if current_position else 0.0
+
+        # 4. EXECUTE BUY LOGIC
+        if req.trade_type == "BUY":
+            if trade_cost > current_cash:
+                raise HTTPException(status_code=400, detail="Insufficient virtual capital.")
+            
+            new_cash = current_cash - trade_cost
+            
+            # Calculate new blended average cost
+            if current_position:
+                old_total_cost = current_shares_held * float(current_position['cost_basis'])
+                new_total_shares = current_shares_held + trade_shares
+                new_avg_cost = (old_total_cost + trade_cost) / new_total_shares
+                
+                # Update existing position
+                supabase.table('portfolio').update({
+                    'shares': new_total_shares,
+                    'cost_basis': new_avg_cost
+                }).eq('user_id', req.user_id).eq('ticker', ticker).execute()
+            else:
+                # Create new position
+                supabase.table('portfolio').insert({
+                    'user_id': req.user_id,
+                    'ticker': ticker,
+                    'shares': trade_shares,
+                    'cost_basis': live_price
+                }).execute()
+
+        # 5. EXECUTE SELL LOGIC
+        elif req.trade_type == "SELL":
+            if trade_shares > current_shares_held:
+                raise HTTPException(status_code=400, detail="Insufficient shares in vault.")
+            
+            new_cash = current_cash + trade_cost
+            new_total_shares = current_shares_held - trade_shares
+
+            if new_total_shares <= 0.0001: # Account for floating point math
+                # Liquidate entirely
+                supabase.table('portfolio').delete().eq('user_id', req.user_id).eq('ticker', ticker).execute()
+            else:
+                # Reduce position (cost basis remains the same on a sell)
+                supabase.table('portfolio').update({
+                    'shares': new_total_shares
+                }).eq('user_id', req.user_id).eq('ticker', ticker).execute()
+        else:
+            raise HTTPException(status_code=400, detail="Invalid trade type.")
+
+        # 6. COMMIT CASH UPDATE AND WRITE TO AUDIT LEDGER
+        supabase.table('profiles').update({'virtual_cash_balance': new_cash}).eq('id', req.user_id).execute()
+        
+        supabase.table('transaction_ledger').insert({
+            'user_id': req.user_id,
+            'transaction_type': req.trade_type,
+            'ticker': ticker,
+            'shares': trade_shares,
+            'price': live_price,
+            'total_amount': trade_cost
+        }).execute()
+
+        return {
+            "status": "success",
+            "message": f"Order Executed: {req.trade_type} {round(trade_shares, 4)} {ticker}",
+            "execution_price": live_price,
+            "total_cost": trade_cost,
+            "remaining_cash": new_cash
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/portfolio-analysis")
-async def analyze_portfolio(req: PortfolioRequest):
+async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)): 
     if not model: return {"analysis": "AI Node Offline."}
     
     try:
+        # 🚨 1. THE GATEKEEPER: Check tokens before doing any expensive work
+        profile_res = supabase.table('profiles').select('ai_token_balance').eq('id', user_id).execute()
+        if not profile_res.data:
+            raise HTTPException(status_code=404, detail="Operative profile not found.")
+            
+        current_tokens = int(profile_res.data[0]['ai_token_balance'])
+        
+        if current_tokens < 5:
+            raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 5 Tokens required for Portfolio Rotation.")
+
         portfolio_summary = []
         if not req.holdings:
             raise HTTPException(status_code=400, detail="No holdings provided.")
@@ -364,11 +545,19 @@ async def analyze_portfolio(req: PortfolioRequest):
             prompt,
             generation_config={"max_output_tokens": 2000, "temperature": 0.1}
         )
-        
+
+        # 🚨 2. DEDUCT 5 TOKENS 
+        new_token_balance = current_tokens - 5
+        supabase.table('profiles').update({'ai_token_balance': new_token_balance}).eq('id', user_id).execute()
+
+        # 🚨 3. RETURN DATA + NEW BALANCE
         return {
             "analysis": response.text.strip(),
-            "holdings": portfolio_summary
+            "holdings": portfolio_summary,
+            "remaining_tokens": new_token_balance
         }
         
+    except HTTPException as he:
+        raise he
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
