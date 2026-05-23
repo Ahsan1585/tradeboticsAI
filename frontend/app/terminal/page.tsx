@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "../lib/supabase";
 import TradeTicket from "../components/TradeTicket"; 
 
-const BACKEND_URL = "http://127.0.0.1:8000";
+const BACKEND_URL = "https://tradebotics-api.onrender.com";
 
 // --- WIDGET COMPONENTS ---
 function TickerTape() {
