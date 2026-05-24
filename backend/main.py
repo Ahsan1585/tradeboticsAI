@@ -182,7 +182,7 @@ async def analyze_ticker(ticker: str):
                             "title": item.get("headline", "Market Update"),
                             "publisher": item.get("source", "Financial Wire"),
                             "date": date_str,
-                            "content": item.get("url", "") # Finnhub uses 'url' instead of 'link'
+                            "content": item.get("summary", item.get("url", ""))
                         })
             
             # 🚨 FAILSAFE: If Finnhub key is missing, fallback to yfinance
@@ -200,7 +200,7 @@ async def analyze_ticker(ticker: str):
                             "title": title,
                             "publisher": item.get("publisher", "Market Wire"),
                             "date": date_str,
-                            "content": item.get("link", "")
+                            "content": item.get("summary", item.get("link", ""))
                         })
                         
         except Exception as e:
@@ -322,13 +322,18 @@ async def summarize_article(req: SummaryRequest, user_id: str = Query(...)):
         if current_tokens < 1:
             raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 1 Token required.")
 
+        # INSIDE @app.post("/summarize")
+        
         prompt = (
-            f"Act as a financial analyst. Write a concise, institutional summary "
-            f"expanding on this headline: '{req.title}'.\n\n"
+            f"Act as an elite financial analyst. Write a concise, institutional summary "
+            f"based on the following news data.\n\n"
+            f"HEADLINE: '{req.title}'\n"
+            f"RAW ARTICLE CONTEXT: '{req.content}'\n\n"
             f"STRICT RULES:\n"
             f"- Output exactly one cohesive paragraph.\n"
             f"- Maximum 3 sentences.\n"
-            f"- Be highly informative but extremely brief."
+            f"- You MUST explicitly mention the specific stocks, companies, or data points referenced.\n"
+            f"- Be highly informative, precise, and extremely brief."
         )
         response = model.generate_content(prompt)
 
