@@ -156,19 +156,31 @@ async def analyze_ticker(ticker: str):
         # PULL LIVE NEWS & CALCULATE "HOURS AGO"
         news_list = []
         try:
-            for item in stock.news[:5]:
-                pub_time = item.get("providerPublishTime", time.time())
-                hours_ago = int((time.time() - pub_time) / 3600)
-                date_str = "Just now" if hours_ago == 0 else f"{hours_ago} hr{'s' if hours_ago > 1 else ''} ago"
-                
-                news_list.append({
-                    "title": item.get("title", ""),
-                    "publisher": item.get("publisher", ""),
-                    "date": date_str,
-                    "content": item.get("link", "")
-                })
-        except Exception:
-            pass # Failsafe if Yahoo news feed breaks
+            raw_news = stock.news
+            if isinstance(raw_news, list):
+                for item in raw_news:
+                    if len(news_list) >= 5:
+                        break
+
+                    # 🚨 STRICT VALIDATION: Check if title actually exists
+                    title = item.get("title", "")
+                    if not title or title.strip() == "":
+                        continue # Skip this ghost article, move to the next one
+
+                    publisher = item.get("publisher", "Market Wire")
+                    
+                    pub_time = item.get("providerPublishTime", time.time())
+                    hours_ago = int((time.time() - pub_time) / 3600)
+                    date_str = "JUST NOW" if hours_ago == 0 else f"{hours_ago} HR{'S' if hours_ago > 1 else ''} AGO"
+                    
+                    news_list.append({
+                        "title": title,
+                        "publisher": publisher,
+                        "date": date_str,
+                        "content": item.get("link", "")
+                    })
+        except Exception as e:
+            print(f"News fetch error for {ticker}: {e}", file=sys.stderr)
 
         ledger = [
             {"factor": "Momentum (RSI)", "val": "62.5" if tech_score > 50 else "38.2", "status": "BULLISH" if tech_score > 50 else "BEARISH", "reasoning": f"{ticker.upper()} is showing upward momentum. Current RSI proxy suggests buying pressure." if tech_score > 50 else f"{ticker.upper()} is losing momentum. RSI proxy suggests selling pressure."},
