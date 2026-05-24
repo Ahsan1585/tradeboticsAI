@@ -325,17 +325,16 @@ async def summarize_article(req: SummaryRequest, user_id: str = Query(...)):
         # INSIDE @app.post("/summarize")
         
         prompt = (
-            f"Act as an elite financial analyst. Write a concise, institutional summary "
-            f"based on the following news data.\n\n"
+            f"Act as an elite quantitative financial analyst. I am providing you with a headline and a brief data snippet. "
+            f"Your directive is to SYNTHESIZE and EXPAND upon this intelligence, providing deep institutional market context.\n\n"
             f"HEADLINE: '{req.title}'\n"
-            f"RAW ARTICLE CONTEXT: '{req.content}'\n\n"
+            f"RAW SNIPPET: '{req.content}'\n\n"
             f"STRICT RULES:\n"
-            f"- Output exactly one cohesive paragraph.\n"
-            f"- Maximum 3 sentences.\n"
-            f"- You MUST explicitly mention the specific stocks, companies, or data points referenced.\n"
-            f"- Be highly informative, precise, and extremely brief."
+            f"- Output exactly one cohesive paragraph (3 to 4 sentences).\n"
+            f"- You MUST explicitly mention the specific tickers and companies referenced.\n"
+            f"- Do not just repeat the snippet. Add professional market context explaining WHY this event matters to the sector, supply chain, or stock price.\n"
+            f"- Maintain a ruthless, data-driven, and highly informative tone."
         )
-        response = model.generate_content(prompt)
 
         new_token_balance = current_tokens - 1
         supabase.table('profiles').update({'ai_token_balance': new_token_balance}).eq('id', user_id).execute()
