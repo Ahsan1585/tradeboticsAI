@@ -29,6 +29,16 @@ function TickerTape() {
   }, []);
   return <div ref={container} className="w-full mb-8 opacity-60" />;
 }
+// --- MAIN PAGE COMPONENT ---
+export default function TerminalPage() {
+  const router = useRouter();
+
+  // 🚀 MOVE THEM HERE (Inside the main component block)
+  const [marketBriefing, setMarketBriefing] = useState<any[]>([]);
+  const [analysisData, setAnalysisData] = useState<any>(null); 
+
+  // ... rest of your code, useEffects, and returns ...
+}
 
 function MarketScreener() {
   const container = useRef<HTMLDivElement>(null);
@@ -607,40 +617,48 @@ export default function TerminalPage() {
             </div>
 
             <div className="bg-slate-900/40 border border-slate-800 rounded-[40px] p-8 flex flex-col h-[600px] overflow-hidden shrink-0">
-               <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-6 text-center">AI Intelligence Wire</p>
-               
-               {/* 🚨 TRIGGER AUTH MODAL FOR SENTIMENT CHECK (3 TOKENS) */}
-               <button 
-                  onClick={() => setAuthModal({
-                      isOpen: true,
-                      title: "Global AI Sentiment Check",
-                      cost: 3,
-                      actionName: "INITIATE SCAN",
-                      onConfirm: runMasterAnalysis
-                  })} 
-                  className="w-full mb-6 bg-blue-900/30 border border-blue-500/50 py-4 rounded-2xl text-blue-400 font-black text-[10px] uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all shadow-[0_0_15px_rgba(59,130,246,0.15)]"
-               >
-                  🌐 Global AI Sentiment Check
-               </button>
+   <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-6 text-center">AI Intelligence Wire</p>
+   
+   {/* 🚨 TRIGGER AUTH MODAL FOR SENTIMENT CHECK (3 TOKENS) */}
+   <button 
+      onClick={() => setAuthModal({
+          isOpen: true,
+          title: "Global AI Sentiment Check",
+          cost: 3,
+          actionName: "INITIATE SCAN",
+          onConfirm: runMasterAnalysis
+      })} 
+      className="w-full mb-6 bg-blue-900/30 border border-blue-500/50 py-4 rounded-2xl text-blue-400 font-black text-[10px] uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all shadow-[0_0_15px_rgba(59,130,246,0.15)]"
+   >
+      🌐 Global AI Sentiment Check
+   </button>
 
-               <div className="space-y-4 overflow-y-auto custom-scrollbar flex-1">
-                  {/* 🚨 TRIGGER AUTH MODAL FOR NEWS SYNTHESIS (1 TOKEN) */}
-                  {newsToDisplay.map((item: any, i: number) => (
-                      <div key={i} onClick={() => triggerArticleAnalysis(item)} className="bg-slate-950 border border-slate-800 p-5 rounded-3xl cursor-pointer hover:border-blue-500/50 group transition-all">
-                          <p className="text-sm font-bold text-slate-200 group-hover:text-blue-400 leading-snug line-clamp-3">{item.title}</p>
-                          <div className="flex justify-between items-center mt-4 pt-4 border-t border-slate-800/30">
-                              <p className="text-[9px] font-black text-slate-400 group-hover:text-slate-200 uppercase">
-                                  {item.publisher} {item.date ? `• ${item.date}` : ""}
-                              </p>
-                              <span className="text-[8px] bg-blue-600/10 text-blue-500 px-2 py-0.5 rounded-full uppercase font-black">AI Synthesis</span>
-                          </div>
-                      </div>
-                  ))}
-               </div>
-            </div>
-
+   <div className="space-y-4 overflow-y-auto custom-scrollbar flex-1">
+      {/* 🚀 DYNAMIC DATA ROUTING: Prefers ticker news, falls back to global macro briefing */}
+      {((analysisData && analysisData.news && analysisData.news.length > 0) 
+        ? analysisData.news 
+        : marketBriefing
+      ).map((item: any, i: number) => (
+          <div 
+            key={i} 
+            onClick={() => triggerArticleAnalysis(item)} 
+            className="bg-slate-950 border border-slate-800 p-5 rounded-3xl cursor-pointer hover:border-blue-500/50 group transition-all"
+          >
+              <p className="text-sm font-bold text-slate-200 group-hover:text-blue-400 leading-snug line-clamp-3">
+                {item.title}
+              </p>
+              <div className="flex justify-between items-center mt-4 pt-4 border-t border-slate-800/30">
+                  <p className="text-[9px] font-black text-slate-400 group-hover:text-slate-200 uppercase tracking-wider">
+                      {item.publisher} {item.date ? `• ${item.date}` : ""}
+                  </p>
+                  <span className="text-[8px] bg-blue-600/10 text-blue-500 px-2 py-0.5 rounded-full uppercase font-black tracking-wider">
+                    AI Synthesis
+                  </span>
+              </div>
           </div>
-        </div>
+      ))}
+   </div>
+</div>
         
         <footer className="border-t border-slate-800/50 pt-8 mt-12 text-center w-full">
             <p className="text-[10px] uppercase tracking-[0.2em] font-black text-slate-600">© 2026 TradeBotics AI. All Systems Operational.</p>
