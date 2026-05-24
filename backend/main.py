@@ -322,8 +322,6 @@ async def summarize_article(req: SummaryRequest, user_id: str = Query(...)):
         if current_tokens < 1:
             raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 1 Token required.")
 
-        # INSIDE @app.post("/summarize")
-        
         prompt = (
             f"Act as an elite quantitative financial analyst. I am providing you with a headline and a brief data snippet. "
             f"Your directive is to SYNTHESIZE and EXPAND upon this intelligence, providing deep institutional market context.\n\n"
@@ -335,12 +333,30 @@ async def summarize_article(req: SummaryRequest, user_id: str = Query(...)):
             f"- Do not just repeat the snippet. Add professional market context explaining WHY this event matters to the sector, supply chain, or stock price.\n"
             f"- Maintain a ruthless, data-driven, and highly informative tone."
         )
+        
+        # 🚨 OVERRIDE GEMINI SAFETY FILTERS (Prevents "Dangerous Content" blocks on stock picks)
+        response = model.generate_content(
+            prompt,
+            safety_settings=[
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+            ]
+        )
+
+        # 🚨 FAILSAFE: Check if Gemini still blocked it despite the override
+        try:
+            ai_text = response.text.strip()
+        except ValueError:
+            print(f"GEMINI BLOCKED RESPONSE: {response.prompt_feedback}", file=sys.stderr)
+            ai_text = "AI Node rejected synthesis due to strict safety protocols regarding direct financial advice."
 
         new_token_balance = current_tokens - 1
         supabase.table('profiles').update({'ai_token_balance': new_token_balance}).eq('id', user_id).execute()
 
         final_response = {
-            "summary": [response.text.strip()],
+            "summary": [ai_text],
             "remaining_tokens": new_token_balance
         }
         
@@ -349,8 +365,10 @@ async def summarize_article(req: SummaryRequest, user_id: str = Query(...)):
         
     except HTTPException as he:
         raise he
-    except Exception: 
-        return {"summary": ["Summary temporarily unavailable."]}
+    except Exception as e: 
+        # 🚨 UN-SILENCE THE ERROR LOG
+        print(f"CRITICAL SUMMARIZE ERROR: {e}", file=sys.stderr)
+        return {"summary": [f"Synthesis Offline. Error logged in terminal."]}
 
 @app.post("/portfolio-analysis")
 async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)): 
