@@ -1,14 +1,16 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, Any, List
 import os
 import math
+import time
+from datetime import datetime, timezone
 import yfinance as yf
 import google.generativeai as genai
 from dotenv import load_dotenv
 from supabase import create_client, Client  
-from fastapi import Query, HTTPException
+import sys
 
 load_dotenv()
 app = FastAPI()
@@ -22,12 +24,9 @@ app.add_middleware(
 )
 
 # --- SUPABASE CONFIGURATION ---
-import sys
-
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY") 
 
-# Debugging: These will show up in your Render Logs tab
 print(f"DEBUG: Checking Env Variables...", file=sys.stderr)
 print(f"DEBUG: SUPABASE_URL present: {bool(SUPABASE_URL)}", file=sys.stderr)
 print(f"DEBUG: SUPABASE_SERVICE_KEY present: {bool(SUPABASE_KEY)}", file=sys.stderr)
@@ -78,6 +77,35 @@ class PortfolioRequest(BaseModel):
     holdings: List[Dict[str, Any]]
     trade_style: str = "Long Term"
 
+# --- 30-MINUTE AI CACHE ENGINE ---
+def check_ai_cache(cache_key: str) -> dict | None:
+    if not supabase: return None
+    try:
+        response = supabase.table('ai_scan_cache').select('*').eq('cache_key', cache_key).execute()
+        if response.data:
+            record = response.data[0]
+            last_scanned = datetime.fromisoformat(record['last_scanned'].replace('Z', '+00:00'))
+            time_diff = (datetime.now(timezone.utc) - last_scanned).total_seconds()
+            
+            if time_diff < 1800: # 1800 seconds = 30 minutes
+                print(f"CACHE HIT [{cache_key}]: Serving from memory. Saves AI Tokens.", file=sys.stderr)
+                return record['cached_response']
+    except Exception as e:
+        print(f"Cache read error: {e}", file=sys.stderr)
+    return None
+
+def update_ai_cache(cache_key: str, payload: dict):
+    if not supabase: return
+    try:
+        supabase.table('ai_scan_cache').upsert({
+            'cache_key': cache_key,
+            'last_scanned': datetime.now(timezone.utc).isoformat(),
+            'cached_response': payload
+        }).execute()
+        print(f"CACHE SAVED [{cache_key}]: Locked for 30 minutes.", file=sys.stderr)
+    except Exception as e:
+        print(f"Cache save error: {e}", file=sys.stderr)
+
 # --- ENDPOINTS ---
 
 @app.get("/analyze/{ticker}")
@@ -86,9 +114,6 @@ async def analyze_ticker(ticker: str):
         raise HTTPException(status_code=500, detail="Database connection offline.")
 
     try:
-        # ==========================================
-        # YOUR EXISTING LOGIC START (No Token Gate Here)
-        # ==========================================
         stock = yf.Ticker(ticker)
         hist = stock.history(period="3mo")
         if hist.empty: raise HTTPException(status_code=404, detail="Ticker data not found.")
@@ -128,42 +153,30 @@ async def analyze_ticker(ticker: str):
         
         vol_surge = f"{round((volume / avg_volume) * 100, 1)}%" if avg_volume > 0 else "N/A"
 
-        # DYNAMIC NEURAL LEDGER
+        # PULL LIVE NEWS & CALCULATE "HOURS AGO"
+        news_list = []
+        try:
+            for item in stock.news[:5]:
+                pub_time = item.get("providerPublishTime", time.time())
+                hours_ago = int((time.time() - pub_time) / 3600)
+                date_str = "Just now" if hours_ago == 0 else f"{hours_ago} hr{'s' if hours_ago > 1 else ''} ago"
+                
+                news_list.append({
+                    "title": item.get("title", ""),
+                    "publisher": item.get("publisher", ""),
+                    "date": date_str,
+                    "content": item.get("link", "")
+                })
+        except Exception:
+            pass # Failsafe if Yahoo news feed breaks
+
         ledger = [
-            {
-                "factor": "Momentum (RSI)", 
-                "val": "62.5" if tech_score > 50 else "38.2", 
-                "status": "BULLISH" if tech_score > 50 else "BEARISH", 
-                "reasoning": f"{ticker.upper()} is showing upward momentum. Current RSI proxy suggests buying pressure." if tech_score > 50 else f"{ticker.upper()} is losing momentum. RSI proxy suggests selling pressure."
-            },
-            {
-                "factor": "Institutional Flow", 
-                "val": "High" if volume > avg_volume else "Low", 
-                "status": "BULLISH" if volume > avg_volume else "NEUTRAL", 
-                "reasoning": f"Current volume of {volume:,} exceeds the historical average of {avg_volume:,}, indicating strong institutional accumulation." if volume > avg_volume else f"Current volume of {volume:,} is below the historical average of {avg_volume:,}, indicating retail-driven consolidation."
-            },
-            {
-                "factor": "MACD Divergence", 
-                "val": "Positive" if current_price > prev_price else "Negative", 
-                "status": "BULLISH" if current_price > prev_price else "BEARISH", 
-                "reasoning": f"Price action at ${current_price} confirms a positive bullish crossover against the previous close." if current_price > prev_price else f"Price action at ${current_price} indicates a bearish crossover trajectory."
-            },
-            {
-                "factor": "VWAP Proximity", 
-                "val": f"+{round(((current_price - prev_price)/prev_price)*100, 2)}%" if current_price > prev_price else f"{round(((current_price - prev_price)/prev_price)*100, 2)}%", 
-                "status": "BULLISH" if current_price > prev_price else "BEARISH", 
-                "reasoning": f"The asset is holding firmly above the volume-weighted baseline, supporting the current uptrend." if current_price > prev_price else f"The asset has slipped below the volume-weighted baseline, signaling potential distribution."
-            },
-            {
-                "factor": "Bollinger Bands", 
-                "val": "Upper Band" if tech_score > 70 else "Lower Band" if tech_score < 40 else "Mid-Band", 
-                "status": "BULLISH" if tech_score > 70 else "BEARISH" if tech_score < 40 else "NEUTRAL", 
-                "reasoning": f"Price is riding the upper standard deviation channel, suggesting a potential breakout for {ticker.upper()}." if tech_score > 70 else f"Price is testing the lower standard deviation channel, indicating oversold conditions." if tech_score < 40 else f"{ticker.upper()} is consolidating near the mean, awaiting a volatility catalyst."
-            }
+            {"factor": "Momentum (RSI)", "val": "62.5" if tech_score > 50 else "38.2", "status": "BULLISH" if tech_score > 50 else "BEARISH", "reasoning": f"{ticker.upper()} is showing upward momentum. Current RSI proxy suggests buying pressure." if tech_score > 50 else f"{ticker.upper()} is losing momentum. RSI proxy suggests selling pressure."},
+            {"factor": "Institutional Flow", "val": "High" if volume > avg_volume else "Low", "status": "BULLISH" if volume > avg_volume else "NEUTRAL", "reasoning": f"Current volume of {volume:,} exceeds the historical average of {avg_volume:,}, indicating strong institutional accumulation." if volume > avg_volume else f"Current volume of {volume:,} is below the historical average of {avg_volume:,}, indicating retail-driven consolidation."},
+            {"factor": "MACD Divergence", "val": "Positive" if current_price > prev_price else "Negative", "status": "BULLISH" if current_price > prev_price else "BEARISH", "reasoning": f"Price action at ${current_price} confirms a positive bullish crossover against the previous close." if current_price > prev_price else f"Price action at ${current_price} indicates a bearish crossover trajectory."},
+            {"factor": "VWAP Proximity", "val": f"+{round(((current_price - prev_price)/prev_price)*100, 2)}%" if current_price > prev_price else f"{round(((current_price - prev_price)/prev_price)*100, 2)}%", "status": "BULLISH" if current_price > prev_price else "BEARISH", "reasoning": f"The asset is holding firmly above the volume-weighted baseline, supporting the current uptrend." if current_price > prev_price else f"The asset has slipped below the volume-weighted baseline, signaling potential distribution."},
+            {"factor": "Bollinger Bands", "val": "Upper Band" if tech_score > 70 else "Lower Band" if tech_score < 40 else "Mid-Band", "status": "BULLISH" if tech_score > 70 else "BEARISH" if tech_score < 40 else "NEUTRAL", "reasoning": f"Price is riding the upper standard deviation channel, suggesting a potential breakout for {ticker.upper()}." if tech_score > 70 else f"Price is testing the lower standard deviation channel, indicating oversold conditions." if tech_score < 40 else f"{ticker.upper()} is consolidating near the mean, awaiting a volatility catalyst."}
         ]
-        # ==========================================
-        # YOUR EXISTING LOGIC END
-        # ==========================================
 
         return {
             "ticker": ticker.upper(),
@@ -175,6 +188,7 @@ async def analyze_ticker(ticker: str):
             "volume": f"{volume:,}",
             "vol_surge": vol_surge,
             "ledger": ledger,
+            "news": news_list,  # INJECTED LIVE NEWS HEADLINES
             "ai_tactical": f"Market conditions evaluated for {ticker.upper()}. Execution guidance dynamically adjusting to real-time volatility.",
             "fundamentals": {
                 "market_cap": formatted_mcap, 
@@ -191,45 +205,24 @@ async def analyze_ticker(ticker: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/swap-thesis")
-async def generate_swap_thesis(req: SwapRequest):
-    try:
-        sector_targets = {
-            "Technology": {"ticker": "NVDA", "score": 94},
-            "Consumer Cyclical": {"ticker": "AMZN", "score": 88},
-            "Financial Services": {"ticker": "JPM", "score": 85},
-            "Healthcare": {"ticker": "LLY", "score": 90},
-            "Communication Services": {"ticker": "META", "score": 89},
-            "Energy": {"ticker": "XOM", "score": 82}
-        }
-        stock = yf.Ticker(req.ticker)
-        sector = stock.info.get("sector", "Technology")
-        target = sector_targets.get(sector, sector_targets["Technology"])
-        if req.ticker.upper() == target["ticker"]: target = {"ticker": "MSFT", "score": 91}
-        
-        target_stock = yf.Ticker(target["ticker"])
-        target_hist = target_stock.history(period="1d")
-        target_price = 150.00 if target_hist.empty else round(target_hist['Close'].iloc[-1], 2)
-        freed_capital = req.shares * req.price
-        target_shares = math.floor(freed_capital / target_price)
-        thesis = f"Liquidating your {req.shares} shares of {req.ticker.upper()} frees up ${freed_capital:,.2f} in capital. Reallocating into {target_shares} shares of {target['ticker']} (Quant Score {target['score']}) upgrades asset quality and increases Alpha potential."
-        
-        return {"target_ticker": target["ticker"], "target_price": target_price, "target_score": target["score"], "target_shares": target_shares, "freed_capital": freed_capital, "thesis": thesis}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 @app.post("/translate")
 async def translate_ai(req: TranslationRequest, user_id: str = Query(...)): 
     if not model: return {"analysis": "AI Node Offline."}
     try:
-        # 🚨 1. GATEKEEPER: Check for 3 Tokens
+        cache_key = f"TRANSLATE_{req.ticker.upper()}"
+        cached_data = check_ai_cache(cache_key)
+        
+        # Pull user's current token balance to keep UI synced, regardless of cache hit
         profile_res = supabase.table('profiles').select('ai_token_balance').eq('id', user_id).execute()
-        if not profile_res.data:
-            raise HTTPException(status_code=404, detail="Operative profile not found.")
-            
+        if not profile_res.data: raise HTTPException(status_code=404, detail="Operative profile not found.")
         current_tokens = int(profile_res.data[0]['ai_token_balance'])
+
+        if cached_data:
+            cached_data["remaining_tokens"] = current_tokens # Inject latest balance without deducting
+            return cached_data
+            
         if current_tokens < 3:
-            raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 3 Tokens required for AI Deep Dive.")
+            raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 3 Tokens required.")
 
         prompt = f"Act as an elite quantitative analyst. Provide a definitive briefing on {req.ticker}.\n\n"
         prompt += f"CURRENT MARKET CONTEXT:\n- Current Price: ${req.data_context.get('price', 'N/A')}\n- Quant Score: {req.data_context.get('score', 'N/A')}\n\n"
@@ -242,9 +235,6 @@ async def translate_ai(req: TranslationRequest, user_id: str = Query(...)):
         if ledger:
             prompt += f"TECHNICAL LEDGER:\n"
             for item in ledger: prompt += f"- {item.get('factor')}: {item.get('val')} ({item.get('status')})\n"
-
-        shares = float(req.data_context.get("user_shares", 0))
-        if shares > 0: prompt += f"\nPOSITION: {shares} shares held at ${req.data_context.get('user_avg_cost', '0')}.\n"
 
         prompt += (
             "\n🚨 TEMPLATE REQUIREMENT - YOU MUST FOLLOW THIS EXACTLY:\n"
@@ -259,14 +249,16 @@ async def translate_ai(req: TranslationRequest, user_id: str = Query(...)):
         )
         response = model.generate_content(prompt)
 
-        # 🚨 2. DEDUCT 3 TOKENS
         new_token_balance = current_tokens - 3
         supabase.table('profiles').update({'ai_token_balance': new_token_balance}).eq('id', user_id).execute()
 
-        return {
+        final_response = {
             "analysis": response.text.strip(),
             "remaining_tokens": new_token_balance
         }
+        
+        update_ai_cache(cache_key, final_response)
+        return final_response
         
     except HTTPException as he:
         raise he
@@ -277,14 +269,22 @@ async def translate_ai(req: TranslationRequest, user_id: str = Query(...)):
 async def summarize_article(req: SummaryRequest, user_id: str = Query(...)): 
     if not model: return {"summary": ["AI Node Offline."]}
     try:
-        # 🚨 1. GATEKEEPER: Check for 1 Token
+        # Generate a safe cache key from the article title
+        safe_title = ''.join(e for e in req.title if e.isalnum())[:30]
+        cache_key = f"SUMMARY_{req.ticker}_{safe_title}"
+        
+        cached_data = check_ai_cache(cache_key)
+        
         profile_res = supabase.table('profiles').select('ai_token_balance').eq('id', user_id).execute()
-        if not profile_res.data:
-            raise HTTPException(status_code=404, detail="Operative profile not found.")
-            
+        if not profile_res.data: raise HTTPException(status_code=404, detail="Operative profile not found.")
         current_tokens = int(profile_res.data[0]['ai_token_balance'])
+
+        if cached_data:
+            cached_data["remaining_tokens"] = current_tokens
+            return cached_data
+            
         if current_tokens < 1:
-            raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 1 Token required for News Synthesis.")
+            raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 1 Token required.")
 
         prompt = (
             f"Act as a financial analyst. Write a concise, institutional summary "
@@ -296,150 +296,43 @@ async def summarize_article(req: SummaryRequest, user_id: str = Query(...)):
         )
         response = model.generate_content(prompt)
 
-        # 🚨 2. DEDUCT 1 TOKEN
         new_token_balance = current_tokens - 1
         supabase.table('profiles').update({'ai_token_balance': new_token_balance}).eq('id', user_id).execute()
 
-        return {
+        final_response = {
             "summary": [response.text.strip()],
             "remaining_tokens": new_token_balance
         }
+        
+        update_ai_cache(cache_key, final_response)
+        return final_response
         
     except HTTPException as he:
         raise he
     except Exception: 
         return {"summary": ["Summary temporarily unavailable."]}
 
-@app.get("/market-briefing")
-async def market_briefing():
-    return [
-        {"title": "Global markets await next major macro catalyst as volatility indexes contract.", "publisher": "TradeBotics Wire", "date": "Today"},
-        {"title": "Tech sector shows resilience amidst shifting yield curve expectations.", "publisher": "Macro Intelligence", "date": "Today"},
-        {"title": "Institutional capital flows suggest rotational repositioning ahead of earnings season.", "publisher": "Dark Pool Wire", "date": "Today"},
-        {"title": "Commodity indices signal potential supply chain constraints in key raw materials.", "publisher": "Global Macro", "date": "Today"},
-        {"title": "Federal Reserve commentary points toward sustained current monetary policy trajectory.", "publisher": "Central Bank Watch", "date": "Today"}
-    ]
-
-@app.post("/execute-trade")
-async def execute_trade(req: TradeRequest):
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database connection offline.")
-    
-    try:
-        ticker = req.ticker.upper()
-        
-        # 1. INDEPENDENT PRICE VERIFICATION (Zero Trust)
-        stock = yf.Ticker(ticker)
-        hist = stock.history(period="1d")
-        if hist.empty:
-            raise HTTPException(status_code=404, detail="Asset pricing unavailable.")
-        live_price = float(hist['Close'].iloc[-1])
-
-        # 2. FRACTIONAL MATH ENGINE
-        if req.mode == "DOLLARS":
-            trade_cost = req.amount
-            trade_shares = req.amount / live_price
-        else: # SHARES
-            trade_shares = req.amount
-            trade_cost = req.amount * live_price
-
-        # 3. FETCH OPERATIVE'S CURRENT STATUS
-        profile_res = supabase.table('profiles').select('virtual_cash_balance').eq('id', req.user_id).execute()
-        if not profile_res.data:
-            raise HTTPException(status_code=404, detail="Operative profile not found.")
-        current_cash = float(profile_res.data[0]['virtual_cash_balance'])
-
-        portfolio_res = supabase.table('portfolio').select('*').eq('user_id', req.user_id).eq('ticker', ticker).execute()
-        current_position = portfolio_res.data[0] if portfolio_res.data else None
-        current_shares_held = float(current_position['shares']) if current_position else 0.0
-
-        # 4. EXECUTE BUY LOGIC
-        if req.trade_type == "BUY":
-            if trade_cost > current_cash:
-                raise HTTPException(status_code=400, detail="Insufficient virtual capital.")
-            
-            new_cash = current_cash - trade_cost
-            
-            # Calculate new blended average cost
-            if current_position:
-                old_total_cost = current_shares_held * float(current_position['cost_basis'])
-                new_total_shares = current_shares_held + trade_shares
-                new_avg_cost = (old_total_cost + trade_cost) / new_total_shares
-                
-                # Update existing position
-                supabase.table('portfolio').update({
-                    'shares': new_total_shares,
-                    'cost_basis': new_avg_cost
-                }).eq('user_id', req.user_id).eq('ticker', ticker).execute()
-            else:
-                # Create new position
-                supabase.table('portfolio').insert({
-                    'user_id': req.user_id,
-                    'ticker': ticker,
-                    'shares': trade_shares,
-                    'cost_basis': live_price
-                }).execute()
-
-        # 5. EXECUTE SELL LOGIC
-        elif req.trade_type == "SELL":
-            if trade_shares > current_shares_held:
-                raise HTTPException(status_code=400, detail="Insufficient shares in vault.")
-            
-            new_cash = current_cash + trade_cost
-            new_total_shares = current_shares_held - trade_shares
-
-            if new_total_shares <= 0.0001: # Account for floating point math
-                # Liquidate entirely
-                supabase.table('portfolio').delete().eq('user_id', req.user_id).eq('ticker', ticker).execute()
-            else:
-                # Reduce position (cost basis remains the same on a sell)
-                supabase.table('portfolio').update({
-                    'shares': new_total_shares
-                }).eq('user_id', req.user_id).eq('ticker', ticker).execute()
-        else:
-            raise HTTPException(status_code=400, detail="Invalid trade type.")
-
-        # 6. COMMIT CASH UPDATE AND WRITE TO AUDIT LEDGER
-        supabase.table('profiles').update({'virtual_cash_balance': new_cash}).eq('id', req.user_id).execute()
-        
-        supabase.table('transaction_ledger').insert({
-            'user_id': req.user_id,
-            'transaction_type': req.trade_type,
-            'ticker': ticker,
-            'shares': trade_shares,
-            'price': live_price,
-            'total_amount': trade_cost
-        }).execute()
-
-        return {
-            "status": "success",
-            "message": f"Order Executed: {req.trade_type} {round(trade_shares, 4)} {ticker}",
-            "execution_price": live_price,
-            "total_cost": trade_cost,
-            "remaining_cash": new_cash
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 @app.post("/portfolio-analysis")
 async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)): 
     if not model: return {"analysis": "AI Node Offline."}
-    
     try:
-        # 🚨 1. THE GATEKEEPER: Check tokens before doing any expensive work
-        profile_res = supabase.table('profiles').select('ai_token_balance').eq('id', user_id).execute()
-        if not profile_res.data:
-            raise HTTPException(status_code=404, detail="Operative profile not found.")
-            
-        current_tokens = int(profile_res.data[0]['ai_token_balance'])
+        # Cache based on the user's specific portfolio style request
+        cache_key = f"PORTFOLIO_{user_id}_{req.trade_style.upper().replace(' ', '_')}"
+        cached_data = check_ai_cache(cache_key)
         
+        profile_res = supabase.table('profiles').select('ai_token_balance').eq('id', user_id).execute()
+        if not profile_res.data: raise HTTPException(status_code=404, detail="Operative profile not found.")
+        current_tokens = int(profile_res.data[0]['ai_token_balance'])
+
+        if cached_data:
+            cached_data["remaining_tokens"] = current_tokens
+            return cached_data
+            
         if current_tokens < 5:
-            raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 5 Tokens required for Portfolio Rotation.")
+            raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 5 Tokens required.")
 
         portfolio_summary = []
-        if not req.holdings:
-            raise HTTPException(status_code=400, detail="No holdings provided.")
+        if not req.holdings: raise HTTPException(status_code=400, detail="No holdings provided.")
 
         for h in req.holdings:
             try:
@@ -465,8 +358,7 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
             except Exception:
                 continue 
 
-        if not portfolio_summary:
-            return {"analysis": "No valid data could be retrieved.", "holdings": []}
+        if not portfolio_summary: return {"analysis": "No valid data could be retrieved.", "holdings": []}
 
         batch_data = "\n".join([f"{p['ticker']}: {p['shares']} shares @ live ${p['current_price']} (Total: ${p['value']})" for p in portfolio_summary])
         
@@ -481,11 +373,9 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
         for t in screener_universe:
             try:
                 if any(h['ticker'] == t for h in portfolio_summary): continue
-
                 stock = yf.Ticker(t)
                 hist = stock.history(period="1mo")
                 if hist.empty: continue
-
                 price = round(hist['Close'].iloc[-1], 2)
                 prev_price = round(hist['Close'].iloc[-2], 2)
                 
@@ -508,12 +398,9 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
                 if margins and margins > 0.15: fund_base += 20
 
                 style_bonus = 0
-                if req.trade_style == "Day Trade" and t in ["NVDA", "TSLA", "COIN"]:
-                    style_bonus = 20 
-                elif req.trade_style == "Swing Trade" and t in ["META", "AVGO", "PLTR"]:
-                    style_bonus = 20 
-                elif req.trade_style == "Long Term" and t in ["LLY", "COST", "JPM"]:
-                    style_bonus = 20 
+                if req.trade_style == "Day Trade" and t in ["NVDA", "TSLA", "COIN"]: style_bonus = 20 
+                elif req.trade_style == "Swing Trade" and t in ["META", "AVGO", "PLTR"]: style_bonus = 20 
+                elif req.trade_style == "Long Term" and t in ["LLY", "COST", "JPM"]: style_bonus = 20 
 
                 total_score = math.ceil(((tech_base + fund_base) / 2) + style_bonus)
                 total_score = max(10, min(99, total_score)) 
@@ -560,18 +447,137 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
             generation_config={"max_output_tokens": 2000, "temperature": 0.1}
         )
 
-        # 🚨 2. DEDUCT 5 TOKENS 
         new_token_balance = current_tokens - 5
         supabase.table('profiles').update({'ai_token_balance': new_token_balance}).eq('id', user_id).execute()
 
-        # 🚨 3. RETURN DATA + NEW BALANCE
-        return {
+        final_response = {
             "analysis": response.text.strip(),
             "holdings": portfolio_summary,
             "remaining_tokens": new_token_balance
         }
         
+        update_ai_cache(cache_key, final_response)
+        return final_response
+        
     except HTTPException as he:
         raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/swap-thesis")
+async def generate_swap_thesis(req: SwapRequest):
+    try:
+        sector_targets = {
+            "Technology": {"ticker": "NVDA", "score": 94},
+            "Consumer Cyclical": {"ticker": "AMZN", "score": 88},
+            "Financial Services": {"ticker": "JPM", "score": 85},
+            "Healthcare": {"ticker": "LLY", "score": 90},
+            "Communication Services": {"ticker": "META", "score": 89},
+            "Energy": {"ticker": "XOM", "score": 82}
+        }
+        stock = yf.Ticker(req.ticker)
+        sector = stock.info.get("sector", "Technology")
+        target = sector_targets.get(sector, sector_targets["Technology"])
+        if req.ticker.upper() == target["ticker"]: target = {"ticker": "MSFT", "score": 91}
+        
+        target_stock = yf.Ticker(target["ticker"])
+        target_hist = target_stock.history(period="1d")
+        target_price = 150.00 if target_hist.empty else round(target_hist['Close'].iloc[-1], 2)
+        freed_capital = req.shares * req.price
+        target_shares = math.floor(freed_capital / target_price)
+        thesis = f"Liquidating your {req.shares} shares of {req.ticker.upper()} frees up ${freed_capital:,.2f} in capital. Reallocating into {target_shares} shares of {target['ticker']} (Quant Score {target['score']}) upgrades asset quality and increases Alpha potential."
+        
+        return {"target_ticker": target["ticker"], "target_price": target_price, "target_score": target["score"], "target_shares": target_shares, "freed_capital": freed_capital, "thesis": thesis}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/market-briefing")
+async def market_briefing():
+    return [
+        {"title": "Global markets await next major macro catalyst as volatility indexes contract.", "publisher": "TradeBotics Wire", "date": "1 hr ago"},
+        {"title": "Tech sector shows resilience amidst shifting yield curve expectations.", "publisher": "Macro Intelligence", "date": "3 hrs ago"},
+        {"title": "Institutional capital flows suggest rotational repositioning ahead of earnings season.", "publisher": "Dark Pool Wire", "date": "5 hrs ago"},
+        {"title": "Commodity indices signal potential supply chain constraints in key raw materials.", "publisher": "Global Macro", "date": "6 hrs ago"},
+        {"title": "Federal Reserve commentary points toward sustained current monetary policy trajectory.", "publisher": "Central Bank Watch", "date": "8 hrs ago"}
+    ]
+
+@app.post("/execute-trade")
+async def execute_trade(req: TradeRequest):
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Database connection offline.")
+    try:
+        ticker = req.ticker.upper()
+        
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period="1d")
+        if hist.empty: raise HTTPException(status_code=404, detail="Asset pricing unavailable.")
+        live_price = float(hist['Close'].iloc[-1])
+
+        if req.mode == "DOLLARS":
+            trade_cost = req.amount
+            trade_shares = req.amount / live_price
+        else:
+            trade_shares = req.amount
+            trade_cost = req.amount * live_price
+
+        profile_res = supabase.table('profiles').select('virtual_cash_balance').eq('id', req.user_id).execute()
+        if not profile_res.data: raise HTTPException(status_code=404, detail="Operative profile not found.")
+        current_cash = float(profile_res.data[0]['virtual_cash_balance'])
+
+        portfolio_res = supabase.table('portfolio').select('*').eq('user_id', req.user_id).eq('ticker', ticker).execute()
+        current_position = portfolio_res.data[0] if portfolio_res.data else None
+        current_shares_held = float(current_position['shares']) if current_position else 0.0
+
+        if req.trade_type == "BUY":
+            if trade_cost > current_cash: raise HTTPException(status_code=400, detail="Insufficient virtual capital.")
+            new_cash = current_cash - trade_cost
+            
+            if current_position:
+                old_total_cost = current_shares_held * float(current_position['cost_basis'])
+                new_total_shares = current_shares_held + trade_shares
+                new_avg_cost = (old_total_cost + trade_cost) / new_total_shares
+                
+                supabase.table('portfolio').update({
+                    'shares': new_total_shares,
+                    'cost_basis': new_avg_cost
+                }).eq('user_id', req.user_id).eq('ticker', ticker).execute()
+            else:
+                supabase.table('portfolio').insert({
+                    'user_id': req.user_id,
+                    'ticker': ticker,
+                    'shares': trade_shares,
+                    'cost_basis': live_price
+                }).execute()
+
+        elif req.trade_type == "SELL":
+            if trade_shares > current_shares_held: raise HTTPException(status_code=400, detail="Insufficient shares in vault.")
+            new_cash = current_cash + trade_cost
+            new_total_shares = current_shares_held - trade_shares
+
+            if new_total_shares <= 0.0001:
+                supabase.table('portfolio').delete().eq('user_id', req.user_id).eq('ticker', ticker).execute()
+            else:
+                supabase.table('portfolio').update({'shares': new_total_shares}).eq('user_id', req.user_id).eq('ticker', ticker).execute()
+        else:
+            raise HTTPException(status_code=400, detail="Invalid trade type.")
+
+        supabase.table('profiles').update({'virtual_cash_balance': new_cash}).eq('id', req.user_id).execute()
+        supabase.table('transaction_ledger').insert({
+            'user_id': req.user_id,
+            'transaction_type': req.trade_type,
+            'ticker': ticker,
+            'shares': trade_shares,
+            'price': live_price,
+            'total_amount': trade_cost
+        }).execute()
+
+        return {
+            "status": "success",
+            "message": f"Order Executed: {req.trade_type} {round(trade_shares, 4)} {ticker}",
+            "execution_price": live_price,
+            "total_cost": trade_cost,
+            "remaining_cash": new_cash
+        }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
