@@ -29,16 +29,6 @@ function TickerTape() {
   }, []);
   return <div ref={container} className="w-full mb-8 opacity-60" />;
 }
-// --- MAIN PAGE COMPONENT ---
-export default function TerminalPage() {
-  const router = useRouter();
-
-  // 🚀 MOVE THEM HERE (Inside the main component block)
-  const [marketBriefing, setMarketBriefing] = useState<any[]>([]);
-  const [analysisData, setAnalysisData] = useState<any>(null); 
-
-  // ... rest of your code, useEffects, and returns ...
-}
 
 function MarketScreener() {
   const container = useRef<HTMLDivElement>(null);
@@ -78,7 +68,7 @@ function Stat({ label, val, color = "text-white" }: { label: string, val: string
   );
 }
 
-// --- MAIN TERMINAL PAGE ---
+// --- MAIN TERMINAL PAGE COMPONENT ---
 export default function TerminalPage() {
   const router = useRouter();
   
@@ -100,6 +90,21 @@ export default function TerminalPage() {
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [userEmail, setUserEmail] = useState("");
   
+  const [data, setData] = useState<any>(null);
+  const [globalNews, setGlobalNews] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false); 
+  const [isAnalyzing, setIsAnalyzing] = useState(false); 
+  const [toastMessage, setToastMessage] = useState<string | null>(null); 
+  
+  const [ticker, setTicker] = useState("");
+  const [confirmedTicker, setConfirmedTicker] = useState("");
+  
+  const [watchlist, setWatchlist] = useState<any[]>([]);
+  const [isRefreshingWatchlist, setIsRefreshingWatchlist] = useState(false); 
+  const [deepDiveResult, setDeepDiveResult] = useState<string | null>(null);
+  const [selectedArticle, setSelectedArticle] = useState<any | null>(null);
+  const [isSummarizing, setIsSummarizing] = useState(false);
+
   const handleExecuteTrade = async (tradeType: "BUY" | "SELL", amount: number, mode: "DOLLARS" | "SHARES") => {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
@@ -129,21 +134,6 @@ export default function TerminalPage() {
           showToast("Execution Offline. Check Connection.");
       }
   };
-
-  const [data, setData] = useState<any>(null);
-  const [globalNews, setGlobalNews] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false); 
-  const [isAnalyzing, setIsAnalyzing] = useState(false); 
-  const [toastMessage, setToastMessage] = useState<string | null>(null); 
-  
-  const [ticker, setTicker] = useState("");
-  const [confirmedTicker, setConfirmedTicker] = useState("");
-  
-  const [watchlist, setWatchlist] = useState<any[]>([]);
-  const [isRefreshingWatchlist, setIsRefreshingWatchlist] = useState(false); 
-  const [deepDiveResult, setDeepDiveResult] = useState<string | null>(null);
-  const [selectedArticle, setSelectedArticle] = useState<any | null>(null);
-  const [isSummarizing, setIsSummarizing] = useState(false);
 
   // 🚨 SECURITY GUARD: Verify Clearance
   useEffect(() => {
@@ -376,8 +366,6 @@ export default function TerminalPage() {
       if (res.ok) setGlobalNews(await res.json()); 
     } catch { console.warn("Briefing offline."); } 
   };
-  
-  const newsToDisplay = data?.news?.length > 0 ? data.news : globalNews;
 
   if (!isAuthorized) {
       return (
@@ -559,9 +547,7 @@ export default function TerminalPage() {
                       </div>
                     </div>
                   ))}
-                  
                 </div>
-                
               </>
             )}
           </div>
@@ -572,7 +558,7 @@ export default function TerminalPage() {
             <div className="bg-slate-900 border border-slate-800 rounded-[40px] p-10 shadow-2xl">
                <div className="flex items-center gap-3 mb-10 text-blue-500"><div className="w-2.5 h-2.5 bg-blue-500 rounded-full animate-pulse" /><p className="text-[10px] font-black uppercase tracking-[0.3em]">AI Market Intercept</p></div>
                {data ? (
-                  <>
+                 <>
                     {/* PAPER TRADING EXECUTION TRIGGER */}
                     <button 
                         onClick={() => setShowTradeTicket(true)}
@@ -611,54 +597,56 @@ export default function TerminalPage() {
                             "{data.ai_tactical || "Market conditions currently being synthesized by the neural engine. Please wait for signal calibration."}"
                         </p>
                     </div>
-
-                  </>
+                 </>
                ) : ( <p className="text-slate-600 font-bold uppercase text-[10px] tracking-widest italic text-center">Scan required...</p> )}
             </div>
 
             <div className="bg-slate-900/40 border border-slate-800 rounded-[40px] p-8 flex flex-col h-[600px] overflow-hidden shrink-0">
-   <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-6 text-center">AI Intelligence Wire</p>
-   
-   {/* 🚨 TRIGGER AUTH MODAL FOR SENTIMENT CHECK (3 TOKENS) */}
-   <button 
-      onClick={() => setAuthModal({
-          isOpen: true,
-          title: "Global AI Sentiment Check",
-          cost: 3,
-          actionName: "INITIATE SCAN",
-          onConfirm: runMasterAnalysis
-      })} 
-      className="w-full mb-6 bg-blue-900/30 border border-blue-500/50 py-4 rounded-2xl text-blue-400 font-black text-[10px] uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all shadow-[0_0_15px_rgba(59,130,246,0.15)]"
-   >
-      🌐 Global AI Sentiment Check
-   </button>
+               <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-6 text-center">AI Intelligence Wire</p>
+               
+               {/* 🚨 TRIGGER AUTH MODAL FOR SENTIMENT CHECK (3 TOKENS) */}
+               <button 
+                  onClick={() => setAuthModal({
+                      isOpen: true,
+                      title: "Global AI Sentiment Check",
+                      cost: 3,
+                      actionName: "INITIATE SCAN",
+                      onConfirm: runMasterAnalysis
+                  })} 
+                  className="w-full mb-6 bg-blue-900/30 border border-blue-500/50 py-4 rounded-2xl text-blue-400 font-black text-[10px] uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all shadow-[0_0_15px_rgba(59,130,246,0.15)]"
+               >
+                  🌐 Global AI Sentiment Check
+               </button>
 
-   <div className="space-y-4 overflow-y-auto custom-scrollbar flex-1">
-      {/* 🚀 DYNAMIC DATA ROUTING: Prefers ticker news, falls back to global macro briefing */}
-      {((analysisData && analysisData.news && analysisData.news.length > 0) 
-        ? analysisData.news 
-        : marketBriefing
-      ).map((item: any, i: number) => (
-          <div 
-            key={i} 
-            onClick={() => triggerArticleAnalysis(item)} 
-            className="bg-slate-950 border border-slate-800 p-5 rounded-3xl cursor-pointer hover:border-blue-500/50 group transition-all"
-          >
-              <p className="text-sm font-bold text-slate-200 group-hover:text-blue-400 leading-snug line-clamp-3">
-                {item.title}
-              </p>
-              <div className="flex justify-between items-center mt-4 pt-4 border-t border-slate-800/30">
-                  <p className="text-[9px] font-black text-slate-400 group-hover:text-slate-200 uppercase tracking-wider">
-                      {item.publisher} {item.date ? `• ${item.date}` : ""}
-                  </p>
-                  <span className="text-[8px] bg-blue-600/10 text-blue-500 px-2 py-0.5 rounded-full uppercase font-black tracking-wider">
-                    AI Synthesis
-                  </span>
-              </div>
+               <div className="space-y-4 overflow-y-auto custom-scrollbar flex-1">
+                  {/* 🚀 DYNAMIC DATA ROUTING: Corrected mapping state targets to 'data.news' and 'globalNews' */}
+                  {((data && data.news && data.news.length > 0) 
+                    ? data.news 
+                    : globalNews
+                  ).map((item: any, i: number) => (
+                      <div 
+                        key={i} 
+                        onClick={() => triggerArticleAnalysis(item)} 
+                        className="bg-slate-950 border border-slate-800 p-5 rounded-3xl cursor-pointer hover:border-blue-500/50 group transition-all"
+                      >
+                          <p className="text-sm font-bold text-slate-200 group-hover:text-blue-400 leading-snug line-clamp-3">
+                            {item.title}
+                          </p>
+                          <div className="flex justify-between items-center mt-4 pt-4 border-t border-slate-800/30">
+                              <p className="text-[9px] font-black text-slate-400 group-hover:text-slate-200 uppercase tracking-wider">
+                                  {item.publisher} {item.date ? `• ${item.date}` : ""}
+                              </p>
+                              <span className="text-[8px] bg-blue-600/10 text-blue-500 px-2 py-0.5 rounded-full uppercase font-black tracking-wider">
+                                AI Synthesis
+                              </span>
+                          </div>
+                      </div>
+                  ))}
+               </div>
+            </div>
+
           </div>
-      ))}
-   </div>
-</div>
+        </div>
         
         <footer className="border-t border-slate-800/50 pt-8 mt-12 text-center w-full">
             <p className="text-[10px] uppercase tracking-[0.2em] font-black text-slate-600">© 2026 TradeBotics AI. All Systems Operational.</p>
@@ -696,13 +684,13 @@ export default function TerminalPage() {
                           Abort
                       </button>
                       <button 
-    onClick={() => {
-        setAuthModal({ ...authModal, isOpen: false });
-        authModal.onConfirm(); 
-    }}
-    className="flex-1 py-4 text-xs font-bold text-blue-400 hover:text-white uppercase tracking-widest hover:bg-blue-600 transition-colors border-l border-slate-800">
-    {authModal.actionName}
-</button>
+                          onClick={() => {
+                              setAuthModal({ ...authModal, isOpen: false });
+                              authModal.onConfirm(); 
+                          }}
+                          className="flex-1 py-4 text-xs font-bold text-blue-400 hover:text-white uppercase tracking-widest hover:bg-blue-600 transition-colors border-l border-slate-800">
+                          {authModal.actionName}
+                      </button>
                   </div>
               </div>
           </div>
