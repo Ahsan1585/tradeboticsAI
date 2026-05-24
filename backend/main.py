@@ -156,29 +156,53 @@ async def analyze_ticker(ticker: str):
         # PULL LIVE NEWS & CALCULATE "HOURS AGO"
         news_list = []
         try:
-            raw_news = stock.news
-            if isinstance(raw_news, list):
-                for item in raw_news:
-                    if len(news_list) >= 5:
-                        break
-
-                    # 🚨 STRICT VALIDATION: Check if title actually exists
-                    title = item.get("title", "")
-                    if not title or title.strip() == "":
-                        continue # Skip this ghost article, move to the next one
-
-                    publisher = item.get("publisher", "Market Wire")
+            finnhub_key = os.getenv("FINNHUB_API_KEY")
+            if finnhub_key:
+                import urllib.request
+                import json
+                from datetime import timedelta
+                
+                # Finnhub requires a date range (last 7 days)
+                end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+                start_date = (datetime.now(timezone.utc) - timedelta(days=7)).strftime('%Y-%m-%d')
+                
+                url = f"https://finnhub.io/api/v1/company-news?symbol={ticker.upper()}&from={start_date}&to={end_date}&token={finnhub_key}"
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                
+                with urllib.request.urlopen(req) as response:
+                    finnhub_news = json.loads(response.read().decode())
                     
-                    pub_time = item.get("providerPublishTime", time.time())
-                    hours_ago = int((time.time() - pub_time) / 3600)
-                    date_str = "JUST NOW" if hours_ago == 0 else f"{hours_ago} HR{'S' if hours_ago > 1 else ''} AGO"
-                    
-                    news_list.append({
-                        "title": title,
-                        "publisher": publisher,
-                        "date": date_str,
-                        "content": item.get("link", "")
-                    })
+                    for item in finnhub_news[:5]:
+                        # Finnhub returns timestamp in Unix seconds
+                        pub_time = item.get("datetime", time.time())
+                        hours_ago = int((time.time() - pub_time) / 3600)
+                        date_str = "JUST NOW" if hours_ago <= 0 else f"{hours_ago} HR{'S' if hours_ago > 1 else ''} AGO"
+                        
+                        news_list.append({
+                            "title": item.get("headline", "Market Update"),
+                            "publisher": item.get("source", "Financial Wire"),
+                            "date": date_str,
+                            "content": item.get("url", "") # Finnhub uses 'url' instead of 'link'
+                        })
+            
+            # 🚨 FAILSAFE: If Finnhub key is missing, fallback to yfinance
+            if not news_list:
+                raw_news = stock.news
+                if isinstance(raw_news, list):
+                    for item in raw_news[:5]:
+                        title = item.get("title", "")
+                        if not title or title.strip() == "": continue
+                        pub_time = item.get("providerPublishTime", time.time())
+                        hours_ago = int((time.time() - pub_time) / 3600)
+                        date_str = "JUST NOW" if hours_ago <= 0 else f"{hours_ago} HR{'S' if hours_ago > 1 else ''} AGO"
+                        
+                        news_list.append({
+                            "title": title,
+                            "publisher": item.get("publisher", "Market Wire"),
+                            "date": date_str,
+                            "content": item.get("link", "")
+                        })
+                        
         except Exception as e:
             print(f"News fetch error for {ticker}: {e}", file=sys.stderr)
 
