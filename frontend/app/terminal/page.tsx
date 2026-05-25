@@ -71,7 +71,9 @@ function Stat({ label, val, color = "text-white" }: { label: string, val: string
 // --- MAIN TERMINAL PAGE COMPONENT ---
 function TerminalContent() {
   const router = useRouter();
-  const searchParams = useSearchParams(); 
+  const searchParams = useSearchParams();
+  // 🚀 ADD THIS LINE:
+  const initializedRef = useRef(false); 
   // ...
   
   // 🚨 NEURAL AUTHORIZATION STATE
@@ -157,16 +159,19 @@ function TerminalContent() {
       verifyClearance();
   }, [router]);
 
-  // 🚀 AUTO-LOAD TICKER FROM HUB
+  // 🚀 AUTO-LOAD TICKER FROM HUB (UPDATED)
   useEffect(() => {
+      // If we already initialized from the URL, or if not authorized, do nothing
+      if (initializedRef.current || !isAuthorized) return;
+
       const urlTicker = searchParams.get('ticker');
       
-      // If a ticker exists in the URL, and we haven't confirmed a ticker yet, run it!
-      if (urlTicker && isAuthorized && confirmedTicker !== urlTicker) {
+      if (urlTicker) {
           setTicker(urlTicker);
           runAnalysis(urlTicker);
+          initializedRef.current = true; // Lock this so it doesn't run again on re-renders
       }
-  }, [searchParams, isAuthorized, confirmedTicker]); 
+  }, [searchParams, isAuthorized]); 
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
