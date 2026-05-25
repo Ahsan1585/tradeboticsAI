@@ -69,9 +69,10 @@ function Stat({ label, val, color = "text-white" }: { label: string, val: string
 }
 
 // --- MAIN TERMINAL PAGE COMPONENT ---
-export default function TerminalPage() {
+function TerminalContent() {
   const router = useRouter();
-  const searchParams = useSearchParams(); // 🚀 ADDED: This listens to the URL from the Hub
+  const searchParams = useSearchParams(); 
+  // ...
   
   // 🚨 NEURAL AUTHORIZATION STATE
   const [authModal, setAuthModal] = useState({
@@ -709,5 +710,19 @@ export default function TerminalPage() {
       )}
 
     </main>
+  );
+ } // 🚀 THE NEXT.JS SUSPENSE WRAPPER
+export default function TerminalPage() {
+  return (
+    <React.Suspense fallback={
+      <div className="min-h-screen bg-[#020617] flex flex-col items-center justify-center">
+        <div className="w-16 h-16 border-4 border-slate-800 border-t-blue-500 rounded-full animate-spin mb-6" />
+        <p className="text-[10px] text-blue-500 font-black uppercase tracking-widest animate-pulse">
+          Establishing Secure Link...
+        </p>
+      </div>
+    }>
+      <TerminalContent />
+    </React.Suspense>
   );
 }
