@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../lib/supabase";
 import TradeTicket from "../components/TradeTicket"; 
 
@@ -71,6 +71,7 @@ function Stat({ label, val, color = "text-white" }: { label: string, val: string
 // --- MAIN TERMINAL PAGE COMPONENT ---
 export default function TerminalPage() {
   const router = useRouter();
+  const searchParams = useSearchParams(); // 🚀 ADDED: This listens to the URL from the Hub
   
   // 🚨 NEURAL AUTHORIZATION STATE
   const [authModal, setAuthModal] = useState({
@@ -154,6 +155,17 @@ export default function TerminalPage() {
       };
       verifyClearance();
   }, [router]);
+
+  // 🚀 AUTO-LOAD TICKER FROM HUB
+  useEffect(() => {
+      const urlTicker = searchParams.get('ticker');
+      
+      // If a ticker exists in the URL, and we haven't confirmed a ticker yet, run it!
+      if (urlTicker && isAuthorized && confirmedTicker !== urlTicker) {
+          setTicker(urlTicker);
+          runAnalysis(urlTicker);
+      }
+  }, [searchParams, isAuthorized, confirmedTicker]); 
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
