@@ -115,17 +115,17 @@ export default function HubPage() {
         
         {/* Card 1 */}
         <div 
-          onClick={() => document.querySelector('input')?.focus()}
-          className="bg-slate-900/40 border border-slate-800 p-8 rounded-[32px] hover:border-blue-500/40 hover:bg-slate-900/60 transition-all cursor-pointer group"
-        >
-          <div className="w-14 h-14 bg-blue-500/10 rounded-full flex items-center justify-center text-blue-400 text-2xl mb-6 group-hover:scale-110 transition-transform">
-            🔍
-          </div>
-          <h3 className="text-2xl font-black text-white mb-3">AI Stock Scanner</h3>
-          <p className="text-sm text-slate-400 leading-relaxed font-medium">
-            Don't guess. Search any stock and let our AI break down the complex data into simple, actionable insights and easy-to-read scores.
-          </p>
-        </div>
+  onClick={() => router.push('/terminal')}
+  className="bg-slate-900/40 border border-slate-800 p-8 rounded-[32px] hover:border-blue-500/40 hover:bg-slate-900/60 transition-all cursor-pointer group"
+>
+  <div className="w-14 h-14 bg-blue-500/10 rounded-full flex items-center justify-center text-blue-400 text-2xl mb-6 group-hover:scale-110 transition-transform">
+    🔍
+  </div>
+  <h3 className="text-2xl font-black text-white mb-3">AI Stock Scanner</h3>
+  <p className="text-sm text-slate-400 leading-relaxed font-medium">
+    Don't guess. Search any stock and let our AI break down the complex data into simple, actionable insights and easy-to-read scores.
+  </p>
+</div>
 
         {/* Card 2 */}
         <div 
