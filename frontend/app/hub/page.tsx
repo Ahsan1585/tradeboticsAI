@@ -165,19 +165,19 @@ export default function HubPage() {
           </p>
         </div>
 
-        {/* Card 3 */}
-        <div className="bg-slate-900/20 border border-slate-800/50 p-8 rounded-[32px] relative overflow-hidden">
-          <div className="absolute top-6 right-6 bg-orange-500/10 text-orange-500 text-[9px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full border border-orange-500/20">
-            Coming Soon
-          </div>
-          <div className="w-14 h-14 bg-slate-800/50 rounded-full flex items-center justify-center text-slate-500 text-2xl mb-6">
-            🎮
-          </div>
-          <h3 className="text-2xl font-black text-slate-300 mb-3">Practice Trading</h3>
-          <p className="text-sm text-slate-500 leading-relaxed font-medium">
-            Learn the ropes without the risk. Practice buying and selling stocks with virtual money before you invest your real cash.
-          </p>
-        </div>
+        {/* Card 3: UNLOCKED */}
+<div 
+  onClick={() => router.push('/vault')}
+  className="bg-slate-900/40 border border-slate-800 p-8 rounded-[32px] hover:border-emerald-500/40 hover:bg-slate-900/60 transition-all cursor-pointer group relative overflow-hidden"
+>
+  <div className="w-14 h-14 bg-emerald-500/10 rounded-full flex items-center justify-center text-emerald-400 text-2xl mb-6 group-hover:scale-110 transition-transform">
+    🎮
+  </div>
+  <h3 className="text-2xl font-black text-white mb-3">Practice Trading</h3>
+  <p className="text-sm text-slate-400 leading-relaxed font-medium">
+    Learn the ropes without the risk. Practice buying and selling stocks with virtual money before you invest your real cash.
+  </p>
+</div>
 
       </div>
 
