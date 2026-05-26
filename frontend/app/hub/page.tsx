@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../lib/supabase";
+import TermsModal from "../components/TermsModal"; // 🚀 RESTORED IMPORT
 
 export default function HubPage() {
   const router = useRouter();
@@ -9,14 +10,18 @@ export default function HubPage() {
   const [virtualCash, setVirtualCash] = useState<number>(0);
   const [tokens, setTokens] = useState<number>(0);
   const [userEmail, setUserEmail] = useState("");
+  const [isAuthorized, setIsAuthorized] = useState(false);
 
   useEffect(() => {
     const loadUserData = async () => {
       const { data: { session }, error } = await supabase.auth.getSession();
       if (error || !session) {
+        console.warn("Security Breach Detected: Unauthorized access attempt.");
         router.push("/");
         return;
       }
+      
+      setIsAuthorized(true);
       setUserEmail(session.user.email || "User");
 
       // Fetch balances for the header
@@ -31,6 +36,7 @@ export default function HubPage() {
         setTokens(profile.ai_token_balance);
       }
     };
+    
     loadUserData();
   }, [router]);
 
@@ -41,12 +47,30 @@ export default function HubPage() {
   };
 
   const handleSignOut = async () => {
+    // 🚀 RESTORED OLD LOGIC: Clear the Terms of Service session storage
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+        sessionStorage.removeItem(`tos_accepted_${user.id}`);
+    }
+    
     await supabase.auth.signOut();
     router.push("/");
   };
 
+  // Keep the screen blank/loading while the security check runs
+  if (!isAuthorized) {
+      return (
+          <main className="min-h-screen bg-[#020617] flex items-center justify-center">
+              <div className="w-16 h-16 border-4 border-slate-800 border-t-blue-500 rounded-full animate-spin mb-6" />
+          </main>
+      );
+  }
+
   return (
     <main className="min-h-screen bg-[#020617] text-slate-300 flex flex-col font-sans relative overflow-x-hidden">
+      
+      {/* 🚨 MANDATORY LEGAL GATE RESTORED */}
+      <TermsModal />
       
       {/* 🚀 REDESIGNED HEADER: Balances moved to top right and minimized */}
       <header className="w-full flex justify-between items-center p-6 border-b border-slate-800/50 bg-[#020617]/80 backdrop-blur-md z-50">
@@ -115,17 +139,17 @@ export default function HubPage() {
         
         {/* Card 1 */}
         <div 
-  onClick={() => router.push('/terminal')}
-  className="bg-slate-900/40 border border-slate-800 p-8 rounded-[32px] hover:border-blue-500/40 hover:bg-slate-900/60 transition-all cursor-pointer group"
->
-  <div className="w-14 h-14 bg-blue-500/10 rounded-full flex items-center justify-center text-blue-400 text-2xl mb-6 group-hover:scale-110 transition-transform">
-    🔍
-  </div>
-  <h3 className="text-2xl font-black text-white mb-3">AI Stock Scanner</h3>
-  <p className="text-sm text-slate-400 leading-relaxed font-medium">
-    Don't guess. Search any stock and let our AI break down the complex data into simple, actionable insights and easy-to-read scores.
-  </p>
-</div>
+          onClick={() => router.push('/terminal')}
+          className="bg-slate-900/40 border border-slate-800 p-8 rounded-[32px] hover:border-blue-500/40 hover:bg-slate-900/60 transition-all cursor-pointer group"
+        >
+          <div className="w-14 h-14 bg-blue-500/10 rounded-full flex items-center justify-center text-blue-400 text-2xl mb-6 group-hover:scale-110 transition-transform">
+            🔍
+          </div>
+          <h3 className="text-2xl font-black text-white mb-3">AI Stock Scanner</h3>
+          <p className="text-sm text-slate-400 leading-relaxed font-medium">
+            Don't guess. Search any stock and let our AI break down the complex data into simple, actionable insights and easy-to-read scores.
+          </p>
+        </div>
 
         {/* Card 2 */}
         <div 
