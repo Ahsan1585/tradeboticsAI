@@ -513,16 +513,18 @@ export default function VaultPage() {
       )}
 
       {/* RE-USED TRADE TICKET MODAL */}
-      {showTradeTicket && selectedAsset && (
-          <TradeTicket
-              ticker={selectedAsset.ticker}
-              currentPrice={liveData[selectedAsset.ticker]?.price || selectedAsset.cost_basis}
-              buyingPower={virtualCash}
-              currentShares={selectedAsset.shares}
-              onClose={() => setShowTradeTicket(false)}
-              onExecute={(amount, mode) => handleExecuteTrade(tradeType, amount, mode)}
-          />
-      )}
+{showTradeTicket && selectedAsset && (
+    <TradeTicket
+        ticker={selectedAsset.ticker}
+        currentPrice={liveData[selectedAsset.ticker]?.price || selectedAsset.cost_basis}
+        buyingPower={virtualCash}
+        currentShares={selectedAsset.shares}
+        onClose={() => setShowTradeTicket(false)}
+        // 🚀 FIX: Explicitly cast tradeType to the expected string type 
+        // or ensure the function signature in TradeTicket accepts the string.
+        onExecute={(amount, mode) => handleExecuteTrade(tradeType as "BUY" | "SELL", amount, mode)}
+    />
+)}
 
     </main>
   );
