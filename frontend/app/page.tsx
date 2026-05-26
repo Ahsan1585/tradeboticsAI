@@ -24,7 +24,6 @@ function MarketingLanding({ onLoginClick, onRegisterClick }: { onLoginClick: () 
             if (res.ok) {
                 const trend = data.tech_score > 75 ? "bullish accumulation" : "consolidation";
                 const verdict = `${data.company_name} is currently trading at $${data.price}. Initial scans indicate ${trend} with an aggregate Quant Score of ${data.score}. Technical momentum scores ${data.tech_score}/100 while institutional fundamental DNA scores ${data.fund_score}/100.`;
-                
                 setDemoResult({
                     ticker: data.ticker,
                     price: data.price,
@@ -143,9 +142,7 @@ function MarketingLanding({ onLoginClick, onRegisterClick }: { onLoginClick: () 
 
             <section className="border-t border-slate-800/50 bg-[#060b1f] py-24 overflow-hidden">
                 <div className="flex flex-col items-center justify-center mb-16 px-6 text-center">
-                    <div className="flex gap-1 text-blue-500 text-2xl mb-4 drop-shadow-[0_0_10px_rgba(59,130,246,0.8)]">
-                        ★★★★★
-                    </div>
+                    <div className="flex gap-1 text-blue-500 text-2xl mb-4 drop-shadow-[0_0_10px_rgba(59,130,246,0.8)]">★★★★★</div>
                     <h3 className="text-3xl font-black text-white tracking-tighter uppercase mb-2">Operative Testimonials</h3>
                     <p className="text-slate-500 font-bold uppercase tracking-widest text-[10px]">Trusted by over 4,500+ Institutional & Retail Operatives</p>
                 </div>
@@ -213,41 +210,52 @@ export default function Home() {
   const [confirmPassword, setConfirmPassword] = useState(""); 
   const [isSignUp, setIsSignUp] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
-  
   const [toastMessage, setToastMessage] = useState<string | null>(null); 
 
   useEffect(() => {
+    let isMounted = true; // 🚀 Use flag to prevent state updates if unmounted
+
     const checkUser = async () => {
-      setIsAuthChecking(true);
-      const { data: { session }, error } = await supabase.auth.getSession();
-      
-      if (error) {
-          console.warn("Auth Token Corrupted. Purging local cache.");
-          await supabase.auth.signOut();
-          setUser(null);
-          setUserProfile(null);
-      } else if (session) {
-          setUser(session.user);
-          const { data: profile } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-          setUserProfile(profile);
+      try {
+          setIsAuthChecking(true);
+          const { data: { session }, error } = await supabase.auth.getSession();
           
-          if (profile?.status !== 'pending') {
-              router.push('/hub');
+          if (error) {
+              console.warn("Auth Token Corrupted. Purging local cache.");
+              await supabase.auth.signOut();
+              if (isMounted) {
+                  setUser(null);
+                  setUserProfile(null);
+              }
+          } else if (session) {
+              if (isMounted) setUser(session.user);
+              const { data: profile } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
+              if (isMounted) setUserProfile(profile);
+              
+              if (profile?.status !== 'pending') {
+                  router.push('/hub');
+              }
           }
+      } catch (err) {
+          console.error("Auth check error:", err);
+      } finally {
+          // 🚀 GUARANTEE THIS EXECUTES SO IT NEVER GETS STUCK BLACK
+          if (isMounted) setIsAuthChecking(false);
       }
-      setIsAuthChecking(false);
     };
     
     checkUser();
 
-    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_OUT') {
-          setUser(null);
-          setUserProfile(null);
+          if (isMounted) {
+              setUser(null);
+              setUserProfile(null);
+          }
       } else if (session && (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED')) {
-          setUser(session.user);
+          if (isMounted) setUser(session.user);
           const { data: profile } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-          setUserProfile(profile);
+          if (isMounted) setUserProfile(profile);
           
           if (event === 'SIGNED_IN' && profile?.status !== 'pending') {
               router.push('/hub');
@@ -256,7 +264,8 @@ export default function Home() {
     });
 
     return () => {
-      authListener.subscription.unsubscribe();
+      isMounted = false;
+      subscription.unsubscribe();
     };
   }, [router]);
 
@@ -268,6 +277,7 @@ export default function Home() {
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthLoading(true);
+
     if (isSignUp) {
       if (password !== confirmPassword) {
           showToast("Passwords do not match.");
@@ -299,8 +309,13 @@ export default function Home() {
     setShowAuth(false); 
   };
 
+  // 🚀 FIXED: Added a subtle spinner to prevent the "Black Screen of Death"
   if (isAuthChecking) {
-      return <main className="min-h-screen bg-[#020617]"></main>; // Blank screen while verifying token to prevent flashing
+      return (
+          <main className="min-h-screen bg-[#020617] flex items-center justify-center">
+             <div className="w-12 h-12 border-4 border-slate-800 border-t-blue-500 rounded-full animate-spin mb-4" />
+          </main>
+      );
   }
 
   // If they are logged in and approved, they are about to be redirected to /hub. Show loader.
