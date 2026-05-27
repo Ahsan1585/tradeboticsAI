@@ -180,43 +180,38 @@ export default function VaultPage() {
         if (res.ok) { 
             showToast(result.message); 
             setShowTradeTicket(false);
-            
+
+            // 🚀 1. OPTIMISTIC CASH UPDATE: Instantly set virtual cash to the exact number the backend just calculated
+            if (result.remaining_cash !== undefined) {
+                setVirtualCash(result.remaining_cash);
+            }
+
+            // 🚀 2. OPTIMISTIC VAULT UPDATE: Instantly adjust the shares in the UI grid
+            setHoldings(prev => prev.map(h => {
+                if (h.ticker === selectedAsset.ticker) {
+                    // Calculate exact shares executed
+                    const executedShares = mode === "SHARES" ? amount : (amount / result.execution_price);
+                    return {
+                        ...h,
+                        shares: type === "SELL" ? h.shares - executedShares : h.shares + executedShares
+                    };
+                }
+                return h;
+            }).filter(h => h.shares > 0.0001)); // Instantly remove the card if shares hit 0
+
+            // 3. Clear selected asset drawer if fully sold
             if (type === "SELL" && mode === "SHARES" && amount === selectedAsset.shares) {
                 setSelectedAsset(null); 
             }
             
-            // 🚀 THE FIX: Give Supabase 500ms to commit the transaction before refreshing the UI
+            // 4. Background Sync: Silently re-sync with Supabase 1.5 seconds later to ensure total alignment
             setTimeout(() => {
                 loadPortfolio(); 
-            }, 500);
+            }, 1500);
 
         } 
         else { showToast(`Trade Error: ${result.detail}`); }
     } catch (error) { showToast("Execution Offline."); }
-  };
-
-  const summarizeNews = async (article: any) => {
-    if (!selectedAsset) return;
-    setIsSummarizing(true);
-    try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) return;
-
-        const res = await fetch(`${BACKEND_URL}/summarize?user_id=${session.user.id}`, { 
-          method: "POST", headers: { "Content-Type": "application/json" }, 
-          body: JSON.stringify({ title: article.title, ticker: selectedAsset.ticker, content: article.content || "" }) 
-        });
-        
-        const result = await res.json();
-        if (res.ok) {
-            showToast("Synthesis Complete.");
-            article.summary = result.summary; 
-            setTokens(result.remaining_tokens);
-        } else {
-            showToast(res.status === 402 ? "NEURAL BANDWIDTH DEPLETED. RECHARGE REQUIRED." : "Synthesis Failed.");
-        }
-    } catch { showToast("Network Error."); }
-    setIsSummarizing(false);
   };
 
   const calculateTotals = () => {
