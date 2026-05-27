@@ -23,6 +23,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- MARKET DATA IN-MEMORY CACHE (Prevents yfinance rate limits) ---
+market_cache = {}
+MARKET_CACHE_TTL = 60  # Cache market data for 60 seconds
+
 # --- SUPABASE CONFIGURATION ---
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY") 
@@ -113,9 +117,19 @@ async def analyze_ticker(ticker: str):
     if not supabase:
         raise HTTPException(status_code=500, detail="Database connection offline.")
 
+    ticker_upper = ticker.upper()
+    now = time.time()
+
+    # 🚀 1. CHECK CACHE FIRST (Prevents Yahoo Finance Rate Limiting)
+    if ticker_upper in market_cache:
+        cached_time, cached_data = market_cache[ticker_upper]
+        if now - cached_time < MARKET_CACHE_TTL:
+            print(f"MARKET CACHE HIT [{ticker_upper}]: Serving from memory.", file=sys.stderr)
+            return cached_data
+
     try:
-        stock = yf.Ticker(ticker)
-        hist = stock.history(period="3mo")
+        stock = yf.Ticker(ticker_upper)
+        hist = stock.history(period="3mo", prepost=True)
         if hist.empty: raise HTTPException(status_code=404, detail="Ticker data not found.")
 
         current_price = round(hist['Close'].iloc[-1], 2)
@@ -133,6 +147,17 @@ async def analyze_ticker(ticker: str):
                 formatted_mcap = f"${raw_mcap / 1e12:.2f} Trillion"
             else:
                 formatted_mcap = f"${raw_mcap / 1e9:.2f} Billion"
+
+        calendar = stock.calendar
+        next_earnings = "Unknown"
+        if calendar is not None:
+            try:
+                if isinstance(calendar, dict) and 'Earnings Date' in calendar:
+                    next_earnings = str(calendar['Earnings Date'][0])
+                elif 'Earnings Date' in calendar and not calendar.empty:
+                    next_earnings = str(calendar['Earnings Date'].iloc[0].date())
+            except Exception:
+                pass
 
         tech_base = 50
         if len(hist) >= 20:
@@ -153,7 +178,7 @@ async def analyze_ticker(ticker: str):
         
         vol_surge = f"{round((volume / avg_volume) * 100, 1)}%" if avg_volume > 0 else "N/A"
 
-        # PULL LIVE NEWS & CALCULATE "HOURS AGO"
+        # PULL LIVE NEWS
         news_list = []
         try:
             finnhub_key = os.getenv("FINNHUB_API_KEY")
@@ -162,18 +187,16 @@ async def analyze_ticker(ticker: str):
                 import json
                 from datetime import timedelta
                 
-                # Finnhub requires a date range (last 7 days)
                 end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
                 start_date = (datetime.now(timezone.utc) - timedelta(days=7)).strftime('%Y-%m-%d')
                 
-                url = f"https://finnhub.io/api/v1/company-news?symbol={ticker.upper()}&from={start_date}&to={end_date}&token={finnhub_key}"
+                url = f"https://finnhub.io/api/v1/company-news?symbol={ticker_upper}&from={start_date}&to={end_date}&token={finnhub_key}"
                 req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
                 
                 with urllib.request.urlopen(req) as response:
                     finnhub_news = json.loads(response.read().decode())
                     
                     for item in finnhub_news[:5]:
-                        # Finnhub returns timestamp in Unix seconds
                         pub_time = item.get("datetime", time.time())
                         hours_ago = int((time.time() - pub_time) / 3600)
                         date_str = "JUST NOW" if hours_ago <= 0 else f"{hours_ago} HR{'S' if hours_ago > 1 else ''} AGO"
@@ -185,7 +208,6 @@ async def analyze_ticker(ticker: str):
                             "content": item.get("summary", item.get("url", ""))
                         })
             
-            # 🚨 FAILSAFE: If Finnhub key is missing, fallback to yfinance
             if not news_list:
                 raw_news = stock.news
                 if isinstance(raw_news, list):
@@ -204,19 +226,19 @@ async def analyze_ticker(ticker: str):
                         })
                         
         except Exception as e:
-            print(f"News fetch error for {ticker}: {e}", file=sys.stderr)
+            print(f"News fetch error for {ticker_upper}: {e}", file=sys.stderr)
 
         ledger = [
-            {"factor": "Momentum (RSI)", "val": "62.5" if tech_score > 50 else "38.2", "status": "BULLISH" if tech_score > 50 else "BEARISH", "reasoning": f"{ticker.upper()} is showing upward momentum. Current RSI proxy suggests buying pressure." if tech_score > 50 else f"{ticker.upper()} is losing momentum. RSI proxy suggests selling pressure."},
+            {"factor": "Momentum (RSI)", "val": "62.5" if tech_score > 50 else "38.2", "status": "BULLISH" if tech_score > 50 else "BEARISH", "reasoning": f"{ticker_upper} is showing upward momentum. Current RSI proxy suggests buying pressure." if tech_score > 50 else f"{ticker_upper} is losing momentum. RSI proxy suggests selling pressure."},
             {"factor": "Institutional Flow", "val": "High" if volume > avg_volume else "Low", "status": "BULLISH" if volume > avg_volume else "NEUTRAL", "reasoning": f"Current volume of {volume:,} exceeds the historical average of {avg_volume:,}, indicating strong institutional accumulation." if volume > avg_volume else f"Current volume of {volume:,} is below the historical average of {avg_volume:,}, indicating retail-driven consolidation."},
             {"factor": "MACD Divergence", "val": "Positive" if current_price > prev_price else "Negative", "status": "BULLISH" if current_price > prev_price else "BEARISH", "reasoning": f"Price action at ${current_price} confirms a positive bullish crossover against the previous close." if current_price > prev_price else f"Price action at ${current_price} indicates a bearish crossover trajectory."},
             {"factor": "VWAP Proximity", "val": f"+{round(((current_price - prev_price)/prev_price)*100, 2)}%" if current_price > prev_price else f"{round(((current_price - prev_price)/prev_price)*100, 2)}%", "status": "BULLISH" if current_price > prev_price else "BEARISH", "reasoning": f"The asset is holding firmly above the volume-weighted baseline, supporting the current uptrend." if current_price > prev_price else f"The asset has slipped below the volume-weighted baseline, signaling potential distribution."},
-            {"factor": "Bollinger Bands", "val": "Upper Band" if tech_score > 70 else "Lower Band" if tech_score < 40 else "Mid-Band", "status": "BULLISH" if tech_score > 70 else "BEARISH" if tech_score < 40 else "NEUTRAL", "reasoning": f"Price is riding the upper standard deviation channel, suggesting a potential breakout for {ticker.upper()}." if tech_score > 70 else f"Price is testing the lower standard deviation channel, indicating oversold conditions." if tech_score < 40 else f"{ticker.upper()} is consolidating near the mean, awaiting a volatility catalyst."}
+            {"factor": "Bollinger Bands", "val": "Upper Band" if tech_score > 70 else "Lower Band" if tech_score < 40 else "Mid-Band", "status": "BULLISH" if tech_score > 70 else "BEARISH" if tech_score < 40 else "NEUTRAL", "reasoning": f"Price is riding the upper standard deviation channel, suggesting a potential breakout for {ticker_upper}." if tech_score > 70 else f"Price is testing the lower standard deviation channel, indicating oversold conditions." if tech_score < 40 else f"{ticker_upper} is consolidating near the mean, awaiting a volatility catalyst."}
         ]
 
-        return {
-            "ticker": ticker.upper(),
-            "company_name": stock.info.get("shortName", ticker.upper()),
+        final_response = {
+            "ticker": ticker_upper,
+            "company_name": stock.info.get("shortName", ticker_upper),
             "price": current_price,
             "score": total_score,
             "tech_score": int(tech_score),
@@ -224,21 +246,28 @@ async def analyze_ticker(ticker: str):
             "volume": f"{volume:,}",
             "vol_surge": vol_surge,
             "ledger": ledger,
-            "news": news_list,  # INJECTED LIVE NEWS HEADLINES
-            "ai_tactical": f"Market conditions evaluated for {ticker.upper()}. Execution guidance dynamically adjusting to real-time volatility.",
+            "news": news_list,  
+            "ai_tactical": f"Market conditions evaluated for {ticker_upper}. Execution guidance dynamically adjusting to real-time volatility.",
             "fundamentals": {
                 "market_cap": formatted_mcap, 
                 "pe_ratio": str(round(pe, 2)) if pe else "N/A",
                 "debt_equity": str(stock.info.get("debtToEquity", "N/A")),
                 "margin": f"{round(margins * 100, 2)}%" if margins else "N/A",
                 "sentiment": "BULLISH" if total_score > 65 else "BEARISH" if total_score < 40 else "NEUTRAL",
-                "cash_flow": "POSITIVE" if margins and margins > 0 else "NEGATIVE"
+                "cash_flow": "POSITIVE" if margins and margins > 0 else "NEGATIVE",
+                "next_earnings": next_earnings 
             }
         }
+        
+        # 🚀 2. SAVE TO CACHE BEFORE RETURNING
+        market_cache[ticker_upper] = (now, final_response)
+        return final_response
         
     except HTTPException as he:
         raise he
     except Exception as e:
+        if 'Too Many Requests' in str(e) or '429' in str(e):
+            raise HTTPException(status_code=429, detail="MARKET DATA RATE LIMIT EXCEEDED. Stand by.")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/translate")
@@ -248,13 +277,12 @@ async def translate_ai(req: TranslationRequest, user_id: str = Query(...)):
         cache_key = f"TRANSLATE_{req.ticker.upper()}"
         cached_data = check_ai_cache(cache_key)
         
-        # Pull user's current token balance to keep UI synced, regardless of cache hit
         profile_res = supabase.table('profiles').select('ai_token_balance').eq('id', user_id).execute()
         if not profile_res.data: raise HTTPException(status_code=404, detail="Operative profile not found.")
         current_tokens = int(profile_res.data[0]['ai_token_balance'])
 
         if cached_data:
-            cached_data["remaining_tokens"] = current_tokens # Inject latest balance without deducting
+            cached_data["remaining_tokens"] = current_tokens
             return cached_data
             
         if current_tokens < 3:
@@ -265,12 +293,23 @@ async def translate_ai(req: TranslationRequest, user_id: str = Query(...)):
         
         funds = req.data_context.get("fundamentals", {})
         if funds:
-            prompt += f"FUNDAMENTAL DNA:\n- P/E Ratio: {funds.get('pe_ratio', 'N/A')}\n- Margin: {funds.get('margin', 'N/A')}\n\n"
+            prompt += f"FUNDAMENTAL DNA:\n- Market Cap: {funds.get('market_cap', 'N/A')}\n- P/E Ratio: {funds.get('pe_ratio', 'N/A')}\n- Margin: {funds.get('margin', 'N/A')}\n\n"
 
         ledger = req.data_context.get("ledger", [])
         if ledger:
             prompt += f"TECHNICAL LEDGER:\n"
             for item in ledger: prompt += f"- {item.get('factor')}: {item.get('val')} ({item.get('status')})\n"
+
+        news = req.data_context.get("news", [])
+        if news:
+            prompt += f"\nLATEST INTELLIGENCE (CATALYSTS):\n"
+            for item in news[:3]:
+                prompt += f"- {item.get('title')} ({item.get('date')})\n"
+
+        next_earnings = funds.get("next_earnings", "N/A")
+        if next_earnings != "N/A" and next_earnings != "Unknown":
+            prompt += f"\nEARNINGS RISK:\n- Next Earnings Date: {next_earnings}\n"
+            prompt += "If the Next Earnings Date is today or tomorrow, heavily weigh the binary risk of an earnings gap in your tactical verdict. Downgrade pure technical indicators.\n"
 
         prompt += (
             "\n🚨 TEMPLATE REQUIREMENT - YOU MUST FOLLOW THIS EXACTLY:\n"
@@ -278,9 +317,7 @@ async def translate_ai(req: TranslationRequest, user_id: str = Query(...)):
             "Line 2: '⚖️ TACTICAL VERDICT: [BUY/HOLD/TRIM/SELL]'\n\n"
             "BRIEFING REQUIREMENTS:\n"
             "1. Macro & Fundamentals: Analyze how current macro conditions and company DNA impact the stock.\n"
-            "2. Technical Analysis: Incorporate the provided Technical Ledger. "
-            "If BUY, Strike Zone must be in line with current price. "
-            "If TRIM/SELL/HOLD, Strike Zone must be based on support/resistance.\n"
+            "2. Technical Analysis: Incorporate the provided Technical Ledger. If BUY, Strike Zone must be in line with current price. If TRIM/SELL/HOLD, Strike Zone must be based on support/resistance.\n"
             "Keep it professional, data-driven, and ruthless. No pleasantries."
         )
         response = model.generate_content(prompt)
@@ -305,7 +342,6 @@ async def translate_ai(req: TranslationRequest, user_id: str = Query(...)):
 async def summarize_article(req: SummaryRequest, user_id: str = Query(...)): 
     if not model: return {"summary": ["AI Node Offline."]}
     try:
-        # Generate a safe cache key from the article title
         safe_title = ''.join(e for e in req.title if e.isalnum())[:30]
         cache_key = f"SUMMARY_{req.ticker}_{safe_title}"
         
@@ -334,7 +370,6 @@ async def summarize_article(req: SummaryRequest, user_id: str = Query(...)):
             f"- Maintain a ruthless, data-driven, and highly informative tone."
         )
         
-        # 🚨 OVERRIDE GEMINI SAFETY FILTERS (Prevents "Dangerous Content" blocks on stock picks)
         response = model.generate_content(
             prompt,
             safety_settings=[
@@ -345,7 +380,6 @@ async def summarize_article(req: SummaryRequest, user_id: str = Query(...)):
             ]
         )
 
-        # 🚨 FAILSAFE: Check if Gemini still blocked it despite the override
         try:
             ai_text = response.text.strip()
         except ValueError:
@@ -366,7 +400,6 @@ async def summarize_article(req: SummaryRequest, user_id: str = Query(...)):
     except HTTPException as he:
         raise he
     except Exception as e: 
-        # 🚨 UN-SILENCE THE ERROR LOG
         print(f"CRITICAL SUMMARIZE ERROR: {e}", file=sys.stderr)
         return {"summary": [f"Synthesis Offline. Error logged in terminal."]}
 
@@ -374,7 +407,6 @@ async def summarize_article(req: SummaryRequest, user_id: str = Query(...)):
 async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)): 
     if not model: return {"analysis": "AI Node Offline."}
     try:
-        # Cache based on the user's specific portfolio style request
         cache_key = f"PORTFOLIO_{user_id}_{req.trade_style.upper().replace(' ', '_')}"
         cached_data = check_ai_cache(cache_key)
         
@@ -401,7 +433,7 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
                 if ticker == "ETHU": ticker = "ETH-USD"
                 
                 stock = yf.Ticker(ticker)
-                hist = stock.history(period="1d")
+                hist = stock.history(period="1d", prepost=True)
                 if hist.empty: continue 
                 
                 price = round(hist['Close'].iloc[-1], 2)
@@ -432,7 +464,7 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
             try:
                 if any(h['ticker'] == t for h in portfolio_summary): continue
                 stock = yf.Ticker(t)
-                hist = stock.history(period="1mo")
+                hist = stock.history(period="1mo", prepost=True)
                 if hist.empty: continue
                 price = round(hist['Close'].iloc[-1], 2)
                 prev_price = round(hist['Close'].iloc[-2], 2)
@@ -539,7 +571,7 @@ async def generate_swap_thesis(req: SwapRequest):
         if req.ticker.upper() == target["ticker"]: target = {"ticker": "MSFT", "score": 91}
         
         target_stock = yf.Ticker(target["ticker"])
-        target_hist = target_stock.history(period="1d")
+        target_hist = target_stock.history(period="1d", prepost=True)
         target_price = 150.00 if target_hist.empty else round(target_hist['Close'].iloc[-1], 2)
         freed_capital = req.shares * req.price
         target_shares = math.floor(freed_capital / target_price)
@@ -567,7 +599,7 @@ async def execute_trade(req: TradeRequest):
         ticker = req.ticker.upper()
         
         stock = yf.Ticker(ticker)
-        hist = stock.history(period="1d")
+        hist = stock.history(period="1d", prepost=True)
         if hist.empty: raise HTTPException(status_code=404, detail="Asset pricing unavailable.")
         live_price = float(hist['Close'].iloc[-1])
 
