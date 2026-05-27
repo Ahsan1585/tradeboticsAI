@@ -176,13 +176,20 @@ export default function VaultPage() {
             body: JSON.stringify({ user_id: session.user.id, ticker: selectedAsset.ticker, trade_type: type, amount: amount, mode: mode })
         });
         const result = await res.json();
+        
         if (res.ok) { 
             showToast(result.message); 
             setShowTradeTicket(false);
+            
             if (type === "SELL" && mode === "SHARES" && amount === selectedAsset.shares) {
                 setSelectedAsset(null); 
             }
-            loadPortfolio(); 
+            
+            // 🚀 THE FIX: Give Supabase 500ms to commit the transaction before refreshing the UI
+            setTimeout(() => {
+                loadPortfolio(); 
+            }, 500);
+
         } 
         else { showToast(`Trade Error: ${result.detail}`); }
     } catch (error) { showToast("Execution Offline."); }
