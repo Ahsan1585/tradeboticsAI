@@ -213,6 +213,43 @@ export default function VaultPage() {
         else { showToast(`Trade Error: ${result.detail}`); }
     } catch (error) { showToast("Execution Offline."); }
   };
+  // ... (Your other states and functions)
+
+  // 🚀 Make sure this function exists inside the VaultPage component!
+  const summarizeNews = async (article: any) => {
+    if (!selectedAsset) return;
+    setIsSummarizing(true);
+    try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) return;
+
+        const res = await fetch(`${BACKEND_URL}/summarize?user_id=${session.user.id}`, { 
+          method: "POST", headers: { "Content-Type": "application/json" }, 
+          body: JSON.stringify({ title: article.title, ticker: selectedAsset.ticker, content: article.content || "" }) 
+        });
+        
+        const result = await res.json();
+        if (res.ok) {
+            showToast("Synthesis Complete.");
+            // Update the specific article in the liveData state
+            setLiveData((prev: any) => ({
+                ...prev,
+                [selectedAsset.ticker]: {
+                    ...prev[selectedAsset.ticker],
+                    news: prev[selectedAsset.ticker].news.map((n: any) => 
+                        n.title === article.title ? { ...n, summary: result.summary } : n
+                    )
+                }
+            }));
+            setTokens(result.remaining_tokens);
+        } else {
+            showToast(res.status === 402 ? "NEURAL BANDWIDTH DEPLETED. RECHARGE REQUIRED." : "Synthesis Failed.");
+        }
+    } catch { showToast("Network Error."); }
+    setIsSummarizing(false);
+  };
+
+  // ... (Your calculateTotals function)
 
   const calculateTotals = () => {
     let totalStockValue = 0;
