@@ -651,15 +651,14 @@ async def execute_trade(req: TradeRequest):
             if trade_shares > (current_shares_held + 0.0001): 
                 raise HTTPException(status_code=400, detail="Insufficient shares in vault.")
             
-            new_cash = round(current_cash + trade_cost, 2)
-            new_total_shares = current_shares_held - trade_shares
+            # 🚀 THE FIX: Explicitly cast to float() and strictly round
+            new_cash = float(round(current_cash + trade_cost, 2))
+            new_total_shares = float(round(current_shares_held - trade_shares, 4))
 
             if new_total_shares <= 0.0001:
                 supabase.table('portfolio').delete().eq('user_id', req.user_id).eq('ticker', ticker).execute()
             else:
                 supabase.table('portfolio').update({'shares': new_total_shares}).eq('user_id', req.user_id).eq('ticker', ticker).execute()
-        else:
-            raise HTTPException(status_code=400, detail="Invalid trade type.")
 
         # 5. Inject Clean Data into Database
         supabase.table('profiles').update({'virtual_cash_balance': new_cash}).eq('id', req.user_id).execute()
