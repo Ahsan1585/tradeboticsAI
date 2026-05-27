@@ -134,17 +134,19 @@ export default function VaultPage() {
       setHoldings(portfolioData);
       
       const liveUpdates: any = {};
-      await Promise.all(portfolioData.map(async (item) => {
+      // 🚀 FRONTEND OPTIMIZATION: Stagger the requests to prevent hitting the Yahoo/Backend rate limit
+      for (const item of portfolioData) {
         try {
           const res = await fetch(`${BACKEND_URL}/analyze/${item.ticker}?user_id=${session.user.id}`);
           if (res.ok) {
-            const data = await res.json();
-            liveUpdates[item.ticker] = data;
+            liveUpdates[item.ticker] = await res.json();
           }
+          // Wait 250ms between each asset request
+          await new Promise(resolve => setTimeout(resolve, 250));
         } catch (e) {
           console.warn(`Failed to fetch live data for ${item.ticker}`);
         }
-      }));
+      }
       setLiveData(liveUpdates);
     }
     setLoading(false);
@@ -315,70 +317,67 @@ export default function VaultPage() {
         </div>
 
         {/* HOLDINGS GRID */}
-<div>
-    <h3 className="text-2xl font-black text-white uppercase tracking-widest mb-6 border-b border-slate-800 pb-4">Current Holdings</h3>
-    
-    {holdings.length === 0 ? (
-        <div className="bg-slate-900/30 border border-slate-800 p-12 rounded-[32px] text-center">
-            <p className="text-slate-500 font-bold uppercase tracking-widest">Your vault is empty.</p>
-            <button onClick={() => router.push('/terminal')} className="mt-6 bg-blue-600 text-white px-8 py-3 rounded-full font-black text-[10px] uppercase tracking-widest hover:bg-blue-500 transition-colors">Find Assets</button>
-        </div>
-    ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {holdings.map((h, i) => {
-                const live = liveData[h.ticker];
-                const currentPrice = live ? live.price : h.cost_basis;
-                const totalCost = h.shares * h.cost_basis;
-                const totalMarketValue = h.shares * currentPrice;
-                const profitLoss = Number((totalMarketValue - totalCost).toFixed(2));
-                
-                // 🚀 NEW: Calculate Percentage Return
-                const percentReturn = totalCost > 0 ? ((profitLoss / totalCost) * 100) : 0;
-                
-                const isNeutral = profitLoss === 0;
-                const isProfit = profitLoss > 0;
-                
-                let cardColorClass = "text-blue-500 bg-blue-500/10";
-                if (isProfit) cardColorClass = "text-emerald-400 bg-emerald-500/10";
-                else if (!isNeutral) cardColorClass = "text-rose-400 bg-rose-500/10";
-
-                return (
-                    <div 
-                        key={i} 
-                        onClick={() => setSelectedAsset(h)}
-                        className="bg-slate-900/40 border border-slate-800 p-6 rounded-[32px] hover:border-blue-500/50 hover:bg-slate-900/80 transition-all cursor-pointer group relative overflow-hidden"
-                    >
-                        <div className="flex justify-between items-start mb-6">
-                            <div>
-                                <h4 className="text-3xl font-black text-white">{h.ticker}</h4>
-                                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mt-1">{h.shares.toFixed(2)} Shares</p>
-                            </div>
-                            <div className="text-right">
-                                <p className="text-xl font-mono font-black text-white">${totalMarketValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</p>
-                            </div>
-                        </div>
+        <div>
+            <h3 className="text-2xl font-black text-white uppercase tracking-widest mb-6 border-b border-slate-800 pb-4">Current Holdings</h3>
+            
+            {holdings.length === 0 ? (
+                <div className="bg-slate-900/30 border border-slate-800 p-12 rounded-[32px] text-center">
+                    <p className="text-slate-500 font-bold uppercase tracking-widest">Your vault is empty.</p>
+                    <button onClick={() => router.push('/terminal')} className="mt-6 bg-blue-600 text-white px-8 py-3 rounded-full font-black text-[10px] uppercase tracking-widest hover:bg-blue-500 transition-colors">Find Assets</button>
+                </div>
+            ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {holdings.map((h: any, i: number) => {
+                        const live = liveData[h.ticker];
+                        const currentPrice = live ? live.price : h.cost_basis;
+                        const totalCost = h.shares * h.cost_basis;
+                        const totalMarketValue = h.shares * currentPrice;
+                        const profitLoss = Number((totalMarketValue - totalCost).toFixed(2));
                         
-                        <div className="flex justify-between items-end border-t border-slate-800/50 pt-4">
-                            <div>
-                                <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Total Return</p>
-                                <p className={`text-sm font-mono font-black px-2 py-0.5 rounded-md ${cardColorClass}`}>
-                                    {isProfit ? '+' : ''}${profitLoss.toFixed(2)}
-                                </p>
+                        const percentReturn = totalCost > 0 ? ((profitLoss / totalCost) * 100) : 0;
+                        const isNeutral = profitLoss === 0;
+                        const isProfit = profitLoss > 0;
+                        
+                        let cardColorClass = "text-blue-500 bg-blue-500/10";
+                        if (isProfit) cardColorClass = "text-emerald-400 bg-emerald-500/10";
+                        else if (!isNeutral) cardColorClass = "text-rose-400 bg-rose-500/10";
+
+                        return (
+                            <div 
+                                key={i} 
+                                onClick={() => setSelectedAsset(h)}
+                                className="bg-slate-900/40 border border-slate-800 p-6 rounded-[32px] hover:border-blue-500/50 hover:bg-slate-900/80 transition-all cursor-pointer group relative overflow-hidden"
+                            >
+                                <div className="flex justify-between items-start mb-6">
+                                    <div>
+                                        <h4 className="text-3xl font-black text-white">{h.ticker}</h4>
+                                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mt-1">{h.shares.toFixed(2)} Shares</p>
+                                    </div>
+                                    <div className="text-right">
+                                        <p className="text-xl font-mono font-black text-white">${totalMarketValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</p>
+                                    </div>
+                                </div>
+                                
+                                <div className="flex justify-between items-end border-t border-slate-800/50 pt-4">
+                                    <div>
+                                        <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Total Return</p>
+                                        <p className={`text-sm font-mono font-black px-2 py-0.5 rounded-md ${cardColorClass}`}>
+                                            {isProfit ? '+' : ''}${profitLoss.toFixed(2)}
+                                        </p>
+                                    </div>
+                                    <div className="text-right">
+                                        <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Return %</p>
+                                        <p className={`text-sm font-mono font-black ${cardColorClass} px-2 py-0.5 rounded-md`}>
+                                            {isProfit ? '+' : ''}{percentReturn.toFixed(2)}%
+                                        </p>
+                                    </div>
+                                </div>
                             </div>
-                            <div className="text-right">
-                                <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Return %</p>
-                                {/* 🚀 DISPLAY THE PERCENTAGE RETURN */}
-                                <p className={`text-sm font-mono font-black ${cardColorClass} px-2 py-0.5 rounded-md`}>
-                                    {isProfit ? '+' : ''}{percentReturn.toFixed(2)}%
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-                );
-            })}
+                        );
+                    })}
+                </div>
+            )}
         </div>
-    )}
-</div>
       </div>
 
       {/* 🚨 ASSET DETAILS MODAL (DRAWER) */}
@@ -400,56 +399,56 @@ export default function VaultPage() {
                       
                       {/* Performance Metrics */}
                       <div className="grid grid-cols-2 gap-4">
-    {(() => {
-        const live = liveData[selectedAsset.ticker];
-        const currentPrice = live ? live.price : selectedAsset.cost_basis;
-        const assetTotalValue = selectedAsset.shares * currentPrice;
-        
-        // Calculate P&L and Percentage
-        const totalCostBasis = selectedAsset.shares * selectedAsset.cost_basis;
-        const profitLoss = Number((assetTotalValue - totalCostBasis).toFixed(2));
-        const percentReturn = totalCostBasis !== 0 ? (profitLoss / totalCostBasis) * 100 : 0;
-        
-        const isNeutral = profitLoss === 0;
-        const isProfit = profitLoss > 0;
-        const isLoss = profitLoss < 0;
-        
-        let textClass = "text-blue-500";
-        if (isProfit) textClass = "text-emerald-400";
-        else if (isLoss) textClass = "text-rose-400";
+                        {(() => {
+                            const live = liveData[selectedAsset.ticker];
+                            const currentPrice = live ? live.price : selectedAsset.cost_basis;
+                            const assetTotalValue = selectedAsset.shares * currentPrice;
+                            
+                            // Calculate P&L and Percentage
+                            const totalCostBasis = selectedAsset.shares * selectedAsset.cost_basis;
+                            const profitLoss = Number((assetTotalValue - totalCostBasis).toFixed(2));
+                            const percentReturn = totalCostBasis !== 0 ? (profitLoss / totalCostBasis) * 100 : 0;
+                            
+                            const isNeutral = profitLoss === 0;
+                            const isProfit = profitLoss > 0;
+                            const isLoss = profitLoss < 0;
+                            
+                            let textClass = "text-blue-500";
+                            if (isProfit) textClass = "text-emerald-400";
+                            else if (isLoss) textClass = "text-rose-400";
 
-        const diversification = netAccountValue > 0 ? ((assetTotalValue / netAccountValue) * 100).toFixed(1) : "0.0";
+                            const diversification = netAccountValue > 0 ? ((assetTotalValue / netAccountValue) * 100).toFixed(1) : "0.0";
 
-        return (
-            <>
-                <div className="bg-slate-900/50 border border-slate-800 p-5 rounded-2xl">
-                    <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Live Price</p>
-                    <p className="text-2xl font-mono font-black text-white">${currentPrice.toFixed(2)}</p>
-                </div>
-                
-                {/* Updated Total Return Box */}
-                <div className="bg-slate-900/50 border border-slate-800 p-5 rounded-2xl">
-                    <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Total Return</p>
-                    <p className={`text-2xl font-mono font-black ${textClass}`}>
-                        {isProfit ? '+' : ''}${profitLoss.toFixed(2)}
-                        <span className="text-xs block opacity-80 mt-0.5">
-                            {isProfit ? '+' : ''}{percentReturn.toFixed(2)}%
-                        </span>
-                    </p>
-                </div>
+                            return (
+                                <>
+                                    <div className="bg-slate-900/50 border border-slate-800 p-5 rounded-2xl">
+                                        <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Live Price</p>
+                                        <p className="text-2xl font-mono font-black text-white">${currentPrice.toFixed(2)}</p>
+                                    </div>
+                                    
+                                    {/* Updated Total Return Box */}
+                                    <div className="bg-slate-900/50 border border-slate-800 p-5 rounded-2xl">
+                                        <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Total Return</p>
+                                        <p className={`text-2xl font-mono font-black ${textClass}`}>
+                                            {isProfit ? '+' : ''}${profitLoss.toFixed(2)}
+                                            <span className="text-xs block opacity-80 mt-0.5">
+                                                {isProfit ? '+' : ''}{percentReturn.toFixed(2)}%
+                                            </span>
+                                        </p>
+                                    </div>
 
-                <div className="bg-slate-900/50 border border-slate-800 p-5 rounded-2xl">
-                    <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Shares Owned</p>
-                    <p className="text-lg font-mono font-black text-white">{selectedAsset.shares.toFixed(4)}</p>
-                </div>
-                <div className="bg-slate-900/50 border border-slate-800 p-5 rounded-2xl">
-                    <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Portfolio Weight</p>
-                    <p className="text-lg font-mono font-black text-blue-400">{diversification}%</p>
-                </div>
-            </>
-        );
-    })()}
-</div>
+                                    <div className="bg-slate-900/50 border border-slate-800 p-5 rounded-2xl">
+                                        <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Shares Owned</p>
+                                        <p className="text-lg font-mono font-black text-white">{selectedAsset.shares.toFixed(4)}</p>
+                                    </div>
+                                    <div className="bg-slate-900/50 border border-slate-800 p-5 rounded-2xl">
+                                        <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Portfolio Weight</p>
+                                        <p className="text-lg font-mono font-black text-blue-400">{diversification}%</p>
+                                    </div>
+                                </>
+                            );
+                        })()}
+                      </div>
 
                       {/* Action Buttons */}
                       <div className="flex gap-4 pt-4 border-t border-slate-800">
@@ -513,18 +512,16 @@ export default function VaultPage() {
       )}
 
       {/* RE-USED TRADE TICKET MODAL */}
-{showTradeTicket && selectedAsset && (
-    <TradeTicket
-        ticker={selectedAsset.ticker}
-        currentPrice={liveData[selectedAsset.ticker]?.price || selectedAsset.cost_basis}
-        buyingPower={virtualCash}
-        currentShares={selectedAsset.shares}
-        onClose={() => setShowTradeTicket(false)}
-        // 🚀 FIX: Explicitly cast tradeType to the expected string type 
-        // or ensure the function signature in TradeTicket accepts the string.
-        onExecute={(amount, mode) => handleExecuteTrade(tradeType as "BUY" | "SELL", amount, mode)}
-    />
-)}
+      {showTradeTicket && selectedAsset && (
+          <TradeTicket
+              ticker={selectedAsset.ticker}
+              currentPrice={Number(liveData[selectedAsset.ticker]?.price || selectedAsset.cost_basis)}
+              buyingPower={Number(virtualCash)}
+              currentShares={Number(selectedAsset.shares)}
+              onClose={() => setShowTradeTicket(false)}
+              onExecute={(amount: any, mode: any) => handleExecuteTrade(tradeType as "BUY" | "SELL", Number(amount), mode as "DOLLARS" | "SHARES")}
+          />
+      )}
 
     </main>
   );
