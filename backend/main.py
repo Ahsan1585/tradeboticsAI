@@ -598,18 +598,22 @@ async def execute_trade(req: TradeRequest):
     try:
         ticker = req.ticker.upper()
         
+        # 1. Fetch Live Price & Ensure Float
         stock = yf.Ticker(ticker)
         hist = stock.history(period="1d", prepost=True)
         if hist.empty: raise HTTPException(status_code=404, detail="Asset pricing unavailable.")
         live_price = float(hist['Close'].iloc[-1])
 
+        # 2. Strict Math & Rounding (Prevents Database Rejections)
+        request_amount = float(req.amount)
         if req.mode == "DOLLARS":
-            trade_cost = req.amount
-            trade_shares = req.amount / live_price
+            trade_cost = round(request_amount, 2)
+            trade_shares = request_amount / live_price
         else:
-            trade_shares = req.amount
-            trade_cost = req.amount * live_price
+            trade_shares = request_amount
+            trade_cost = round(trade_shares * live_price, 2)
 
+        # 3. Pull Current Balances
         profile_res = supabase.table('profiles').select('virtual_cash_balance').eq('id', req.user_id).execute()
         if not profile_res.data: raise HTTPException(status_code=404, detail="Operative profile not found.")
         current_cash = float(profile_res.data[0]['virtual_cash_balance'])
@@ -618,14 +622,17 @@ async def execute_trade(req: TradeRequest):
         current_position = portfolio_res.data[0] if portfolio_res.data else None
         current_shares_held = float(current_position['shares']) if current_position else 0.0
 
+        # 4. Execute Logic
         if req.trade_type == "BUY":
-            if trade_cost > current_cash: raise HTTPException(status_code=400, detail="Insufficient virtual capital.")
-            new_cash = current_cash - trade_cost
+            if trade_cost > current_cash: 
+                raise HTTPException(status_code=400, detail="Insufficient virtual capital.")
+            
+            new_cash = round(current_cash - trade_cost, 2)
             
             if current_position:
                 old_total_cost = current_shares_held * float(current_position['cost_basis'])
                 new_total_shares = current_shares_held + trade_shares
-                new_avg_cost = (old_total_cost + trade_cost) / new_total_shares
+                new_avg_cost = round((old_total_cost + trade_cost) / new_total_shares, 2)
                 
                 supabase.table('portfolio').update({
                     'shares': new_total_shares,
@@ -640,8 +647,11 @@ async def execute_trade(req: TradeRequest):
                 }).execute()
 
         elif req.trade_type == "SELL":
-            if trade_shares > current_shares_held: raise HTTPException(status_code=400, detail="Insufficient shares in vault.")
-            new_cash = current_cash + trade_cost
+            # Included a 0.0001 tolerance for "Sell All" precision errors
+            if trade_shares > (current_shares_held + 0.0001): 
+                raise HTTPException(status_code=400, detail="Insufficient shares in vault.")
+            
+            new_cash = round(current_cash + trade_cost, 2)
             new_total_shares = current_shares_held - trade_shares
 
             if new_total_shares <= 0.0001:
@@ -651,7 +661,9 @@ async def execute_trade(req: TradeRequest):
         else:
             raise HTTPException(status_code=400, detail="Invalid trade type.")
 
+        # 5. Inject Clean Data into Database
         supabase.table('profiles').update({'virtual_cash_balance': new_cash}).eq('id', req.user_id).execute()
+        
         supabase.table('transaction_ledger').insert({
             'user_id': req.user_id,
             'transaction_type': req.trade_type,
@@ -670,4 +682,5 @@ async def execute_trade(req: TradeRequest):
         }
 
     except Exception as e:
+        print(f"TRADE EXECUTION ERROR: {e}", file=sys.stderr)
         raise HTTPException(status_code=500, detail=str(e))
