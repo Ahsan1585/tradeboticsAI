@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, Any, List
@@ -592,18 +592,27 @@ async def market_briefing():
     ]
 
 @app.post("/execute-trade")
-async def execute_trade(req: TradeRequest):
+async def execute_trade(req: TradeRequest, request: Request):
+    # 🚀 DEBUG: Print the raw body immediately
+    try:
+        body = await request.json()
+        print(f"DEBUG: Received JSON body: {body}", file=sys.stderr)
+    except Exception as e:
+        print(f"DEBUG: Could not parse JSON body: {e}", file=sys.stderr)
+
     if not supabase:
         raise HTTPException(status_code=500, detail="Database connection offline.")
+    
     try:
         ticker = req.ticker.upper()
-        print(f"DEBUG: Processing {req.trade_type} for {ticker} | User: {req.user_id}", file=sys.stderr)
-
+        
+        # 1. Fetch Live Price & Ensure Float
         stock = yf.Ticker(ticker)
         hist = stock.history(period="1d", prepost=True)
         if hist.empty: raise HTTPException(status_code=404, detail="Asset pricing unavailable.")
         live_price = float(hist['Close'].iloc[-1])
 
+        # 2. Strict Math & Rounding
         request_amount = float(req.amount)
         if req.mode == "DOLLARS":
             trade_cost = round(request_amount, 2)
@@ -612,35 +621,56 @@ async def execute_trade(req: TradeRequest):
             trade_shares = request_amount
             trade_cost = round(trade_shares * live_price, 2)
 
-        # 1. Update Profile (Cash)
+        # 3. Pull Current Balances
         profile_res = supabase.table('profiles').select('virtual_cash_balance').eq('id', req.user_id).execute()
+        if not profile_res.data: raise HTTPException(status_code=404, detail="Operative profile not found.")
         current_cash = float(profile_res.data[0]['virtual_cash_balance'])
-        
-        # 2. Update Portfolio (Shares)
+
         portfolio_res = supabase.table('portfolio').select('*').eq('user_id', req.user_id).eq('ticker', ticker).execute()
         current_position = portfolio_res.data[0] if portfolio_res.data else None
-        
-        if req.trade_type == "SELL":
-            new_cash = round(current_cash + trade_cost, 2)
-            new_shares = float(current_position['shares']) - trade_shares
-            
-            # Print update attempt
-            print(f"DEBUG: Selling {trade_shares} shares. New Cash: {new_cash}", file=sys.stderr)
-            
-            # Update Cash
-            cash_update = supabase.table('profiles').update({'virtual_cash_balance': new_cash}).eq('id', req.user_id).execute()
-            
-            # Update/Delete Shares
-            if new_shares <= 0.0001:
-                share_update = supabase.table('portfolio').delete().eq('user_id', req.user_id).eq('ticker', ticker).execute()
-            else:
-                share_update = supabase.table('portfolio').update({'shares': new_shares}).eq('user_id', req.user_id).eq('ticker', ticker).execute()
-            
-            print(f"DEBUG: Update result: {share_update.data}", file=sys.stderr)
+        current_shares_held = float(current_position['shares']) if current_position else 0.0
 
-        # ... (Keep the rest of your BUY logic and RETURN statement)
-        return {"status": "success", "message": "Transaction Processed"}
+        # 4. Execute Logic
+        if req.trade_type == "BUY":
+            if trade_cost > current_cash: 
+                raise HTTPException(status_code=400, detail="Insufficient virtual capital.")
+            new_cash = round(current_cash - trade_cost, 2)
+            
+            if current_position:
+                old_total_cost = current_shares_held * float(current_position['cost_basis'])
+                new_total_shares = current_shares_held + trade_shares
+                new_avg_cost = round((old_total_cost + trade_cost) / new_total_shares, 2)
+                supabase.table('portfolio').update({'shares': new_total_shares, 'cost_basis': new_avg_cost}).eq('user_id', req.user_id).eq('ticker', ticker).execute()
+            else:
+                supabase.table('portfolio').insert({'user_id': req.user_id, 'ticker': ticker, 'shares': trade_shares, 'cost_basis': live_price}).execute()
+
+        elif req.trade_type == "SELL":
+            if trade_shares > (current_shares_held + 0.0001): 
+                raise HTTPException(status_code=400, detail="Insufficient shares in vault.")
+            
+            new_cash = float(round(current_cash + trade_cost, 2))
+            new_total_shares = float(round(current_shares_held - trade_shares, 4))
+
+            if new_total_shares <= 0.0001:
+                supabase.table('portfolio').delete().eq('user_id', req.user_id).eq('ticker', ticker).execute()
+            else:
+                supabase.table('portfolio').update({'shares': new_total_shares}).eq('user_id', req.user_id).eq('ticker', ticker).execute()
+
+        # 5. Inject Clean Data into Database
+        supabase.table('profiles').update({'virtual_cash_balance': new_cash}).eq('id', req.user_id).execute()
+        
+        supabase.table('transaction_ledger').insert({
+            'user_id': req.user_id, 'transaction_type': req.trade_type, 'ticker': ticker, 
+            'shares': trade_shares, 'price': live_price, 'total_amount': trade_cost
+        }).execute()
+
+        return {
+            "status": "success",
+            "message": f"Order Executed: {req.trade_type} {round(trade_shares, 4)} {ticker}",
+            "remaining_cash": new_cash,
+            "execution_price": live_price
+        }
 
     except Exception as e:
-        print(f"CRITICAL ERROR: {e}", file=sys.stderr)
+        print(f"CRITICAL TRADE ERROR: {e}", file=sys.stderr)
         raise HTTPException(status_code=500, detail=str(e))
