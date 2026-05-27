@@ -91,6 +91,10 @@ function PortfolioChart({ totalValue, totalProfitLoss }: { totalValue: number, t
 
 export default function VaultPage() {
   const router = useRouter();
+  
+  // 🚀 Added search state back
+  const [searchTicker, setSearchTicker] = useState("");
+  
   const [userEmail, setUserEmail] = useState("");
   const [virtualCash, setVirtualCash] = useState(0);
   const [tokens, setTokens] = useState(0);
@@ -110,6 +114,12 @@ export default function VaultPage() {
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
+  };
+
+  // 🚀 Search Execution Handler
+  const handleSearch = () => {
+    if (!searchTicker.trim()) return;
+    router.push(`/terminal?ticker=${searchTicker.trim().toUpperCase()}`);
   };
 
   const loadPortfolio = async () => {
@@ -260,7 +270,29 @@ export default function VaultPage() {
 
       <div className="max-w-7xl mx-auto w-full px-6 mt-12 flex flex-col gap-12">
         
-        {/* 🚀 NEW 2-COLUMN HERO SECTION */}
+        {/* 🚀 PROMINENT HERO SEARCH BAR */}
+        <div className="flex w-full bg-[#0B0F19] p-3 rounded-full border border-slate-800 focus-within:border-blue-500/50 shadow-xl transition-all group">
+          <div className="pl-6 flex items-center justify-center text-slate-600 group-focus-within:text-blue-500 transition-colors">
+            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+          </div>
+          <input 
+            value={searchTicker} 
+            onChange={(e) => setSearchTicker(e.target.value)} 
+            onKeyDown={(e) => e.key === 'Enter' && handleSearch()} 
+            className="flex-1 bg-transparent border-none text-white font-black px-6 outline-none text-xl uppercase placeholder:text-slate-700 placeholder:normal-case placeholder:font-medium" 
+            placeholder="Search assets to deploy your virtual cash..." 
+          />
+          <button 
+            onClick={handleSearch} 
+            className="bg-blue-600 text-white px-10 py-4 rounded-full font-black text-[10px] uppercase tracking-widest hover:bg-blue-500 shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:shadow-[0_0_30px_rgba(37,99,235,0.5)] transition-all"
+          >
+            SCAN & BUY
+          </button>
+        </div>
+
+        {/* 🚀 2-COLUMN HERO SECTION */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
             {/* Left: The Chart */}
             <div className="lg:col-span-8">
