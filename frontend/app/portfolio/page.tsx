@@ -286,7 +286,7 @@ export default function PortfolioPage() {
                                         .prose li::before { content: "→"; position: absolute; left: 0; color: #a855f7; font-weight: 900; }
                                         .prose strong { color: #fff; }
                                     `}} />
-                                    <div dangerouslySetInnerHTML={{ __html: aiAnalysis.replace(/\n/g, '<br/>') }} />
+                                    <div dangerouslySetInnerHTML={{ __html: aiAnalysis }} />
                                 </div>
                             ) : (
                                 <p className="text-slate-600 text-xs italic text-center mt-10">Analysis offline. Awaiting execution command.</p>
