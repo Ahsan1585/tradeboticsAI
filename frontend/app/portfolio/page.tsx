@@ -212,10 +212,14 @@ export default function PortfolioPage() {
                         ) : (
                             <div className="space-y-3 overflow-y-auto max-h-[550px] pr-2 custom-scrollbar flex-1">
                                 {portfolio.map((item, i) => (
-                                    <div key={i} className="bg-slate-950 border border-slate-800 p-5 rounded-3xl flex items-center justify-between gap-4">
+                                    <div 
+                                        key={i} 
+                                        onClick={() => router.push(`/terminal?ticker=${item.ticker}`)}
+                                        className="bg-slate-950 border border-slate-800 p-5 rounded-3xl flex items-center justify-between gap-4 cursor-pointer hover:border-blue-500/50 hover:bg-slate-900/80 transition-all group shadow-sm hover:shadow-[0_0_20px_rgba(59,130,246,0.1)]"
+                                    >
                                         <div className="flex items-center gap-6 w-full justify-between sm:justify-start sm:gap-12">
-                                            <div className="w-16 h-16 bg-slate-900 rounded-2xl flex items-center justify-center border border-slate-800 shrink-0">
-                                                <span className="font-black text-white text-xl">{item.ticker}</span>
+                                            <div className="w-16 h-16 bg-slate-900 rounded-2xl flex items-center justify-center border border-slate-800 shrink-0 group-hover:border-blue-500/50 transition-colors">
+                                                <span className="font-black text-white text-xl group-hover:text-blue-400 transition-colors">{item.ticker}</span>
                                             </div>
                                             <div>
                                                 <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Quantity</p>
@@ -225,6 +229,13 @@ export default function PortfolioPage() {
                                                 <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Avg Price Basis</p>
                                                 <p className="text-xl font-mono font-black text-white">${item.avg_cost}</p>
                                             </div>
+                                        </div>
+                                        
+                                        {/* Added a subtle arrow indicator to show it navigates */}
+                                        <div className="hidden sm:flex text-slate-600 group-hover:text-blue-500 transition-colors pr-4">
+                                            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                            </svg>
                                         </div>
                                     </div>
                                 ))}
