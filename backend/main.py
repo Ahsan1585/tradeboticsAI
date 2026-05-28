@@ -465,6 +465,7 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
                 price = round(hist['Close'].iloc[-1], 2)
                 prev_price = round(hist['Close'].iloc[-2], 2)
                 
+                # 🚀 EXACT MATH MATCH TO TERMINAL
                 tech_base = 50
                 if len(hist) >= 20:
                     sma_20 = hist['Close'].rolling(window=20).mean().iloc[-1]
@@ -472,6 +473,7 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
                     else: tech_base -= 25
                 if price > prev_price: tech_base += 15
                 else: tech_base -= 15
+                tech_score = max(10, min(95, tech_base))
 
                 info = stock.info
                 pe = info.get("trailingPE", 0)
@@ -479,30 +481,36 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
                 sector = info.get("sector", "Macro Profile")
 
                 fund_base = 50
-                if pe and 0 < pe < 30: fund_base += 20
-                elif pe and pe > 50: fund_base -= 15
+                if pe and 0 < pe < 25: fund_base += 20
+                elif pe and pe > 50: fund_base -= 20
                 if margins and margins > 0.15: fund_base += 20
+                elif margins and margins < 0: fund_base -= 25
+                fund_score = max(10, min(95, fund_base))
+                
+                total_score = math.ceil((tech_score + fund_score) / 2)
 
+                # 🚀 HIDDEN ALIGNMENT ALGORITHM (Keeps AI choosing the right style without faking the score)
                 style_bonus = 0
                 if req.trade_style == "Day Trade" and t in ["NVDA", "TSLA", "COIN"]: style_bonus = 20 
                 elif req.trade_style == "Swing Trade" and t in ["META", "AVGO", "PLTR"]: style_bonus = 20 
                 elif req.trade_style == "Long Term" and t in ["LLY", "COST", "JPM"]: style_bonus = 20 
 
-                total_score = math.ceil(((tech_base + fund_base) / 2) + style_bonus)
-                total_score = max(10, min(99, total_score)) 
+                sort_weight = total_score + style_bonus
 
                 health_str = f"Sector: {sector} | P/E: {round(pe, 1) if pe else 'N/A'} | Margin: {round(margins*100, 1) if margins else '0'}%"
 
                 scored_candidates.append({
                     "ticker": t,
                     "price": price,
-                    "score": total_score,
+                    "score": total_score,          # Pure Terminal Score is now isolated
+                    "sort_weight": sort_weight,    # Internal AI Sorting handles the style boost invisibly
                     "health": health_str
                 })
             except Exception:
                 continue
 
-        scored_candidates.sort(key=lambda x: x['score'], reverse=True)
+        # Sort by the hidden weight, not the raw score!
+        scored_candidates.sort(key=lambda x: x['sort_weight'], reverse=True)
         elite_basket = scored_candidates[:3]
 
         basket_str = f"QUALIFIED TARGET BASKET FOR {req.trade_style.upper()}:\n"
