@@ -164,7 +164,7 @@ export default function PortfolioPage() {
                         </div>
                         <h2 className="text-2xl font-black text-white uppercase tracking-tight mb-2">Your Virtual Hedge Fund Manager</h2>
                         <p className="text-sm text-slate-400 leading-relaxed font-medium">
-                            Welcome to the algorithmic core of your portfolio. This interface tracks your live capital allocations and functions as an automated quantitative fund strategist. By executing a Rotation Scan, the AI cross-references asset profiles against multi-factor data streams to construct structural rebalancing recommendations—engineering customized rotation paths that help optimize alpha while maintaining risk mitigation boundaries.
+                            Track your live capital and let the AI do the heavy lifting. Run a Rotation Scan to get instant, data-driven recommendations on what to buy, sell, or hold to grow your wealth safely.
                         </p>
                     </div>
                 </div>
