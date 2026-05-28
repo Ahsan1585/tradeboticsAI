@@ -255,14 +255,20 @@ export default function VaultPage() {
     let totalStockValue = 0;
     let totalCostBasis = 0;
 
+    // Sum up active holdings
     holdings.forEach(h => {
         const currentPrice = liveData[h.ticker]?.price || h.cost_basis;
         totalStockValue += (h.shares * currentPrice);
         totalCostBasis += (h.shares * h.cost_basis);
     });
 
+    // 1. Calculate True Net Liquidation (Cash + Active Assets)
     const netAccountValue = virtualCash + totalStockValue;
-    const totalProfitLoss = Number((totalStockValue - totalCostBasis).toFixed(2));
+
+    // 🚀 THE FIX: Calculate All-Time P&L against Initial Account Value
+    // Change this number to whatever starting cash new users receive
+    const STARTING_BALANCE = 100000; 
+    const totalProfitLoss = Number((netAccountValue - STARTING_BALANCE).toFixed(2));
 
     return { totalStockValue, totalCostBasis, netAccountValue, totalProfitLoss };
   };
