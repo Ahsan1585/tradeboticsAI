@@ -407,17 +407,13 @@ async def summarize_article(req: SummaryRequest, user_id: str = Query(...)):
 async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)): 
     if not model: return {"analysis": "AI Node Offline."}
     try:
-        cache_key = f"PORTFOLIO_{user_id}_{req.trade_style.upper().replace(' ', '_')}"
-        cached_data = check_ai_cache(cache_key)
+        # 🚀 CACHE REMOVED: Always run a fresh live scan for the portfolio
         
         profile_res = supabase.table('profiles').select('ai_token_balance').eq('id', user_id).execute()
         if not profile_res.data: raise HTTPException(status_code=404, detail="Operative profile not found.")
         current_tokens = int(profile_res.data[0]['ai_token_balance'])
 
-        if cached_data:
-            cached_data["remaining_tokens"] = current_tokens
-            return cached_data
-            
+        # Check Token Balance
         if current_tokens < 5:
             raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 5 Tokens required.")
 
@@ -513,7 +509,6 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
         for c in elite_basket:
             basket_str += f"- {c['ticker']}: Live Price ${c['price']} | Quant Score: {c['score']} | {c['health']}\n"
 
-        # 🚀 THE FIX: Use "Institutional" vocabulary (Liquidate/Reallocate) to bypass the core safety kernel
         prompt = (
             f"You are a Quantitative Execution Engine operating in a SIMULATED paper-trading environment.\n"
             f"Process this simulated portfolio data:\n{batch_data}\n\n"
@@ -537,7 +532,6 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
             "</ul>"
         )
 
-        # 🚀 FIX 2: Override the Financial Safety Filter
         response = await model.generate_content_async(
             prompt,
             generation_config={"max_output_tokens": 2000, "temperature": 0.1},
@@ -555,6 +549,7 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
             print(f"GEMINI BLOCKED RESPONSE: {response.prompt_feedback}", file=sys.stderr)
             ai_text = "<h3>Execution Blocked</h3><ul><li>AI Node rejected synthesis due to strict safety protocols regarding direct financial execution.</li></ul>"
 
+        # Deduct exactly 5 tokens for this fresh run
         new_token_balance = current_tokens - 5
         supabase.table('profiles').update({'ai_token_balance': new_token_balance}).eq('id', user_id).execute()
 
@@ -564,7 +559,7 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
             "remaining_tokens": new_token_balance
         }
         
-        update_ai_cache(cache_key, final_response)
+        # 🚀 NO update_ai_cache() call here anymore!
         return final_response
         
     except HTTPException as he:
