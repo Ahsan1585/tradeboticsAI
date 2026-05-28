@@ -13,28 +13,20 @@ export default function PortfolioPage() {
     const [userId, setUserId] = useState("");
     const [userEmail, setUserEmail] = useState("");
     
+    // Search State
+    const [searchTicker, setSearchTicker] = useState("");
+
     // Portfolio Data
     const [portfolio, setPortfolio] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-    // Add New Asset State
-    const [newTicker, setNewTicker] = useState("");
-    const [newShares, setNewShares] = useState("");
-    const [newCost, setNewCost] = useState("");
-    const [isAdding, setIsAdding] = useState(false);
-
-    // Edit Asset State
-    const [editingTicker, setEditingTicker] = useState<string | null>(null);
-    const [editShares, setEditShares] = useState("");
-    const [editCost, setEditCost] = useState("");
 
     // AI Analysis State
     const [tradeStyle, setTradeStyle] = useState("Long Term");
     const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
 
-    // 🚨 NEURAL AUTHORIZATION STATE
+    // NEURAL AUTHORIZATION STATE
     const [authModal, setAuthModal] = useState({
         isOpen: false,
         title: "",
@@ -63,6 +55,11 @@ export default function PortfolioPage() {
         setTimeout(() => setToastMessage(null), 3500);
     };
 
+    const handleSearch = () => {
+        if (!searchTicker.trim()) return;
+        router.push(`/terminal?ticker=${searchTicker.trim().toUpperCase()}`);
+    };
+
     const fetchPortfolio = async (uid: string) => {
         setLoading(true);
         const { data, error } = await supabase.from('portfolio').select('*').eq('user_id', uid);
@@ -82,72 +79,13 @@ export default function PortfolioPage() {
 
             const formattedVault = Object.values(aggregated).map((pos: any) => ({
                 ticker: pos.ticker,
-                shares: pos.total_shares,
+                shares: parseFloat(pos.total_shares.toFixed(2)), // 🚀 Fix: Constrain fractional shares strictly to 2 decimal places
                 avg_cost: pos.total_shares > 0 ? (pos.total_cost_dollars / pos.total_shares).toFixed(2) : 0
             })).sort((a: any, b: any) => a.ticker.localeCompare(b.ticker));
             
             setPortfolio(formattedVault);
         }
         setLoading(false);
-    };
-
-    const handleAddAsset = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!newTicker || !newShares || !newCost) return;
-        setIsAdding(true);
-
-        const { error } = await supabase.from('portfolio').insert([{
-            user_id: userId,
-            ticker: newTicker.toUpperCase(),
-            shares: parseFloat(newShares),
-            cost_basis: parseFloat(newCost)
-        }]);
-
-        if (error) {
-            showToast("Database Error: " + error.message);
-        } else {
-            showToast(`${newTicker.toUpperCase()} secured in Vault.`);
-            setNewTicker(""); setNewShares(""); setNewCost("");
-            fetchPortfolio(userId);
-        }
-        setIsAdding(false);
-    };
-
-    const handleDeleteAsset = async (ticker: string) => {
-        const { error } = await supabase.from('portfolio').delete().eq('user_id', userId).eq('ticker', ticker);
-        if (error) {
-            showToast("Error liquidating asset: " + error.message);
-        } else {
-            showToast(`${ticker} liquidated from Vault.`);
-            fetchPortfolio(userId);
-        }
-    };
-
-    const handleStartEdit = (item: any) => {
-        setEditingTicker(item.ticker);
-        setEditShares(item.shares.toString());
-        setEditCost(item.avg_cost.toString());
-    };
-
-    const handleSaveEdit = async () => {
-        if (!editingTicker) return;
-        
-        await supabase.from('portfolio').delete().eq('user_id', userId).eq('ticker', editingTicker);
-        
-        const { error } = await supabase.from('portfolio').insert([{
-            user_id: userId,
-            ticker: editingTicker,
-            shares: parseFloat(editShares),
-            cost_basis: parseFloat(editCost)
-        }]);
-
-        if (error) {
-            showToast("Update Error: " + error.message);
-        } else {
-            showToast(`${editingTicker} parameters updated.`);
-            setEditingTicker(null);
-            fetchPortfolio(userId);
-        }
     };
 
     const runPortfolioAnalysis = async () => {
@@ -158,7 +96,6 @@ export default function PortfolioPage() {
         setIsAnalyzing(true);
         setAiAnalysis(null);
         try {
-            // 🚨 APPENDED user_id TO URL
             const res = await fetch(`${BACKEND_URL}/portfolio-analysis?user_id=${userId}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -169,7 +106,6 @@ export default function PortfolioPage() {
             if (res.ok) {
                 setAiAnalysis(result.analysis);
             } else {
-                // 🚨 INTERCEPT EMPTY WALLET (402 ERROR)
                 if (res.status === 402) {
                     showToast("NEURAL BANDWIDTH DEPLETED. RECHARGE REQUIRED.");
                 } else {
@@ -198,95 +134,98 @@ export default function PortfolioPage() {
             {/* TOAST NOTIFICATION */}
             {toastMessage && (
                 <div className="fixed inset-0 z-[150] flex items-center justify-center pointer-events-none">
-                <div className="bg-slate-900 border border-blue-500/50 px-10 py-6 rounded-3xl shadow-[0_0_40px_rgba(59,130,246,0.3)] animate-in zoom-in-95 fade-in duration-300 flex flex-col items-center">
-                    <p className="text-white font-black uppercase tracking-widest text-sm text-center">{toastMessage}</p>
-                </div>
+                    <div className="bg-slate-900 border border-blue-500/50 px-10 py-6 rounded-3xl shadow-[0_0_40px_rgba(59,130,246,0.3)] animate-in zoom-in-95 fade-in duration-300 flex flex-col items-center">
+                        <p className="text-white font-black uppercase tracking-widest text-sm text-center">{toastMessage}</p>
+                    </div>
                 </div>
             )}
 
             {/* HEADER */}
-            <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-start md:items-center mb-12 gap-6">
+            <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-6">
                 <div>
                     <h1 className="text-5xl font-black text-white tracking-tighter cursor-pointer hover:text-blue-500 transition-colors" onClick={() => router.push('/hub')}>
                         TRADEBOTICS<span className="text-blue-500">AI</span>
                     </h1>
-                    <p className="text-[10px] uppercase tracking-[0.5em] text-slate-400 italic mt-2">Operative Vault // {userEmail.split('@')[0]}</p>
+                    <p className="text-[10px] uppercase tracking-[0.5em] text-slate-400 italic mt-2">Quantitative Command Console // {userEmail.split('@')[0]}</p>
                 </div>
                 <button onClick={() => router.push('/hub')} className="flex items-center gap-3 px-6 py-3 bg-slate-900/50 border border-slate-800 rounded-full hover:border-blue-500/50 transition-all group">
                     <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-300 group-hover:text-white">← Return to Hub</span>
                 </button>
             </div>
 
+            {/* VALUE BANNER DESCRIPTION: VIRTUAL HEDGE FUND MANAGER */}
+            <div className="max-w-6xl mx-auto mb-10 bg-[#0B0F19] border border-blue-500/10 rounded-[32px] p-8 relative overflow-hidden shadow-xl">
+                <div className="absolute top-0 right-0 w-64 h-64 bg-blue-600/5 rounded-full blur-[60px] pointer-events-none" />
+                <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+                    <div className="max-w-3xl">
+                        <div className="flex items-center gap-2 mb-3">
+                            <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-ping" />
+                            <span className="text-[10px] font-black uppercase text-blue-400 tracking-[0.3em]">Institutional Grade Allocation Engine</span>
+                        </div>
+                        <h2 className="text-2xl font-black text-white uppercase tracking-tight mb-2">Your Virtual Hedge Fund Manager</h2>
+                        <p className="text-sm text-slate-400 leading-relaxed font-medium">
+                            Welcome to the algorithmic core of your portfolio. This interface tracks your live capital allocations and functions as an automated quantitative fund strategist. By executing a Rotation Scan, the AI cross-references asset profiles against multi-factor data streams to construct structural rebalancing recommendations—engineering customized rotation paths that help optimize alpha while maintaining risk mitigation boundaries.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            {/* SEARCH BAR SECTION */}
+            <div className="max-w-6xl mx-auto mb-10 flex w-full bg-[#0B0F19] p-3 rounded-full border border-slate-800 focus-within:border-blue-500/50 shadow-xl transition-all group">
+                <div className="pl-6 flex items-center justify-center text-slate-600 group-focus-within:text-blue-500 transition-colors">
+                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                </div>
+                <input 
+                    value={searchTicker} 
+                    onChange={(e) => setSearchTicker(e.target.value)} 
+                    onKeyDown={(e) => e.key === 'Enter' && handleSearch()} 
+                    className="flex-1 bg-transparent border-none text-white font-black px-6 outline-none text-xl uppercase placeholder:text-slate-700 placeholder:normal-case placeholder:font-medium" 
+                    placeholder="Search assets to structure alternative trade scenarios..." 
+                />
+                <button 
+                    onClick={handleSearch} 
+                    className="bg-blue-600 text-white px-10 py-4 rounded-full font-black text-[10px] uppercase tracking-widest hover:bg-blue-500 shadow-[0_0_20px_rgba(37,99,235,0.3)] transition-all"
+                >
+                    SCAN & TRADE
+                </button>
+            </div>
+
             <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8">
                 
-                {/* LEFT PANEL: INVENTORY MANAGEMENT */}
+                {/* LEFT PANEL: READ-ONLY INVENTORY OVERVIEW */}
                 <div className="lg:col-span-7 flex flex-col gap-8">
-                    
-                    {/* ASSET ENTRY FORM */}
-                    <div className="bg-slate-900/40 border border-slate-800 p-8 rounded-[40px] shadow-2xl">
-                        <p className="text-[11px] font-black text-blue-500 uppercase tracking-[0.4em] mb-6">Register Asset</p>
-                        <form onSubmit={handleAddAsset} className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 w-full">
-                            <input type="text" placeholder="TICKER" value={newTicker} onChange={(e) => setNewTicker(e.target.value)} required className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-4 text-white font-black outline-none focus:border-blue-500 uppercase" />
-                            <input type="number" step="any" placeholder="SHARES" value={newShares} onChange={(e) => setNewShares(e.target.value)} required className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-4 text-white font-black outline-none focus:border-blue-500" />
-                            <input type="number" step="any" placeholder="AVG COST" value={newCost} onChange={(e) => setNewCost(e.target.value)} required className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-4 text-white font-black outline-none focus:border-blue-500" />
-                            <button type="submit" disabled={isAdding} className="w-full bg-blue-600 hover:bg-blue-500 text-white px-8 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all">
-                                {isAdding ? "..." : "ADD"}
-                            </button>
-                        </form>
-                    </div>
-
-                    {/* CURRENT INVENTORY LEDGER */}
-                    <div className="bg-slate-900/40 border border-slate-800 p-8 rounded-[40px] shadow-2xl min-h-[400px]">
+                    <div className="bg-slate-900/40 border border-slate-800 p-8 rounded-[40px] shadow-2xl min-h-[500px] flex flex-col">
                         <div className="flex justify-between items-center mb-6 border-b border-slate-800/50 pb-4">
-                            <p className="text-[11px] font-black text-slate-400 uppercase tracking-[0.4em]">Current Inventory</p>
-                            <span className="text-[10px] bg-slate-800 text-slate-400 px-3 py-1 rounded-full font-bold uppercase">{portfolio.length} Assets</span>
+                            <p className="text-[11px] font-black text-slate-400 uppercase tracking-[0.4em]">Active Portfolio Allocations</p>
+                            <span className="text-[10px] bg-slate-800 text-slate-400 px-3 py-1 rounded-full font-bold uppercase">{portfolio.length} Positions</span>
                         </div>
 
                         {loading ? (
-                            <div className="flex justify-center items-center h-40"><div className="w-8 h-8 border-2 border-slate-800 border-t-blue-500 rounded-full animate-spin" /></div>
+                            <div className="flex justify-center items-center h-40 flex-1"><div className="w-8 h-8 border-2 border-slate-800 border-t-blue-500 rounded-full animate-spin" /></div>
                         ) : portfolio.length === 0 ? (
-                            <div className="flex flex-col items-center justify-center h-40 text-slate-600">
+                            <div className="flex flex-col items-center justify-center h-40 text-slate-600 flex-1">
                                 <span className="text-4xl mb-2">💼</span>
-                                <p className="font-bold uppercase tracking-widest text-[10px]">Vault is Empty</p>
+                                <p className="font-bold uppercase tracking-widest text-[10px]">No Capital Allocated</p>
                             </div>
                         ) : (
-                            <div className="space-y-3 overflow-y-auto max-h-[500px] pr-2 custom-scrollbar">
+                            <div className="space-y-3 overflow-y-auto max-h-[550px] pr-2 custom-scrollbar flex-1">
                                 {portfolio.map((item, i) => (
-                                    <div key={i} className="bg-slate-950 border border-slate-800 p-5 rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 group hover:border-slate-700 transition-all">
-                                        
-                                        {/* Display Mode vs Edit Mode */}
-                                        {editingTicker === item.ticker ? (
-                                            <div className="flex-1 flex flex-col sm:flex-row gap-3">
-                                                <div className="w-24 bg-slate-900 flex items-center justify-center rounded-xl border border-slate-800"><span className="font-black text-white">{item.ticker}</span></div>
-                                                <input type="number" step="any" value={editShares} onChange={(e) => setEditShares(e.target.value)} className="w-full sm:w-24 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white font-black text-sm outline-none focus:border-blue-500" placeholder="Shares" />
-                                                <input type="number" step="any" value={editCost} onChange={(e) => setEditCost(e.target.value)} className="w-full sm:w-32 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white font-black text-sm outline-none focus:border-blue-500" placeholder="Avg Cost" />
-                                                <div className="flex gap-2">
-                                                    <button onClick={handleSaveEdit} className="bg-emerald-500/20 text-emerald-500 hover:bg-emerald-500 hover:text-white px-4 rounded-xl font-black text-[10px] uppercase transition-all">Save</button>
-                                                    <button onClick={() => setEditingTicker(null)} className="bg-slate-800 text-slate-400 hover:text-white px-4 rounded-xl font-black text-[10px] uppercase transition-all">Cancel</button>
-                                                </div>
+                                    <div key={i} className="bg-slate-950 border border-slate-800 p-5 rounded-3xl flex items-center justify-between gap-4">
+                                        <div className="flex items-center gap-6 w-full justify-between sm:justify-start sm:gap-12">
+                                            <div className="w-16 h-16 bg-slate-900 rounded-2xl flex items-center justify-center border border-slate-800 shrink-0">
+                                                <span className="font-black text-white text-xl">{item.ticker}</span>
                                             </div>
-                                        ) : (
-                                            <>
-                                                <div className="flex items-center gap-6">
-                                                    <div className="w-16 h-16 bg-slate-900 rounded-2xl flex items-center justify-center border border-slate-800 shrink-0">
-                                                        <span className="font-black text-white text-xl">{item.ticker}</span>
-                                                    </div>
-                                                    <div>
-                                                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Total Shares</p>
-                                                        <p className="text-xl font-black text-white">{item.shares}</p>
-                                                    </div>
-                                                    <div>
-                                                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Avg Cost</p>
-                                                        <p className="text-xl font-black text-white">${item.avg_cost}</p>
-                                                    </div>
-                                                </div>
-                                                
-                                                <div className="flex items-center gap-2 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
-                                                    <button onClick={() => handleStartEdit(item)} className="px-4 py-2 bg-slate-800 hover:bg-blue-600 text-slate-400 hover:text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all">Modify</button>
-                                                    <button onClick={() => handleDeleteAsset(item.ticker)} className="px-4 py-2 bg-slate-800 hover:bg-red-500/20 text-slate-400 hover:text-red-500 border hover:border-red-500 border-transparent rounded-xl font-black text-[10px] uppercase tracking-widest transition-all">Liquidate</button>
-                                                </div>
-                                            </>
-                                        )}
+                                            <div>
+                                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Quantity</p>
+                                                <p className="text-xl font-mono font-black text-white">{item.shares.toFixed(2)}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Avg Price Basis</p>
+                                                <p className="text-xl font-mono font-black text-white">${item.avg_cost}</p>
+                                            </div>
+                                        </div>
                                     </div>
                                 ))}
                             </div>
@@ -317,7 +256,7 @@ export default function PortfolioPage() {
                             </div>
                         </div>
 
-                        {/* 🚨 TRIGGER AUTH MODAL FOR PORTFOLIO SCAN (5 TOKENS) */}
+                        {/* TRIGGER AUTH MODAL FOR PORTFOLIO SCAN (5 TOKENS) */}
                         <button 
                             onClick={() => setAuthModal({
                                 isOpen: true,
@@ -332,7 +271,7 @@ export default function PortfolioPage() {
                             {isAnalyzing ? "Processing Matrix..." : "Execute Rotation Scan"}
                         </button>
 
-                        <div className="flex-1 bg-slate-950 border border-slate-800 rounded-3xl p-6 overflow-y-auto custom-scrollbar relative">
+                        <div className="flex-1 bg-slate-950 border border-slate-800 rounded-3xl p-6 overflow-y-auto custom-scrollbar relative min-h-[300px]">
                             {isAnalyzing ? (
                                 <div className="absolute inset-0 flex flex-col items-center justify-center">
                                     <div className="w-8 h-8 border-2 border-slate-800 border-t-purple-500 rounded-full animate-spin mb-4" />
@@ -358,7 +297,7 @@ export default function PortfolioPage() {
 
             </div>
 
-            {/* 🚨 NEURAL AUTHORIZATION MODAL */}
+            {/* NEURAL AUTHORIZATION MODAL */}
             {authModal.isOpen && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md">
                     <div className="bg-[#0B0F19] border border-red-900/50 rounded-xl shadow-[0_0_40px_rgba(220,38,38,0.15)] w-full max-w-sm overflow-hidden relative">
