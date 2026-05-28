@@ -593,7 +593,7 @@ async def market_briefing():
 
 @app.post("/execute-trade")
 async def execute_trade(req: TradeRequest, request: Request):
-    # 🚀 DEBUG: Print the raw body immediately
+    # 🚀 DEBUG: Print the raw body immediately to catch the 422 error payload
     try:
         body = await request.json()
         print(f"DEBUG: Received JSON body: {body}", file=sys.stderr)
@@ -612,7 +612,7 @@ async def execute_trade(req: TradeRequest, request: Request):
         if hist.empty: raise HTTPException(status_code=404, detail="Asset pricing unavailable.")
         live_price = float(hist['Close'].iloc[-1])
 
-        # 2. Strict Math & Rounding
+        # 2. Strict Math & Rounding (Prevents Database Rejections)
         request_amount = float(req.amount)
         if req.mode == "DOLLARS":
             trade_cost = round(request_amount, 2)
@@ -634,20 +634,31 @@ async def execute_trade(req: TradeRequest, request: Request):
         if req.trade_type == "BUY":
             if trade_cost > current_cash: 
                 raise HTTPException(status_code=400, detail="Insufficient virtual capital.")
+            
             new_cash = round(current_cash - trade_cost, 2)
             
             if current_position:
                 old_total_cost = current_shares_held * float(current_position['cost_basis'])
                 new_total_shares = current_shares_held + trade_shares
                 new_avg_cost = round((old_total_cost + trade_cost) / new_total_shares, 2)
-                supabase.table('portfolio').update({'shares': new_total_shares, 'cost_basis': new_avg_cost}).eq('user_id', req.user_id).eq('ticker', ticker).execute()
+                
+                supabase.table('portfolio').update({
+                    'shares': new_total_shares,
+                    'cost_basis': new_avg_cost
+                }).eq('user_id', req.user_id).eq('ticker', ticker).execute()
             else:
-                supabase.table('portfolio').insert({'user_id': req.user_id, 'ticker': ticker, 'shares': trade_shares, 'cost_basis': live_price}).execute()
+                supabase.table('portfolio').insert({
+                    'user_id': req.user_id,
+                    'ticker': ticker,
+                    'shares': trade_shares,
+                    'cost_basis': live_price
+                }).execute()
 
         elif req.trade_type == "SELL":
             if trade_shares > (current_shares_held + 0.0001): 
                 raise HTTPException(status_code=400, detail="Insufficient shares in vault.")
             
+            # 🚀 THE FIX: Explicitly cast to float() and strictly round
             new_cash = float(round(current_cash + trade_cost, 2))
             new_total_shares = float(round(current_shares_held - trade_shares, 4))
 
@@ -655,22 +666,29 @@ async def execute_trade(req: TradeRequest, request: Request):
                 supabase.table('portfolio').delete().eq('user_id', req.user_id).eq('ticker', ticker).execute()
             else:
                 supabase.table('portfolio').update({'shares': new_total_shares}).eq('user_id', req.user_id).eq('ticker', ticker).execute()
+        else:
+            raise HTTPException(status_code=400, detail="Invalid trade type.")
 
         # 5. Inject Clean Data into Database
         supabase.table('profiles').update({'virtual_cash_balance': new_cash}).eq('id', req.user_id).execute()
         
         supabase.table('transaction_ledger').insert({
-            'user_id': req.user_id, 'transaction_type': req.trade_type, 'ticker': ticker, 
-            'shares': trade_shares, 'price': live_price, 'total_amount': trade_cost
+            'user_id': req.user_id,
+            'transaction_type': req.trade_type,
+            'ticker': ticker,
+            'shares': trade_shares,
+            'price': live_price,
+            'total_amount': trade_cost
         }).execute()
 
         return {
             "status": "success",
             "message": f"Order Executed: {req.trade_type} {round(trade_shares, 4)} {ticker}",
-            "remaining_cash": new_cash,
-            "execution_price": live_price
+            "execution_price": live_price,
+            "total_cost": trade_cost,
+            "remaining_cash": new_cash
         }
 
     except Exception as e:
-        print(f"CRITICAL TRADE ERROR: {e}", file=sys.stderr)
+        print(f"TRADE EXECUTION ERROR: {e}", file=sys.stderr)
         raise HTTPException(status_code=500, detail=str(e))
