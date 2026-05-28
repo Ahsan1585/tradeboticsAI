@@ -21,7 +21,7 @@ function PortfolioChart({ totalValue, totalProfitLoss }: { totalValue: number, t
   let strokeColor = "#3b82f6"; 
   let gradientStart = "rgba(59, 130, 246, 0.3)";
   let gradientEnd = "rgba(59, 130, 246, 0)";
-  let fillPath = "M0,250 L0,150 L1000,150 L1000,250 Z"; // Flat Line
+  let fillPath = "M0,250 L0,150 L1000,150 L1000,250 Z"; 
   let strokePath = "M0,150 L1000,150";
 
   if (isProfit) {
@@ -91,23 +91,17 @@ function PortfolioChart({ totalValue, totalProfitLoss }: { totalValue: number, t
 
 export default function VaultPage() {
   const router = useRouter();
-  
-  // 🚀 Added search state back
   const [searchTicker, setSearchTicker] = useState("");
-  
   const [userEmail, setUserEmail] = useState("");
   const [virtualCash, setVirtualCash] = useState(0);
   const [tokens, setTokens] = useState(0);
   const [isAuthorized, setIsAuthorized] = useState(false);
-  
   const [holdings, setHoldings] = useState<any[]>([]);
   const [liveData, setLiveData] = useState<any>({});
   const [loading, setLoading] = useState(true);
-  
   const [selectedAsset, setSelectedAsset] = useState<any | null>(null);
   const [showTradeTicket, setShowTradeTicket] = useState(false);
   const [tradeType, setTradeType] = useState<"BUY" | "SELL">("BUY");
-  
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -116,7 +110,6 @@ export default function VaultPage() {
     setTimeout(() => setToastMessage(null), 3500);
   };
 
-  // 🚀 Search Execution Handler
   const handleSearch = () => {
     if (!searchTicker.trim()) return;
     router.push(`/terminal?ticker=${searchTicker.trim().toUpperCase()}`);
@@ -144,14 +137,12 @@ export default function VaultPage() {
       setHoldings(portfolioData);
       
       const liveUpdates: any = {};
-      // 🚀 FRONTEND OPTIMIZATION: Stagger the requests to prevent hitting the Yahoo/Backend rate limit
       for (const item of portfolioData) {
         try {
           const res = await fetch(`${BACKEND_URL}/analyze/${item.ticker}?user_id=${session.user.id}`);
           if (res.ok) {
             liveUpdates[item.ticker] = await res.json();
           }
-          // Wait 250ms between each asset request
           await new Promise(resolve => setTimeout(resolve, 250));
         } catch (e) {
           console.warn(`Failed to fetch live data for ${item.ticker}`);
@@ -181,15 +172,12 @@ export default function VaultPage() {
             showToast(result.message); 
             setShowTradeTicket(false);
 
-            // 🚀 1. OPTIMISTIC CASH UPDATE: Instantly set virtual cash to the exact number the backend just calculated
             if (result.remaining_cash !== undefined) {
                 setVirtualCash(result.remaining_cash);
             }
 
-            // 🚀 2. OPTIMISTIC VAULT UPDATE: Instantly adjust the shares in the UI grid
             setHoldings(prev => prev.map(h => {
                 if (h.ticker === selectedAsset.ticker) {
-                    // Calculate exact shares executed
                     const executedShares = mode === "SHARES" ? amount : (amount / result.execution_price);
                     return {
                         ...h,
@@ -197,14 +185,12 @@ export default function VaultPage() {
                     };
                 }
                 return h;
-            }).filter(h => h.shares > 0.0001)); // Instantly remove the card if shares hit 0
+            }).filter(h => h.shares > 0.0001));
 
-            // 3. Clear selected asset drawer if fully sold
             if (type === "SELL" && mode === "SHARES" && amount === selectedAsset.shares) {
                 setSelectedAsset(null); 
             }
             
-            // 4. Background Sync: Silently re-sync with Supabase 1.5 seconds later to ensure total alignment
             setTimeout(() => {
                 loadPortfolio(); 
             }, 1500);
@@ -213,9 +199,7 @@ export default function VaultPage() {
         else { showToast(`Trade Error: ${result.detail}`); }
     } catch (error) { showToast("Execution Offline."); }
   };
-  // ... (Your other states and functions)
 
-  // 🚀 Make sure this function exists inside the VaultPage component!
   const summarizeNews = async (article: any) => {
     if (!selectedAsset) return;
     setIsSummarizing(true);
@@ -231,7 +215,6 @@ export default function VaultPage() {
         const result = await res.json();
         if (res.ok) {
             showToast("Synthesis Complete.");
-            // Update the specific article in the liveData state
             setLiveData((prev: any) => ({
                 ...prev,
                 [selectedAsset.ticker]: {
@@ -249,25 +232,20 @@ export default function VaultPage() {
     setIsSummarizing(false);
   };
 
-  // ... (Your calculateTotals function)
-
   const calculateTotals = () => {
     let totalStockValue = 0;
     let totalCostBasis = 0;
 
-    // Sum up active holdings
     holdings.forEach(h => {
         const currentPrice = liveData[h.ticker]?.price || h.cost_basis;
         totalStockValue += (h.shares * currentPrice);
         totalCostBasis += (h.shares * h.cost_basis);
     });
 
-    // 1. Calculate True Net Liquidation (Cash + Active Assets)
     const netAccountValue = virtualCash + totalStockValue;
-
-    // 🚀 THE FIX: Calculate All-Time P&L against Initial Account Value
-    // Change this number to whatever starting cash new users receive
-    const STARTING_BALANCE = 100000; 
+    
+    // 🚀 ALL-TIME P&L CALCULATION (Using $100k starting threshold benchmark)
+    const STARTING_BALANCE = 100000;
     const totalProfitLoss = Number((netAccountValue - STARTING_BALANCE).toFixed(2));
 
     return { totalStockValue, totalCostBasis, netAccountValue, totalProfitLoss };
@@ -315,7 +293,7 @@ export default function VaultPage() {
 
       <div className="max-w-7xl mx-auto w-full px-6 mt-12 flex flex-col gap-12">
         
-        {/* 🚀 PROMINENT HERO SEARCH BAR */}
+        {/* PROMINENT HERO SEARCH BAR */}
         <div className="flex w-full bg-[#0B0F19] p-3 rounded-full border border-slate-800 focus-within:border-blue-500/50 shadow-xl transition-all group">
           <div className="pl-6 flex items-center justify-center text-slate-600 group-focus-within:text-blue-500 transition-colors">
             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -337,7 +315,7 @@ export default function VaultPage() {
           </button>
         </div>
 
-        {/* 🚀 2-COLUMN HERO SECTION */}
+        {/* 2-COLUMN HERO SECTION */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
             {/* Left: The Chart */}
             <div className="lg:col-span-8">
@@ -425,14 +403,21 @@ export default function VaultPage() {
                                 onClick={() => setSelectedAsset(h)}
                                 className="bg-slate-900/40 border border-slate-800 p-6 rounded-[32px] hover:border-blue-500/50 hover:bg-slate-900/80 transition-all cursor-pointer group relative overflow-hidden"
                             >
-                                <div className="flex justify-between items-start mb-6">
+                                <div className="flex justify-between items-start mb-4">
                                     <div>
                                         <h4 className="text-3xl font-black text-white">{h.ticker}</h4>
                                         <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mt-1">{h.shares.toFixed(2)} Shares</p>
                                     </div>
                                     <div className="text-right">
+                                        <p className="text-[9px] font-bold text-slate-500 uppercase mb-0.5">Market Value</p>
                                         <p className="text-xl font-mono font-black text-white">${totalMarketValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</p>
                                     </div>
+                                </div>
+
+                                {/* 🚀 ADDED: Sub-Metrics Banner for Average Cost */}
+                                <div className="flex justify-between items-center bg-slate-950/40 border border-slate-800/40 rounded-xl px-4 py-2.5 mb-4 font-mono text-xs text-slate-400">
+                                  <div>Avg Cost: <span className="text-white font-bold">${Number(h.cost_basis).toFixed(2)}</span></div>
+                                  <div>Live: <span className="text-white font-bold">${Number(currentPrice).toFixed(2)}</span></div>
                                 </div>
                                 
                                 <div className="flex justify-between items-end border-t border-slate-800/50 pt-4">
@@ -481,7 +466,6 @@ export default function VaultPage() {
                             const currentPrice = live ? live.price : selectedAsset.cost_basis;
                             const assetTotalValue = selectedAsset.shares * currentPrice;
                             
-                            // Calculate P&L and Percentage
                             const totalCostBasis = selectedAsset.shares * selectedAsset.cost_basis;
                             const profitLoss = Number((assetTotalValue - totalCostBasis).toFixed(2));
                             const percentReturn = totalCostBasis !== 0 ? (profitLoss / totalCostBasis) * 100 : 0;
@@ -503,7 +487,6 @@ export default function VaultPage() {
                                         <p className="text-2xl font-mono font-black text-white">${currentPrice.toFixed(2)}</p>
                                     </div>
                                     
-                                    {/* Updated Total Return Box */}
                                     <div className="bg-slate-900/50 border border-slate-800 p-5 rounded-2xl">
                                         <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Total Return</p>
                                         <p className={`text-2xl font-mono font-black ${textClass}`}>
@@ -512,6 +495,18 @@ export default function VaultPage() {
                                                 {isProfit ? '+' : ''}{percentReturn.toFixed(2)}%
                                             </span>
                                         </p>
+                                    </div>
+
+                                    {/* 🚀 EXTENDED DETAILS: Weighted Average Buy Cost Box */}
+                                    <div className="bg-slate-900/50 border border-slate-800 p-5 rounded-2xl">
+                                        <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Average Cost (Buy Basis)</p>
+                                        <p className="text-2xl font-mono font-black text-blue-400">${Number(selectedAsset.cost_basis).toFixed(2)}</p>
+                                    </div>
+
+                                    {/* 🚀 EXTENDED DETAILS: Live Market Value Position Box */}
+                                    <div className="bg-slate-900/50 border border-slate-800 p-5 rounded-2xl">
+                                        <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Position Market Value</p>
+                                        <p className="text-2xl font-mono font-black text-white">${assetTotalValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</p>
                                     </div>
 
                                     <div className="bg-slate-900/50 border border-slate-800 p-5 rounded-2xl">
