@@ -590,7 +590,7 @@ export default function VaultPage() {
               buyingPower={Number(virtualCash)}
               currentShares={Number(selectedAsset.shares)}
               onClose={() => setShowTradeTicket(false)}
-              onExecute={(amount: any, mode: any) => handleExecuteTrade(tradeType as "BUY" | "SELL", Number(amount), mode as "DOLLARS" | "SHARES")}
+              onExecute={(type: any, amount: any, mode: any) => handleExecuteTrade(type, Number(amount), mode)}
           />
       )}
 
