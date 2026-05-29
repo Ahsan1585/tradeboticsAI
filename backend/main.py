@@ -5,7 +5,7 @@ from typing import Dict, Any, List
 import os
 import math
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import yfinance as yf
 import google.generativeai as genai
 from dotenv import load_dotenv
@@ -14,9 +14,42 @@ import sys
 import pandas as pd
 import asyncio
 from finvizfinance.screener.overview import Overview
+import httpx
+from contextlib import asynccontextmanager
 
 load_dotenv()
-app = FastAPI()
+
+# ==========================================
+# --- KEEP ALIVE CONFIGURATION ---
+# ==========================================
+# ⚠️ REPLACE WITH YOUR ACTUAL LIVE RENDER APP URL
+RENDER_APP_URL = "https://your-app-name.onrender.com" 
+
+async def keep_alive_loop():
+    """Loops infinitely every 10 minutes to ping the public URL and prevent sleep."""
+    # Give the server 30 seconds to fully boot up before the first ping
+    await asyncio.sleep(30)
+    
+    async with httpx.AsyncClient() as client:
+        while True:
+            try:
+                print(f"[{datetime.now()}] 🛰️ SENDING KEEP-ALIVE PING TO PUBLIC URL...", file=sys.stderr)
+                response = await client.get(RENDER_APP_URL, timeout=10.0)
+                print(f"[{datetime.now()}] 💚 KEEP-ALIVE SUCCESS: Status {response.status_code}", file=sys.stderr)
+            except Exception as e:
+                print(f"[{datetime.now()}] ⚠️ KEEP-ALIVE PING FAILED: {e}", file=sys.stderr)
+            
+            # Sleep for 10 minutes (600 seconds) before pinging again
+            await asyncio.sleep(600)
+
+@asynccontextmanager
+async def lifecycle(app: FastAPI):
+    # Create the background task immediately on startup
+    asyncio.create_task(keep_alive_loop())
+    yield
+
+# Initialize FastAPI with the lifecycle manager to run the loop
+app = FastAPI(lifespan=lifecycle)
 
 app.add_middleware(
     CORSMiddleware,
@@ -123,10 +156,10 @@ def update_ai_cache(cache_key: str, payload: dict):
 
 # --- ENDPOINTS ---
 
-# --- GLOBAL CACHE CONFIGURATION ---
-# Place this right above your endpoint if it's not already defined
-SCREENER_CACHE = {}
-CACHE_MINUTES = 15
+@app.get("/")
+async def root_health_check():
+    """Lightweight endpoint for the background keep-alive ping."""
+    return {"status": "Matrix Online", "timestamp": datetime.now()}
 
 @app.post("/run-screener")
 async def execute_screener(req: ScreenerRequest):
