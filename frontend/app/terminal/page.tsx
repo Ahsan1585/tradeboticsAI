@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../lib/supabase";
 import TradeTicket from "../components/TradeTicket"; 
 
-const BACKEND_URL = "https://tradebotics-api.onrender.com";
+const BACKEND_URL = "http://localhost:8000";
 
 // --- WIDGET COMPONENTS ---
 function TickerTape() {
@@ -261,7 +261,7 @@ function TerminalContent() {
               .select('shares')
               .eq('user_id', session.user.id)
               .eq('ticker', target)
-              .single();
+              .maybeSingle();
           setCurrentShares(portfolio ? portfolio.shares : 0);
           
       } else { 

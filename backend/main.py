@@ -9,72 +9,14 @@ from datetime import datetime, timezone
 import yfinance as yf
 import google.generativeai as genai
 from dotenv import load_dotenv
-from supabase import create_client, Client  
+from supabase import create_client, Client
 import sys
 import pandas as pd
 import asyncio
+from finvizfinance.screener.overview import Overview
 
 load_dotenv()
 app = FastAPI()
-
-# 1. The Global Variable (Defaults to a safe list if Wikipedia blocks us)
-CURRENT_SCREENER_UNIVERSE = [
-    "AAPL", "MSFT", "NVDA", "AMD", "TSLA", "META", "AMZN", "GOOGL", "AVGO", "PLTR"
-]
-
-# 2. The Upgraded Scraping Agent (Bulletproof Table Matching)
-def fetch_nightly_universe():
-    global CURRENT_SCREENER_UNIVERSE
-    
-    # 🚀 Changed table_index to match_string
-    def get_wiki_tickers(url, match_string, col_name):
-        try:
-            # The 'match' parameter dynamically finds the correct table!
-            tables = pd.read_html(
-                url, 
-                match=match_string, 
-                storage_options={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-            )
-            df = tables[0] # It returns a list of matched tables, we want the first one
-            raw_tickers = df[col_name].tolist()
-            return [str(ticker).replace('.', '-') for ticker in raw_tickers]
-        except Exception as e:
-            print(f"[{datetime.now()}] ⚠️ WARNING: Could not fetch from {url}. Error: {e}")
-            return []
-
-    try:
-        print(f"[{datetime.now()}] 🌙 NIGHTLY AGENT: Fetching Expanded Universe (S&P 100, Dow, Nasdaq)...")
-        
-        # We now match by column header instead of guessing the table number
-        sp100 = get_wiki_tickers('https://en.wikipedia.org/wiki/S%26P_100', 'Symbol', 'Symbol')
-        dow30 = get_wiki_tickers('https://en.wikipedia.org/wiki/Dow_Jones_Industrial_Average', 'Symbol', 'Symbol')
-        nasdaq100 = get_wiki_tickers('https://en.wikipedia.org/wiki/Nasdaq-100', 'Ticker', 'Ticker')
-
-        combined_raw_list = sp100 + dow30 + nasdaq100
-        unique_universe = list(set(combined_raw_list))
-
-        if len(unique_universe) > 20:
-            CURRENT_SCREENER_UNIVERSE = unique_universe
-            print(f"[{datetime.now()}] ✅ AGENT SUCCESS: Expanded Universe updated with {len(unique_universe)} unique assets.")
-        else:
-            print(f"[{datetime.now()}] ❌ AGENT FAILED: Data pull was empty. Keeping fallback universe.")
-            
-    except Exception as e:
-        print(f"[{datetime.now()}] ❌ CRITICAL AGENT ERROR: {e}. Keeping fallback universe.")
-
-# 3. The Background Loop
-async def nightly_worker():
-    # Run once immediately on startup
-    fetch_nightly_universe()
-    while True:
-        # Sleep for 24 hours, then run again
-        await asyncio.sleep(86400)
-        fetch_nightly_universe()
-
-# 4. Attach to FastAPI Startup
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(nightly_worker())
 
 app.add_middleware(
     CORSMiddleware,
@@ -124,6 +66,10 @@ class TradeRequest(BaseModel):
     amount: float    
     mode: str
 
+class ScreenerRequest(BaseModel):
+    trade_style: str
+    risk_level: str
+
 class TranslationRequest(BaseModel):
     ticker: str
     data_context: Dict[str, Any]
@@ -172,6 +118,115 @@ def update_ai_cache(cache_key: str, payload: dict):
         print(f"Cache save error: {e}", file=sys.stderr)
 
 # --- ENDPOINTS ---
+
+@app.post("/run-screener")
+async def execute_screener(req: ScreenerRequest):
+    scored_candidates = []
+    
+    try:
+        # --- 1. DYNAMIC GATHERING PHASE ---
+        combined_df = pd.DataFrame()
+
+        if req.trade_style in ["Day Trade", "Swing Trade"]:
+            print(f"[{datetime.now()}] ⚡ TACTICAL SCAN: Hunting High-RVOL Mid-Caps...", file=sys.stderr)
+            try:
+                screener = Overview()
+                # 🎯 The Day/Swing Trader's Holy Grail Filters:
+                # 1. Mid-Cap ($2B-$10B) - Small enough to move fast.
+                # 2. Avg Volume > 1M - Guarantees liquidity.
+                # 3. Relative Volume > 1.5 - Stock is trading 50% more than usual TODAY.
+                # 4. Price > $10 - Filters out penny stock noise.
+                screener.set_filter(filters_dict={
+                    'Market Cap.': 'Mid ($2bln to $10bln)',
+                    'Average Volume': 'Over 1M',
+                    'Relative Volume': 'Over 1.5',
+                    'Price': 'Over $10'
+                })
+                combined_df = screener.screener_view()
+            except Exception as e:
+                print(f"[{datetime.now()}] ⚠️ TACTICAL SCAN ERROR: {e}", file=sys.stderr)
+                
+        else:
+            print(f"[{datetime.now()}] 🏦 MACRO SCAN: Loading Blue-Chip Indices...", file=sys.stderr)
+            try:
+                # Dropped 'NASDAQ 100' to prevent Finviz 404s. S&P 500 covers the mega-caps.
+                indices = ['S&P 500', 'DJIA']
+                for idx in indices:
+                    screener = Overview()
+                    screener.set_filter(filters_dict={'Index': idx})
+                    df = screener.screener_view()
+                    combined_df = pd.concat([combined_df, df])
+            except Exception as e:
+                print(f"[{datetime.now()}] ⚠️ MACRO SCAN ERROR: {e}", file=sys.stderr)
+
+        # --- 2. DEDUPLICATION PHASE ---
+        if not combined_df.empty:
+            universe_df = combined_df.drop_duplicates(subset='Ticker')
+            print(f"[{datetime.now()}] ✅ GATHERING SUCCESS: {len(universe_df)} unique assets loaded.", file=sys.stderr)
+            
+            # --- 3. PROPRIETARY SCORING ENGINE ---
+            # Loop through the pre-loaded DataFrame in memory. Zero network calls!
+            for index, row in universe_df.iterrows():
+                t = row['Ticker']
+                
+                # Clean Finviz data (Finviz uses '-' for missing data)
+                price = float(row['Price']) if str(row['Price']) != '-' else 0
+                pe_raw = str(row['P/E'])
+                pe = float(pe_raw) if pe_raw != '-' else 0
+                sector = str(row['Sector'])
+                change = str(row['Change']).replace('%', '')
+                daily_change = float(change) if change != '-' else 0
+
+                # Quant Math: Technical Baseline
+                tech_base = 50
+                if daily_change > 0: tech_base += 15
+                else: tech_base -= 15
+                tech_score = max(10, min(95, tech_base))
+
+                # Quant Math: Fundamental Baseline
+                fund_base = 50
+                if pe and 0 < pe < 25: fund_base += 20
+                elif pe and pe > 50: fund_base -= 20
+                fund_score = max(10, min(95, fund_base))
+
+                # Risk Modifiers
+                if req.risk_level == "Aggressive":
+                    total_score = (tech_score * 0.8) + (fund_score * 0.2)
+                elif req.risk_level == "Conservative":
+                    total_score = (tech_score * 0.2) + (fund_score * 0.8)
+                else:
+                    total_score = (tech_score * 0.5) + (fund_score * 0.5)
+
+                # Horizon Bonuses
+                style_bonus = 0
+                if req.trade_style == "Day Trade" and t in ["NVDA", "TSLA", "AMD"]: style_bonus = 15 
+                elif req.trade_style == "Long Term" and pe and 0 < pe < 35: style_bonus = 5
+
+                # 🚀 THE TIE-BREAKER: Add a micro-fraction of daily momentum to the sort weight
+                sort_weight = total_score + style_bonus + (daily_change * 0.01)
+                
+                # We calculate display score WITHOUT the tie-breaker so it stays a clean integer
+                final_display_score = max(10, min(99, math.ceil(total_score + style_bonus)))
+
+                # THE FULL, COMPLETED DICTIONARY
+                scored_candidates.append({
+                    "ticker": t,
+                    "price": price,
+                    "score": final_display_score,
+                    "sort_weight": sort_weight,
+                    "sector": sector,
+                    "metrics": f"P/E: {pe if pe else 'N/A'} | Sector: {sector}"
+                })
+        else:
+            print(f"[{datetime.now()}] ⚠️ GATHERING RETURNED EMPTY DATAFRAME.", file=sys.stderr)
+
+    except Exception as e:
+        print(f"❌ FINVIZ PIPELINE ERROR: {e}", file=sys.stderr)
+        return {"results": []}
+
+    # Sort and return the top 30 for the frontend
+    scored_candidates.sort(key=lambda x: x['sort_weight'], reverse=True)
+    return {"results": scored_candidates[:30]}
 
 @app.get("/analyze/{ticker}")
 async def analyze_ticker(ticker: str): 
