@@ -201,7 +201,9 @@ export default function Home() {
   const router = useRouter(); 
   const [user, setUser] = useState<any>(null);
   const [userProfile, setUserProfile] = useState<any>(null); 
-  const [isAuthChecking, setIsAuthChecking] = useState(true);
+  
+  // Set to false initially so the component renders the home/landing page instantly without flash loops
+  const [isAuthChecking, setIsAuthChecking] = useState(false);
   
   const [showAuth, setShowAuth] = useState(false);
   
@@ -213,38 +215,9 @@ export default function Home() {
   const [toastMessage, setToastMessage] = useState<string | null>(null); 
 
   useEffect(() => {
-    let isMounted = true; // 🚀 Use flag to prevent state updates if unmounted
+    let isMounted = true;
 
-    const checkUser = async () => {
-      try {
-          setIsAuthChecking(true);
-          const { data: { session }, error } = await supabase.auth.getSession();
-          
-          if (error) {
-              console.warn("Auth Token Corrupted. Purging local cache.");
-              await supabase.auth.signOut();
-              if (isMounted) {
-                  setUser(null);
-                  setUserProfile(null);
-              }
-          } else if (session) {
-              if (isMounted) setUser(session.user);
-              const { data: profile } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-              if (isMounted) setUserProfile(profile);
-              
-              if (profile?.status !== 'pending') {
-                  router.push('/hub');
-              }
-          }
-      } catch (err) {
-          console.error("Auth check error:", err);
-      } finally {
-          // 🚀 GUARANTEE THIS EXECUTES SO IT NEVER GETS STUCK BLACK
-          if (isMounted) setIsAuthChecking(false);
-      }
-    };
-    
-    checkUser();
+    // Direct automated checks on mounting have been stripped to force landing page retention.
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_OUT') {
@@ -252,12 +225,13 @@ export default function Home() {
               setUser(null);
               setUserProfile(null);
           }
-      } else if (session && (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED')) {
+      } else if (session && event === 'SIGNED_IN') {
+          // Listen strictly for the explicit manual sign-in transition
           if (isMounted) setUser(session.user);
           const { data: profile } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
           if (isMounted) setUserProfile(profile);
           
-          if (event === 'SIGNED_IN' && profile?.status !== 'pending') {
+          if (profile?.status !== 'pending') {
               router.push('/hub');
           }
       }
@@ -309,7 +283,6 @@ export default function Home() {
     setShowAuth(false); 
   };
 
-  // 🚀 FIXED: Added a subtle spinner to prevent the "Black Screen of Death"
   if (isAuthChecking) {
       return (
           <main className="min-h-screen bg-[#020617] flex items-center justify-center">
@@ -318,7 +291,6 @@ export default function Home() {
       );
   }
 
-  // If they are logged in and approved, they are about to be redirected to /hub. Show loader.
   if (user && userProfile?.status !== 'pending') {
       return (
           <main className="min-h-screen bg-[#020617] flex items-center justify-center">
