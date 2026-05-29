@@ -84,7 +84,7 @@ function MarketingLanding({ onLoginClick, onRegisterClick }: { onLoginClick: () 
             <section className="pt-40 pb-20 px-6 max-w-7xl mx-auto flex flex-col lg:flex-row items-center gap-16">
                 <div className="flex-1 space-y-8 text-center lg:text-left z-10">
                     <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-[10px] font-black uppercase tracking-widest mb-4">
-                        <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" /> Live: Enterprise Node Online
+
                     </div>
                     <h2 className="text-5xl lg:text-7xl font-black text-white leading-[1.1] tracking-tighter">
                         Institutional-Grade <span className="text-blue-500">AI Analytics.</span><br/>Retail Edge.
