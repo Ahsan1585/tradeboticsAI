@@ -58,6 +58,10 @@ else:
     model = None
     print("WARNING: GEMINI_API_KEY is missing.", file=sys.stderr)
 
+# --- GLOBAL CACHE ---
+SCREENER_CACHE = {}
+CACHE_MINUTES = 15
+
 # --- REQUEST MODELS ---
 class TradeRequest(BaseModel):
     user_id: str
@@ -119,23 +123,34 @@ def update_ai_cache(cache_key: str, payload: dict):
 
 # --- ENDPOINTS ---
 
+# --- GLOBAL CACHE CONFIGURATION ---
+# Place this right above your endpoint if it's not already defined
+SCREENER_CACHE = {}
+CACHE_MINUTES = 15
+
 @app.post("/run-screener")
 async def execute_screener(req: ScreenerRequest):
+    # 1. THE CACHE CHECK
+    cache_key = f"{req.trade_style}_{req.risk_level}"
+    current_time = datetime.now()
+
+    if cache_key in SCREENER_CACHE:
+        cached_results, timestamp = SCREENER_CACHE[cache_key]
+        # If the cached data is fresh (less than 15 minutes old), bypass Finviz entirely
+        if current_time - timestamp < timedelta(minutes=CACHE_MINUTES):
+            print(f"[{current_time}] ⚡ SERVING {cache_key} FROM CACHE. Bypassing Finviz.", file=sys.stderr)
+            return {"results": cached_results}
+
     scored_candidates = []
     
     try:
-        # --- 1. DYNAMIC GATHERING PHASE ---
+        # --- 2. DYNAMIC GATHERING PHASE ---
         combined_df = pd.DataFrame()
 
         if req.trade_style in ["Day Trade", "Swing Trade"]:
             print(f"[{datetime.now()}] ⚡ TACTICAL SCAN: Hunting High-RVOL Mid-Caps...", file=sys.stderr)
             try:
                 screener = Overview()
-                # 🎯 The Day/Swing Trader's Holy Grail Filters:
-                # 1. Mid-Cap ($2B-$10B) - Small enough to move fast.
-                # 2. Avg Volume > 1M - Guarantees liquidity.
-                # 3. Relative Volume > 1.5 - Stock is trading 50% more than usual TODAY.
-                # 4. Price > $10 - Filters out penny stock noise.
                 screener.set_filter(filters_dict={
                     'Market Cap.': 'Mid ($2bln to $10bln)',
                     'Average Volume': 'Over 1M',
@@ -149,7 +164,6 @@ async def execute_screener(req: ScreenerRequest):
         else:
             print(f"[{datetime.now()}] 🏦 MACRO SCAN: Loading Blue-Chip Indices...", file=sys.stderr)
             try:
-                # Dropped 'NASDAQ 100' to prevent Finviz 404s. S&P 500 covers the mega-caps.
                 indices = ['S&P 500', 'DJIA']
                 for idx in indices:
                     screener = Overview()
@@ -159,17 +173,16 @@ async def execute_screener(req: ScreenerRequest):
             except Exception as e:
                 print(f"[{datetime.now()}] ⚠️ MACRO SCAN ERROR: {e}", file=sys.stderr)
 
-        # --- 2. DEDUPLICATION PHASE ---
+        # --- 3. DEDUPLICATION PHASE ---
         if not combined_df.empty:
             universe_df = combined_df.drop_duplicates(subset='Ticker')
             print(f"[{datetime.now()}] ✅ GATHERING SUCCESS: {len(universe_df)} unique assets loaded.", file=sys.stderr)
             
-            # --- 3. PROPRIETARY SCORING ENGINE ---
-            # Loop through the pre-loaded DataFrame in memory. Zero network calls!
+            # --- 4. PROPRIETARY SCORING ENGINE ---
             for index, row in universe_df.iterrows():
                 t = row['Ticker']
                 
-                # Clean Finviz data (Finviz uses '-' for missing data)
+                # Clean Finviz data
                 price = float(row['Price']) if str(row['Price']) != '-' else 0
                 pe_raw = str(row['P/E'])
                 pe = float(pe_raw) if pe_raw != '-' else 0
@@ -205,7 +218,7 @@ async def execute_screener(req: ScreenerRequest):
                 # 🚀 THE TIE-BREAKER: Add a micro-fraction of daily momentum to the sort weight
                 sort_weight = total_score + style_bonus + (daily_change * 0.01)
                 
-                # We calculate display score WITHOUT the tie-breaker so it stays a clean integer
+                # Calculate display score WITHOUT the tie-breaker so it stays a clean integer
                 final_display_score = max(10, min(99, math.ceil(total_score + style_bonus)))
 
                 # THE FULL, COMPLETED DICTIONARY
@@ -224,9 +237,15 @@ async def execute_screener(req: ScreenerRequest):
         print(f"❌ FINVIZ PIPELINE ERROR: {e}", file=sys.stderr)
         return {"results": []}
 
-    # Sort and return the top 30 for the frontend
+    # Sort and slice the top 30 candidates
     scored_candidates.sort(key=lambda x: x['sort_weight'], reverse=True)
-    return {"results": scored_candidates[:30]}
+    final_top_30 = scored_candidates[:30]
+    
+    # 5. COMMIT TO CACHE
+    SCREENER_CACHE[cache_key] = (final_top_30, current_time)
+    print(f"[{current_time}] 💾 SAVED {cache_key} TO CACHE.", file=sys.stderr)
+    
+    return {"results": final_top_30}
 
 @app.get("/analyze/{ticker}")
 async def analyze_ticker(ticker: str): 
