@@ -196,14 +196,11 @@ function MarketingLanding({ onLoginClick, onRegisterClick }: { onLoginClick: () 
     );
 }
 
-// --- MAIN APP ENTRY ---
+/// --- MAIN APP ENTRY ---
 export default function Home() {
   const router = useRouter(); 
   const [user, setUser] = useState<any>(null);
   const [userProfile, setUserProfile] = useState<any>(null); 
-  
-  // Set to false initially so the component renders the home/landing page instantly without flash loops
-  const [isAuthChecking, setIsAuthChecking] = useState(false);
   
   const [showAuth, setShowAuth] = useState(false);
   
@@ -215,33 +212,10 @@ export default function Home() {
   const [toastMessage, setToastMessage] = useState<string | null>(null); 
 
   useEffect(() => {
-    let isMounted = true;
-
-    // Direct automated checks on mounting have been stripped to force landing page retention.
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_OUT') {
-          if (isMounted) {
-              setUser(null);
-              setUserProfile(null);
-          }
-      } else if (session && event === 'SIGNED_IN') {
-          // Listen strictly for the explicit manual sign-in transition
-          if (isMounted) setUser(session.user);
-          const { data: profile } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-          if (isMounted) setUserProfile(profile);
-          
-          if (profile?.status !== 'pending') {
-              router.push('/hub');
-          }
-      }
-    });
-
-    return () => {
-      isMounted = false;
-      subscription.unsubscribe();
-    };
-  }, [router]);
+    // 🚀 Completely removed the Supabase onAuthStateChange listener!
+    // This guarantees the mobile browser will NEVER get stuck trying to auto-login in the background.
+    // The user will ALWAYS see the landing page when they navigate here.
+  }, []);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -271,6 +245,11 @@ export default function Home() {
           const { data: profile } = await supabase.from('profiles').select('*').eq('id', data.user.id).single();
           setUserProfile(profile);
           setUser(data.user);
+          
+          // 🚀 Moved the routing HERE. It only triggers when the human physically clicks "Access Terminal".
+          if (profile?.status !== 'pending') {
+              router.push('/hub');
+          }
       }
     }
     setAuthLoading(false);
@@ -283,14 +262,7 @@ export default function Home() {
     setShowAuth(false); 
   };
 
-  if (isAuthChecking) {
-      return (
-          <main className="min-h-screen bg-[#020617] flex items-center justify-center">
-             <div className="w-12 h-12 border-4 border-slate-800 border-t-blue-500 rounded-full animate-spin mb-4" />
-          </main>
-      );
-  }
-
+  // This spinner now acts purely as a loading screen AFTER they manually click "Login"
   if (user && userProfile?.status !== 'pending') {
       return (
           <main className="min-h-screen bg-[#020617] flex items-center justify-center">
