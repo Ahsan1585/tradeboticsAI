@@ -23,7 +23,7 @@ load_dotenv()
 # --- KEEP ALIVE CONFIGURATION ---
 # ==========================================
 # ⚠️ REPLACE WITH YOUR ACTUAL LIVE RENDER APP URL
-RENDER_APP_URL = "https://your-app-name.onrender.com" 
+RENDER_APP_URL = "https://tradebotics-api.onrender.com/market-briefing" 
 
 async def keep_alive_loop():
     """Loops infinitely every 10 minutes to ping the public URL and prevent sleep."""
