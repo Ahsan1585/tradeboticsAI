@@ -30,20 +30,6 @@ function TickerTape() {
   return <div ref={container} className="w-full mb-8 opacity-60" />;
 }
 
-function MarketScreener() {
-  const container = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (container.current && container.current.children.length === 0) {
-      const script = document.createElement("script");
-      script.src = "https://s3.tradingview.com/external-embedding/embed-widget-screener.js";
-      script.async = true;
-      script.innerHTML = JSON.stringify({ "width": "100%", "height": "800", "defaultColumn": "overview", "defaultScreen": "most_active", "market": "america", "showToolbar": true, "colorTheme": "dark", "locale": "en", "isTransparent": true });
-      container.current.appendChild(script);
-    }
-  }, []);
-  return <div className="w-full bg-slate-900/10 rounded-[32px] border border-slate-800 min-h-[800px] overflow-hidden" ref={container} />;
-}
-
 function TradingViewWidget({ symbol }: { symbol: string }) {
   const container = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -72,9 +58,9 @@ function Stat({ label, val, color = "text-white" }: { label: string, val: string
 function TerminalContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  // 🚀 ADD THIS LINE:
-  const initializedRef = useRef(false); 
-  // ...
+  const initializedRef = useRef(false);
+  const [scanProgress, setScanProgress] = useState(0);
+  const [loadingText, setLoadingText] = useState("Initializing Matrix...");
   
   // 🚨 NEURAL AUTHORIZATION STATE
   const [authModal, setAuthModal] = useState({
@@ -108,6 +94,75 @@ function TerminalContent() {
   const [deepDiveResult, setDeepDiveResult] = useState<string | null>(null);
   const [selectedArticle, setSelectedArticle] = useState<any | null>(null);
   const [isSummarizing, setIsSummarizing] = useState(false);
+
+  // 🚨 NEW SCREENER ENGINE STATES
+  const [horizon, setHorizon] = useState("Swing Trade");
+  const [risk, setRisk] = useState("Moderate");
+  const [screenerResults, setScreenerResults] = useState<any[]>([]);
+  const [isScanning, setIsScanning] = useState(false);
+
+  const executeMarketScan = async () => {
+        setIsScanning(true);
+        setScreenerResults([]);
+        setScanProgress(0);
+        setLoadingText("Compiling 170-Asset Universe...");
+
+        // Array of cool institutional phrases to cycle through
+        const phrases = [
+            "Extracting Real-Time Pricing...",
+            "Calculating Technical Moving Averages...",
+            "Scoring Fundamental P/E Ratios...",
+            "Applying Risk Tolerance Modifiers...",
+            "Executing Proprietary Quant Matrix...",
+            "Isolating Top Alpha Candidates..."
+        ];
+
+        let currentProgress = 0;
+        let phraseIndex = 0;
+
+        // Simulate a 16.5 second load time (165ms * 100 = 16.5s)
+        const progressInterval = setInterval(() => {
+            currentProgress += 1;
+            if (currentProgress >= 99) {
+                currentProgress = 99; // Hold at 99% until the server actually replies
+            }
+            setScanProgress(currentProgress);
+
+            // Change the text every ~2.5 seconds (every 15 progress ticks)
+            if (currentProgress % 15 === 0 && phraseIndex < phrases.length) {
+                setLoadingText(phrases[phraseIndex]);
+                phraseIndex++;
+            }
+        }, 165); 
+
+        try {
+            const res = await fetch(`${BACKEND_URL}/run-screener`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ trade_style: horizon, risk_level: risk })
+            });
+            const responseData = await res.json();
+            
+            clearInterval(progressInterval); // Stop the fake timer
+            setScanProgress(100); // Snap to 100%
+
+            if (res.ok) {
+                // Slight delay so the user actually sees "100%" before the UI flips
+                setTimeout(() => {
+                    setScreenerResults(responseData.results);
+                    showToast(`Matrix Online: ${responseData.results.length} Candidates Found.`);
+                    setIsScanning(false);
+                }, 500);
+            } else {
+                showToast("Matrix Scan Failed.");
+                setIsScanning(false);
+            }
+        } catch (error) {
+            clearInterval(progressInterval);
+            showToast("Network pipeline disrupted.");
+            setIsScanning(false);
+        }
+    };
 
   const handleExecuteTrade = async (tradeType: "BUY" | "SELL", amount: number, mode: "DOLLARS" | "SHARES") => {
       const { data: { session } } = await supabase.auth.getSession();
@@ -159,9 +214,8 @@ function TerminalContent() {
       verifyClearance();
   }, [router]);
 
-  // 🚀 AUTO-LOAD TICKER FROM HUB (UPDATED)
+  // 🚀 AUTO-LOAD TICKER FROM HUB
   useEffect(() => {
-      // If we already initialized from the URL, or if not authorized, do nothing
       if (initializedRef.current || !isAuthorized) return;
 
       const urlTicker = searchParams.get('ticker');
@@ -169,7 +223,7 @@ function TerminalContent() {
       if (urlTicker) {
           setTicker(urlTicker);
           runAnalysis(urlTicker);
-          initializedRef.current = true; // Lock this so it doesn't run again on re-renders
+          initializedRef.current = true; 
       }
   }, [searchParams, isAuthorized]); 
 
@@ -474,8 +528,9 @@ function TerminalContent() {
           </div>
           
           <div className="flex gap-4 items-center">
+            {/* Returns to Screener Mode by clearing current data */}
             <button onClick={() => { setData(null); setTicker(""); setConfirmedTicker(""); }} className="flex items-center gap-3 px-6 py-3 bg-slate-900/50 border border-slate-800 rounded-full hover:border-blue-500/50 transition-all group">
-                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-300 group-hover:text-white">Market Pulse</span>
+                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-300 group-hover:text-white">Alpha Screener</span>
             </button>
 
             <button onClick={() => router.push('/hub')} className="hidden lg:flex items-center gap-3 px-6 py-3 bg-slate-900/50 border border-slate-800 rounded-full hover:border-blue-500/50 transition-all group">
@@ -549,7 +604,125 @@ function TerminalContent() {
           {/* MIDDLE PANEL */}
           <div className="col-span-12 lg:col-span-6 flex flex-col gap-8">
             {!data ? (
-                <div className="flex flex-col gap-8 h-full"><div className="bg-slate-900/30 border border-slate-800 p-10 rounded-[48px] text-center"><h3 className="text-3xl font-bold text-white uppercase tracking-widest">Market Pulse</h3></div><MarketScreener /></div>
+                // 🚀 NEW NATIVE ALPHA SCREENER
+                <div className="bg-slate-900/40 border border-slate-800/80 rounded-[40px] p-8 md:p-10 shadow-2xl backdrop-blur-md flex flex-col h-[800px]">
+                    <div className="flex justify-between items-center mb-8 border-b border-slate-800/50 pb-6">
+                        <div>
+                            <h3 className="text-2xl font-black text-white tracking-tight uppercase">Alpha Screener</h3>
+                            <p className="text-[10px] text-blue-500 font-bold uppercase tracking-[0.2em] mt-1">Proprietary Index Matrix</p>
+                        </div>
+                        <button 
+                            onClick={executeMarketScan} 
+                            disabled={isScanning}
+                            className="px-6 py-3 bg-white hover:bg-slate-200 text-slate-950 rounded-2xl font-black text-[10px] uppercase tracking-widest disabled:opacity-50 transition-all"
+                        >
+                            {isScanning ? "Scanning..." : "Execute Matrix"}
+                        </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-6 mb-8 bg-slate-950/60 p-6 rounded-3xl border border-slate-800/60 shrink-0">
+                        <div>
+                            <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-3">Target Horizon</p>
+                            <div className="flex gap-2">
+                                {["Day Trade", "Swing Trade", "Long Term"].map((h) => (
+                                    <button
+                                        key={h} onClick={() => setHorizon(h)}
+                                        className={`flex-1 py-3 rounded-xl font-bold text-[9px] uppercase tracking-wider transition-all border text-center ${horizon === h ? 'bg-blue-600 border-blue-500 text-white shadow-[0_0_15px_rgba(37,99,235,0.2)]' : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'}`}
+                                    >
+                                        {h.split(' ')[0]}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                        <div>
+                            <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-3">Risk Profile</p>
+                            <div className="flex gap-2">
+                                {["Conservative", "Moderate", "Aggressive"].map((r) => (
+                                    <button
+                                        key={r} onClick={() => setRisk(r)}
+                                        className={`flex-1 py-3 rounded-xl font-bold text-[9px] uppercase tracking-wider transition-all border text-center ${risk === r ? (r === 'Aggressive' ? 'bg-red-900/40 border-red-500 text-red-200' : r === 'Conservative' ? 'bg-emerald-900/40 border-emerald-500 text-emerald-200' : 'bg-purple-900/40 border-purple-500 text-purple-200') : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'}`}
+                                    >
+                                        {r.substring(0, 3)}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="flex-1 bg-slate-950/40 border border-slate-800/50 rounded-3xl overflow-hidden flex flex-col relative">
+                        {isScanning ? (
+                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#020617]/90 backdrop-blur-md z-10 px-10">
+                                <div className="w-full max-w-sm">
+                                    {/* Percentage & Text */}
+                                    <div className="flex justify-between items-end mb-3">
+                                        <p className="text-[10px] text-blue-500 font-black uppercase tracking-widest animate-pulse">
+                                            {loadingText}
+                                        </p>
+                                        <p className="text-2xl font-mono font-black text-white">
+                                            {scanProgress}%
+                                        </p>
+                                    </div>
+                                    
+                                    {/* The Progress Bar */}
+                                    <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden border border-slate-800">
+                                        <div 
+                                            className="h-full bg-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.8)] transition-all duration-200 ease-out"
+                                            style={{ width: `${scanProgress}%` }}
+                                        />
+                                    </div>
+
+                                    {/* Simulated Terminal Logs below the bar */}
+                                    <div className="mt-6 space-y-1 h-12 overflow-hidden opacity-50">
+                                        <p className="text-[8px] font-mono text-slate-500">[{new Date().toISOString()}] INITIALIZING MULTI-THREAD MATRIX</p>
+                                        <p className="text-[8px] font-mono text-slate-500">[{new Date().toISOString()}] FETCHING WIKI_SP100_NASDAQ_DOW30</p>
+                                        {scanProgress > 20 && <p className="text-[8px] font-mono text-emerald-500">[{new Date().toISOString()}] SUCCESS: 170 UNIQUE ASSETS ISOLATED</p>}
+                                        {scanProgress > 50 && <p className="text-[8px] font-mono text-slate-500">[{new Date().toISOString()}] EXECUTING YFINANCE BATCH REQUESTS...</p>}
+                                    </div>
+                                </div>
+                            </div>
+                        ) : screenerResults.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center h-full text-slate-600">
+                                <span className="text-4xl mb-4">📡</span>
+                                <p className="font-black uppercase tracking-[0.2em] text-[10px]">Awaiting Execution Parameters</p>
+                            </div>
+                        ) : (
+                            <div className="flex flex-col h-full">
+                                <div className="grid grid-cols-12 gap-4 bg-slate-900/40 px-6 py-4 border-b border-slate-800/80 text-[9px] font-black uppercase tracking-widest text-slate-500">
+                                    <div className="col-span-4">Asset</div>
+                                    <div className="col-span-4 text-right">Valuation</div>
+                                    <div className="col-span-4 text-right text-blue-400">Score</div>
+                                </div>
+                                <div className="overflow-y-auto custom-scrollbar flex-1 pb-4">
+                                    {screenerResults.map((stock, idx) => (
+                                        <div 
+                                            key={stock.ticker}
+                                            onClick={() => {
+                                                setTicker(stock.ticker);
+                                                runAnalysis(stock.ticker);
+                                            }}
+                                            className="grid grid-cols-12 gap-4 px-6 py-4 items-center border-b border-slate-800/30 hover:bg-slate-900/60 cursor-pointer group transition-colors"
+                                        >
+                                            <div className="col-span-4 flex items-center gap-3">
+                                                <span className="text-[10px] text-slate-600 font-mono w-4">{idx + 1}</span>
+                                                <div className="bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg group-hover:border-blue-500/50 transition-colors">
+                                                    <span className="font-black text-white text-xs">{stock.ticker}</span>
+                                                </div>
+                                            </div>
+                                            <div className="col-span-4 text-right">
+                                                <p className="text-sm font-mono font-bold text-slate-300">${stock.price.toFixed(2)}</p>
+                                            </div>
+                                            <div className="col-span-4 flex justify-end">
+                                                <div className="bg-blue-950/30 border border-blue-900/30 px-3 py-1 rounded-md text-center">
+                                                    <span className="text-sm font-black font-mono text-blue-400">{stock.score}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
             ) : (
               <>
                 <TradingViewWidget symbol={confirmedTicker} />
@@ -633,11 +806,10 @@ function TerminalContent() {
                   })} 
                   className="w-full mb-6 bg-blue-900/30 border border-blue-500/50 py-4 rounded-2xl text-blue-400 font-black text-[10px] uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all shadow-[0_0_15px_rgba(59,130,246,0.15)]"
                >
-                  🌐 Global AI Sentiment Check
+                 🌐 Global AI Sentiment Check
                </button>
 
                <div className="space-y-4 overflow-y-auto custom-scrollbar flex-1">
-                  {/* 🚀 DYNAMIC DATA ROUTING: Corrected mapping state targets to 'data.news' and 'globalNews' */}
                   {((data && data.news && data.news.length > 0) 
                     ? data.news 
                     : globalNews
@@ -655,7 +827,7 @@ function TerminalContent() {
                                   {item.publisher} {item.date ? `• ${item.date}` : ""}
                               </p>
                               <span className="text-[8px] bg-blue-600/10 text-blue-500 px-2 py-0.5 rounded-full uppercase font-black tracking-wider">
-                                AI Synthesis
+                                  AI Synthesis
                               </span>
                           </div>
                       </div>
@@ -716,7 +888,9 @@ function TerminalContent() {
 
     </main>
   );
- } // 🚀 THE NEXT.JS SUSPENSE WRAPPER
+ } 
+ 
+ // 🚀 THE NEXT.JS SUSPENSE WRAPPER
 export default function TerminalPage() {
   return (
     <React.Suspense fallback={

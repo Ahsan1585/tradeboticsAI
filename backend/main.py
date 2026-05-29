@@ -11,9 +11,70 @@ import google.generativeai as genai
 from dotenv import load_dotenv
 from supabase import create_client, Client  
 import sys
+import pandas as pd
+import asyncio
 
 load_dotenv()
 app = FastAPI()
+
+# 1. The Global Variable (Defaults to a safe list if Wikipedia blocks us)
+CURRENT_SCREENER_UNIVERSE = [
+    "AAPL", "MSFT", "NVDA", "AMD", "TSLA", "META", "AMZN", "GOOGL", "AVGO", "PLTR"
+]
+
+# 2. The Upgraded Scraping Agent (Bulletproof Table Matching)
+def fetch_nightly_universe():
+    global CURRENT_SCREENER_UNIVERSE
+    
+    # 🚀 Changed table_index to match_string
+    def get_wiki_tickers(url, match_string, col_name):
+        try:
+            # The 'match' parameter dynamically finds the correct table!
+            tables = pd.read_html(
+                url, 
+                match=match_string, 
+                storage_options={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            )
+            df = tables[0] # It returns a list of matched tables, we want the first one
+            raw_tickers = df[col_name].tolist()
+            return [str(ticker).replace('.', '-') for ticker in raw_tickers]
+        except Exception as e:
+            print(f"[{datetime.now()}] ⚠️ WARNING: Could not fetch from {url}. Error: {e}")
+            return []
+
+    try:
+        print(f"[{datetime.now()}] 🌙 NIGHTLY AGENT: Fetching Expanded Universe (S&P 100, Dow, Nasdaq)...")
+        
+        # We now match by column header instead of guessing the table number
+        sp100 = get_wiki_tickers('https://en.wikipedia.org/wiki/S%26P_100', 'Symbol', 'Symbol')
+        dow30 = get_wiki_tickers('https://en.wikipedia.org/wiki/Dow_Jones_Industrial_Average', 'Symbol', 'Symbol')
+        nasdaq100 = get_wiki_tickers('https://en.wikipedia.org/wiki/Nasdaq-100', 'Ticker', 'Ticker')
+
+        combined_raw_list = sp100 + dow30 + nasdaq100
+        unique_universe = list(set(combined_raw_list))
+
+        if len(unique_universe) > 20:
+            CURRENT_SCREENER_UNIVERSE = unique_universe
+            print(f"[{datetime.now()}] ✅ AGENT SUCCESS: Expanded Universe updated with {len(unique_universe)} unique assets.")
+        else:
+            print(f"[{datetime.now()}] ❌ AGENT FAILED: Data pull was empty. Keeping fallback universe.")
+            
+    except Exception as e:
+        print(f"[{datetime.now()}] ❌ CRITICAL AGENT ERROR: {e}. Keeping fallback universe.")
+
+# 3. The Background Loop
+async def nightly_worker():
+    # Run once immediately on startup
+    fetch_nightly_universe()
+    while True:
+        # Sleep for 24 hours, then run again
+        await asyncio.sleep(86400)
+        fetch_nightly_universe()
+
+# 4. Attach to FastAPI Startup
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(nightly_worker())
 
 app.add_middleware(
     CORSMiddleware,

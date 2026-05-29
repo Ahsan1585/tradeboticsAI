@@ -66,3 +66,7 @@ urllib3
 uvicorn
 websockets
 yfinance
+lxml
+pandas
+pandas==2.2.2
+lxml==5.2.2
