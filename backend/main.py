@@ -353,6 +353,16 @@ def get_market_universe():
 
 # --- ENDPOINTS ---
 
+@app.get("/nuke-database")
+def nuke_database():
+    """Forces the Render server to wipe its own database table."""
+    try:
+        # Deletes every row where the ticker is not '0' (which deletes everything)
+        supabase.table('market_universe').delete().neq('ticker', '0').execute()
+        return {"message": "SUCCESS: The database Render is connected to has been completely wiped. Go restart the Render service now."}
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.get("/")
 async def root_health_check():
     """Lightweight endpoint for the background keep-alive ping."""
