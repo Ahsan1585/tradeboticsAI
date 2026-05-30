@@ -76,10 +76,22 @@ async def staleness_worker_loop():
                 
                 # 3. Gather Data & Calculate Core Baselines
                 for t in stale_tickers:
+                    current_time = datetime.now(timezone.utc).isoformat()
+                    
                     try:
                         stock = yf.Ticker(t)
                         hist = stock.history(period="1mo")
-                        if len(hist) < 2: continue
+                        
+                        # --- THE QUEUE LOGJAM FIX ---
+                        if hist.empty:
+                            print(f"⚠️ {t} is empty or delisted. Deleting from DB...", file=sys.stderr)
+                            supabase.table('market_universe').delete().eq('ticker', t).execute()
+                            continue
+                            
+                        if len(hist) < 2: 
+                            # If data is weird but not totally empty, update timestamp so it doesn't block the queue
+                            supabase.table('market_universe').update({'last_scanned': current_time}).eq('ticker', t).execute()
+                            continue
                         
                         price = float(hist['Close'].iloc[-1])
                         prev_price = float(hist['Close'].iloc[-2])
@@ -109,7 +121,6 @@ async def staleness_worker_loop():
                         fund_score = max(10, min(95, fund_base))
                         
                         # 4. Upsert the fresh intelligence back to the queue
-                        # This updates the timestamp, pushing it to the back of the line
                         supabase.table('market_universe').upsert({
                             'ticker': t,
                             'price': round(price, 2),
@@ -118,21 +129,34 @@ async def staleness_worker_loop():
                             'fund_score': fund_score,
                             'sector': sector,
                             'pe': round(pe, 2) if pe else 0,
-                            'last_scanned': datetime.now(timezone.utc).isoformat()
+                            'last_scanned': current_time
                         }).execute()
                         
                     except Exception as e:
-                        # If a ticker is delisted or throws an error, log it and keep going
-                        print(f"Worker skipped {t}: {e}", file=sys.stderr)
+                        # --- THE FATAL ERROR FIX ---
+                        print(f"❌ Error processing {t}: {e}. Advancing queue...", file=sys.stderr)
+                        
+                        # Check if it's a known Yahoo delisted error
+                        if "Not Found" in str(e) or "delisted" in str(e).lower():
+                            supabase.table('market_universe').delete().eq('ticker', t).execute()
+                        else:
+                            # For all other random errors, force the timestamp update so it moves to the back of the line
+                            supabase.table('market_universe').update({
+                                'last_scanned': current_time
+                            }).eq('ticker', t).execute()
+                            
                         continue
                         
                 print(f"[{datetime.now()}] ✅ WORKER FINISHED: Queue updated. Sleeping for 60 minutes.", file=sys.stderr)
+                await asyncio.sleep(3600) # Successful batch, sleep for an hour
                 
             except Exception as e:
+                # --- THE MASTER LOOP SAFETY NET ---
                 print(f"❌ CRITICAL WORKER ERROR: {e}", file=sys.stderr)
-        
-        # Sleep for exactly 60 minutes (3600 seconds) before sweeping the next 50
-        await asyncio.sleep(3600)
+                print("Worker crashed. Reviving in 60 seconds...", file=sys.stderr)
+                await asyncio.sleep(60) # Don't sleep an hour on a fatal DB crash, retry in 1 minute
+        else:
+            await asyncio.sleep(60) # If supabase isn't connected yet, wait
 
 @asynccontextmanager
 async def lifecycle(app: FastAPI):
