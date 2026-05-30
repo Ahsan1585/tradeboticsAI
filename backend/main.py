@@ -16,6 +16,7 @@ import asyncio
 from finvizfinance.screener.overview import Overview
 import httpx
 from contextlib import asynccontextmanager
+import requests
 
 load_dotenv()
 
@@ -169,10 +170,15 @@ async def execute_screener(req: ScreenerRequest):
 
     if cache_key in SCREENER_CACHE:
         cached_results, timestamp = SCREENER_CACHE[cache_key]
-        # If the cached data is fresh (less than 15 minutes old), bypass Finviz entirely
         if current_time - timestamp < timedelta(minutes=CACHE_MINUTES):
-            print(f"[{current_time}] ⚡ SERVING {cache_key} FROM CACHE. Bypassing Finviz.", file=sys.stderr)
+            print(f"[{current_time}] ⚡ SERVING {cache_key} FROM CACHE.", file=sys.stderr)
             return {"results": cached_results}
+
+    # 🚀 BROWSER SPOOFING SETUP
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    })
 
     scored_candidates = []
     
@@ -183,7 +189,8 @@ async def execute_screener(req: ScreenerRequest):
         if req.trade_style in ["Day Trade", "Swing Trade"]:
             print(f"[{datetime.now()}] ⚡ TACTICAL SCAN: Hunting High-RVOL Mid-Caps...", file=sys.stderr)
             try:
-                screener = Overview()
+                # Inject the session here
+                screener = Overview(session=session)
                 screener.set_filter(filters_dict={
                     'Market Cap.': 'Mid ($2bln to $10bln)',
                     'Average Volume': 'Over 1M',
@@ -199,7 +206,8 @@ async def execute_screener(req: ScreenerRequest):
             try:
                 indices = ['S&P 500', 'DJIA']
                 for idx in indices:
-                    screener = Overview()
+                    # Inject the session here
+                    screener = Overview(session=session)
                     screener.set_filter(filters_dict={'Index': idx})
                     df = screener.screener_view()
                     combined_df = pd.concat([combined_df, df])
@@ -209,13 +217,10 @@ async def execute_screener(req: ScreenerRequest):
         # --- 3. DEDUPLICATION PHASE ---
         if not combined_df.empty:
             universe_df = combined_df.drop_duplicates(subset='Ticker')
-            print(f"[{datetime.now()}] ✅ GATHERING SUCCESS: {len(universe_df)} unique assets loaded.", file=sys.stderr)
             
             # --- 4. PROPRIETARY SCORING ENGINE ---
             for index, row in universe_df.iterrows():
                 t = row['Ticker']
-                
-                # Clean Finviz data
                 price = float(row['Price']) if str(row['Price']) != '-' else 0
                 pe_raw = str(row['P/E'])
                 pe = float(pe_raw) if pe_raw != '-' else 0
@@ -223,19 +228,16 @@ async def execute_screener(req: ScreenerRequest):
                 change = str(row['Change']).replace('%', '')
                 daily_change = float(change) if change != '-' else 0
 
-                # Quant Math: Technical Baseline
                 tech_base = 50
                 if daily_change > 0: tech_base += 15
                 else: tech_base -= 15
                 tech_score = max(10, min(95, tech_base))
 
-                # Quant Math: Fundamental Baseline
                 fund_base = 50
                 if pe and 0 < pe < 25: fund_base += 20
                 elif pe and pe > 50: fund_base -= 20
                 fund_score = max(10, min(95, fund_base))
 
-                # Risk Modifiers
                 if req.risk_level == "Aggressive":
                     total_score = (tech_score * 0.8) + (fund_score * 0.2)
                 elif req.risk_level == "Conservative":
@@ -243,18 +245,13 @@ async def execute_screener(req: ScreenerRequest):
                 else:
                     total_score = (tech_score * 0.5) + (fund_score * 0.5)
 
-                # Horizon Bonuses
                 style_bonus = 0
                 if req.trade_style == "Day Trade" and t in ["NVDA", "TSLA", "AMD"]: style_bonus = 15 
                 elif req.trade_style == "Long Term" and pe and 0 < pe < 35: style_bonus = 5
 
-                # 🚀 THE TIE-BREAKER: Add a micro-fraction of daily momentum to the sort weight
                 sort_weight = total_score + style_bonus + (daily_change * 0.01)
-                
-                # Calculate display score WITHOUT the tie-breaker so it stays a clean integer
                 final_display_score = max(10, min(99, math.ceil(total_score + style_bonus)))
 
-                # THE FULL, COMPLETED DICTIONARY
                 scored_candidates.append({
                     "ticker": t,
                     "price": price,
@@ -270,14 +267,10 @@ async def execute_screener(req: ScreenerRequest):
         print(f"❌ FINVIZ PIPELINE ERROR: {e}", file=sys.stderr)
         return {"results": []}
 
-    # Sort and slice the top 30 candidates
     scored_candidates.sort(key=lambda x: x['sort_weight'], reverse=True)
     final_top_30 = scored_candidates[:30]
     
-    # 5. COMMIT TO CACHE
     SCREENER_CACHE[cache_key] = (final_top_30, current_time)
-    print(f"[{current_time}] 💾 SAVED {cache_key} TO CACHE.", file=sys.stderr)
-    
     return {"results": final_top_30}
 
 @app.get("/analyze/{ticker}")
