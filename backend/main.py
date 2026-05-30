@@ -169,9 +169,19 @@ def get_market_universe():
         {"url": "https://en.wikipedia.org/wiki/Dow_Jones_Industrial_Average", "col": "Symbol"}
     ]
     
+    # 🚀 THE FIX: Spoof a real Chrome browser to bypass Wikipedia's bot blocker
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    
     for source in sources:
         try:
-            tables = pd.read_html(source["url"])
+            # 1. Fetch the raw HTML using requests with our fake headers
+            response = requests.get(source["url"], headers=headers, timeout=10)
+            response.raise_for_status()  # Check for HTTP errors
+            
+            # 2. Pass the raw HTML text into pandas instead of the URL
+            tables = pd.read_html(response.text)
             df = tables[0] if source["col"] in tables[0].columns else tables[1]
             tickers = df[source["col"]].tolist()
             
@@ -182,6 +192,12 @@ def get_market_universe():
             print(f"❌ FETCH ERROR ({source['url']}): {e}", file=sys.stderr)
             
     print(f"✅ DYNAMIC MARKET UNIVERSE UPDATED: {len(all_tickers)} unique symbols loaded.", file=sys.stderr)
+    
+    # Fallback safety net: If Wikipedia still fails, load the heavy hitters so the app doesn't crash
+    if not all_tickers:
+        print("⚠️ USING FALLBACK LIST DUE TO WIKIPEDIA BLOCK.", file=sys.stderr)
+        return ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "BRK-B", "LLY", "AVGO", "JPM", "V", "WMT", "UNH", "XOM"]
+        
     return list(all_tickers)
 
 # --- ENDPOINTS ---
