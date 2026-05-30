@@ -132,6 +132,9 @@ async def staleness_worker_loop():
                             'last_scanned': current_time
                         }).execute()
                         
+                        # --- ADDED: Visual Success Log ---
+                        print(f"✅ Successfully updated {t}", file=sys.stderr)
+                        
                     except Exception as e:
                         # --- THE FATAL ERROR FIX ---
                         print(f"❌ Error processing {t}: {e}. Advancing queue...", file=sys.stderr)
