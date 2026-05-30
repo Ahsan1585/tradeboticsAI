@@ -174,51 +174,48 @@ async def execute_screener(req: ScreenerRequest):
             print(f"[{current_time}] ⚡ SERVING {cache_key} FROM CACHE.", file=sys.stderr)
             return {"results": cached_results}
 
-    # 🚀 BROWSER SPOOFING SETUP
-    session = requests.Session()
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    })
+    # 2. THE NEW YFINANCE GATHERING PHASE
+    # This replaces the blocked Finviz scraper with a robust list-based fetcher
+    if req.trade_style in ["Day Trade", "Swing Trade"]:
+        ticker_pool = ["NVDA", "TSLA", "AMD", "META", "PLTR", "COIN", "SMCI", "ARM", "MSTR", "HOOD", "PYPL", "AVGO", "NFLX", "MSFT", "GOOGL"]
+    else:
+        ticker_pool = ["AAPL", "JPM", "LLY", "COST", "WMT", "UNH", "XOM", "CVX", "PG", "JNJ", "ABBV", "MSFT", "GOOGL", "AMZN", "BRK.B"]
 
+    data_list = []
+    print(f"[{datetime.now()}] 🔍 RUNNING YFINANCE SCAN ON {len(ticker_pool)} ASSETS...", file=sys.stderr)
+
+    for t in ticker_pool:
+        try:
+            stock = yf.Ticker(t)
+            hist = stock.history(period="2d", prepost=True) # Get last 2 days for price/change
+            if len(hist) < 2: continue
+            
+            info = stock.info
+            price = hist['Close'].iloc[-1]
+            prev_price = hist['Close'].iloc[-2]
+            change = ((price - prev_price) / prev_price) * 100
+            
+            # Formatting to match Finviz dataframe keys EXACTLY
+            data_list.append({
+                "Ticker": t,
+                "Price": f"{price:.2f}",
+                "P/E": str(info.get("trailingPE", "-")),
+                "Sector": info.get("sector", "N/A"),
+                "Change": f"{change:.2f}%"
+            })
+        except Exception as e:
+            continue
+            
+    combined_df = pd.DataFrame(data_list)
+
+    # --- 3. DEDUPLICATION PHASE (Your original logic) ---
     scored_candidates = []
-    
     try:
-        # --- 2. DYNAMIC GATHERING PHASE ---
-        combined_df = pd.DataFrame()
-
-        if req.trade_style in ["Day Trade", "Swing Trade"]:
-            print(f"[{datetime.now()}] ⚡ TACTICAL SCAN: Hunting High-RVOL Mid-Caps...", file=sys.stderr)
-            try:
-                # Inject the session here
-                screener = Overview(session=session)
-                screener.set_filter(filters_dict={
-                    'Market Cap.': 'Mid ($2bln to $10bln)',
-                    'Average Volume': 'Over 1M',
-                    'Relative Volume': 'Over 1.5',
-                    'Price': 'Over $10'
-                })
-                combined_df = screener.screener_view()
-            except Exception as e:
-                print(f"[{datetime.now()}] ⚠️ TACTICAL SCAN ERROR: {e}", file=sys.stderr)
-                
-        else:
-            print(f"[{datetime.now()}] 🏦 MACRO SCAN: Loading Blue-Chip Indices...", file=sys.stderr)
-            try:
-                indices = ['S&P 500', 'DJIA']
-                for idx in indices:
-                    # Inject the session here
-                    screener = Overview(session=session)
-                    screener.set_filter(filters_dict={'Index': idx})
-                    df = screener.screener_view()
-                    combined_df = pd.concat([combined_df, df])
-            except Exception as e:
-                print(f"[{datetime.now()}] ⚠️ MACRO SCAN ERROR: {e}", file=sys.stderr)
-
-        # --- 3. DEDUPLICATION PHASE ---
         if not combined_df.empty:
             universe_df = combined_df.drop_duplicates(subset='Ticker')
+            print(f"[{datetime.now()}] ✅ GATHERING SUCCESS: {len(universe_df)} unique assets loaded.", file=sys.stderr)
             
-            # --- 4. PROPRIETARY SCORING ENGINE ---
+            # --- 4. PROPRIETARY SCORING ENGINE (Unchanged) ---
             for index, row in universe_df.iterrows():
                 t = row['Ticker']
                 price = float(row['Price']) if str(row['Price']) != '-' else 0
@@ -264,7 +261,7 @@ async def execute_screener(req: ScreenerRequest):
             print(f"[{datetime.now()}] ⚠️ GATHERING RETURNED EMPTY DATAFRAME.", file=sys.stderr)
 
     except Exception as e:
-        print(f"❌ FINVIZ PIPELINE ERROR: {e}", file=sys.stderr)
+        print(f"❌ PIPELINE ERROR: {e}", file=sys.stderr)
         return {"results": []}
 
     scored_candidates.sort(key=lambda x: x['sort_weight'], reverse=True)
