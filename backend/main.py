@@ -43,13 +43,108 @@ async def keep_alive_loop():
             # Sleep for 10 minutes (600 seconds) before pinging again
             await asyncio.sleep(600)
 
+async def staleness_worker_loop():
+    """Runs every 60 minutes. Sweeps the oldest 50 tickers, scores them, and upserts to Supabase."""
+    # Give the server 60 seconds to fully boot up before starting the heavy math
+    await asyncio.sleep(60)
+    
+    while True:
+        if supabase:
+            try:
+                print(f"[{datetime.now()}] 🤖 WORKER WAKING UP: Initiating Staleness Sweep...", file=sys.stderr)
+                
+                # 1. Ask Supabase for the 50 most stale tickers (oldest timestamp first)
+                response = supabase.table('market_universe').select('ticker').order('last_scanned', desc=False, nullsfirst=True).limit(50).execute()
+                stale_tickers = [row['ticker'] for row in response.data]
+                
+                # 2. Database Seeding (If table is completely empty)
+                if not stale_tickers:
+                    print(f"[{datetime.now()}] ⚠️ EMPTY QUEUE: Seeding database from Wikipedia...", file=sys.stderr)
+                    universe = get_market_universe()
+                    
+                    # Batch insert to avoid overwhelming Supabase limits
+                    for i in range(0, len(universe), 100):
+                        chunk = universe[i:i + 100]
+                        seed_data = [{'ticker': t} for t in chunk]
+                        supabase.table('market_universe').upsert(seed_data).execute()
+                        
+                    # Re-fetch the first 50 now that the queue exists
+                    response = supabase.table('market_universe').select('ticker').order('last_scanned', desc=False, nullsfirst=True).limit(50).execute()
+                    stale_tickers = [row['ticker'] for row in response.data]
+
+                print(f"[{datetime.now()}] 🔍 WORKER SCANNING: Processing {len(stale_tickers)} tickers...", file=sys.stderr)
+                
+                # 3. Gather Data & Calculate Core Baselines
+                for t in stale_tickers:
+                    try:
+                        stock = yf.Ticker(t)
+                        hist = stock.history(period="1mo")
+                        if len(hist) < 2: continue
+                        
+                        price = float(hist['Close'].iloc[-1])
+                        prev_price = float(hist['Close'].iloc[-2])
+                        daily_change = ((price - prev_price) / prev_price) * 100
+                        
+                        info = stock.info
+                        pe = info.get("trailingPE", 0)
+                        margins = info.get("profitMargins", 0)
+                        sector = info.get("sector", "Macro Profile")
+                        
+                        # --- ISOLATED TECHNICAL MATH ---
+                        tech_base = 50
+                        if len(hist) >= 20:
+                            sma_20 = hist['Close'].rolling(window=20).mean().iloc[-1]
+                            if price > sma_20: tech_base += 25
+                            else: tech_base -= 25
+                        if price > prev_price: tech_base += 15
+                        else: tech_base -= 15
+                        tech_score = max(10, min(95, tech_base))
+                        
+                        # --- ISOLATED FUNDAMENTAL MATH ---
+                        fund_base = 50
+                        if pe and 0 < pe < 25: fund_base += 20
+                        elif pe and pe > 50: fund_base -= 20
+                        if margins and margins > 0.15: fund_base += 20
+                        elif margins and margins < 0: fund_base -= 25
+                        fund_score = max(10, min(95, fund_base))
+                        
+                        # 4. Upsert the fresh intelligence back to the queue
+                        # This updates the timestamp, pushing it to the back of the line
+                        supabase.table('market_universe').upsert({
+                            'ticker': t,
+                            'price': round(price, 2),
+                            'daily_change': round(daily_change, 2),
+                            'tech_score': tech_score,
+                            'fund_score': fund_score,
+                            'sector': sector,
+                            'pe': round(pe, 2) if pe else 0,
+                            'last_scanned': datetime.now(timezone.utc).isoformat()
+                        }).execute()
+                        
+                    except Exception as e:
+                        # If a ticker is delisted or throws an error, log it and keep going
+                        print(f"Worker skipped {t}: {e}", file=sys.stderr)
+                        continue
+                        
+                print(f"[{datetime.now()}] ✅ WORKER FINISHED: Queue updated. Sleeping for 60 minutes.", file=sys.stderr)
+                
+            except Exception as e:
+                print(f"❌ CRITICAL WORKER ERROR: {e}", file=sys.stderr)
+        
+        # Sleep for exactly 60 minutes (3600 seconds) before sweeping the next 50
+        await asyncio.sleep(3600)
+
 @asynccontextmanager
 async def lifecycle(app: FastAPI):
-    # Create the background task immediately on startup
+    # 1. The Ping loop (Prevents Render Sleep)
     asyncio.create_task(keep_alive_loop())
+    
+    # 2. THE NEW DATA AGENT (Sweeps 50 stale stocks every hour)
+    asyncio.create_task(staleness_worker_loop())
+    
     yield
 
-# Initialize FastAPI with the lifecycle manager to run the loop
+# Initialize FastAPI with the lifecycle manager to run the loops
 app = FastAPI(lifespan=lifecycle)
 
 app.add_middleware(
