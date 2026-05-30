@@ -61,12 +61,17 @@ async def staleness_worker_loop():
                 if not stale_tickers:
                     print(f"[{datetime.now()}] ⚠️ EMPTY QUEUE: Seeding database from Wikipedia...", file=sys.stderr)
                     universe = get_market_universe()
+                    print(f"[{datetime.now()}] 📦 Scraped {len(universe)} tickers. Breaking into safe batches of 50...", file=sys.stderr)
                     
-                    # Batch insert to avoid overwhelming Supabase limits
-                    for i in range(0, len(universe), 100):
-                        chunk = universe[i:i + 100]
+                    # Batch insert to avoid overwhelming Supabase limits (Reduced to 50)
+                    for i in range(0, len(universe), 50):
+                        chunk = universe[i:i + 50]
                         seed_data = [{'ticker': t} for t in chunk]
-                        supabase.table('market_universe').upsert(seed_data).execute()
+                        try:
+                            supabase.table('market_universe').upsert(seed_data).execute()
+                            print(f"✅ Batch {i} to {i+len(chunk)} inserted successfully.", file=sys.stderr)
+                        except Exception as e:
+                            print(f"❌ Failed to insert batch {i}: {e}", file=sys.stderr)
                         
                     # Re-fetch the first 50 now that the queue exists
                     response = supabase.table('market_universe').select('ticker').order('last_scanned', desc=False, nullsfirst=True).limit(50).execute()
