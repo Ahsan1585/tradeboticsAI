@@ -333,115 +333,94 @@ async def root_health_check():
 
 @app.post("/run-screener")
 async def execute_screener(req: ScreenerRequest):
-    global TICKER_LIST_CACHE, LAST_TICKER_UPDATE
-    
-    # 1. DYNAMIC LIST REFRESH (Checks if 24 hours have passed or cache is empty)
-    if not TICKER_LIST_CACHE or (LAST_TICKER_UPDATE and (datetime.now() - LAST_TICKER_UPDATE).days >= 1):
-        print(f"[{datetime.now()}] 🌐 REFRESHING UNIVERSE FROM WIKIPEDIA...", file=sys.stderr)
-        TICKER_LIST_CACHE = get_market_universe()
-        LAST_TICKER_UPDATE = datetime.now()
-
-    # 2. THE CACHE CHECK (60-minute data cache)
+    # 1. CACHE CHECK (Reduced to 5 minutes since math is now pre-calculated)
     cache_key = f"{req.trade_style}_{req.risk_level}"
     current_time = datetime.now()
 
     if cache_key in SCREENER_CACHE:
         cached_results, timestamp = SCREENER_CACHE[cache_key]
-        if current_time - timestamp < timedelta(minutes=CACHE_MINUTES):
+        if current_time - timestamp < timedelta(minutes=5):
             print(f"[{current_time}] ⚡ SERVING {cache_key} FROM CACHE.", file=sys.stderr)
             return {"results": cached_results}
 
-    # 3. SELECT A SAFE SUBSAMPLE FOR PROCESSING
-    ticker_pool = random.sample(TICKER_LIST_CACHE, min(50, len(TICKER_LIST_CACHE)))
-
-    data_list = []
-    print(f"[{datetime.now()}] 🔍 RUNNING YFINANCE SCAN ON {len(ticker_pool)} ASSETS...", file=sys.stderr)
-
-    for t in ticker_pool:
-        try:
-            stock = yf.Ticker(t)
-            hist = stock.history(period="2d", prepost=True) # Get last 2 days for price/change
-            if len(hist) < 2: continue
-            
-            info = stock.info
-            price = hist['Close'].iloc[-1]
-            prev_price = hist['Close'].iloc[-2]
-            change = ((price - prev_price) / prev_price) * 100
-            
-            # Formatting to match dataframe keys EXACTLY
-            data_list.append({
-                "Ticker": t,
-                "Price": f"{price:.2f}",
-                "P/E": str(info.get("trailingPE", "-")),
-                "Sector": info.get("sector", "N/A"),
-                "Change": f"{change:.2f}%"
-            })
-        except Exception as e:
-            continue
-            
-    combined_df = pd.DataFrame(data_list)
-
-    # --- 3. DEDUPLICATION PHASE ---
-    scored_candidates = []
+    print(f"[{datetime.now()}] ⚡ PULLING PRE-CALCULATED SCORES FROM SUPABASE...", file=sys.stderr)
+    
     try:
-        if not combined_df.empty:
-            universe_df = combined_df.drop_duplicates(subset='Ticker')
-            print(f"[{datetime.now()}] ✅ GATHERING SUCCESS: {len(universe_df)} unique assets loaded.", file=sys.stderr)
+        # 2. FETCH FROM SUPABASE (Only grab tickers the worker has finished processing)
+        response = supabase.table('market_universe').select('*').not_is('tech_score', 'null').execute()
+        db_universe = response.data
+        
+        if not db_universe:
+            print("⚠️ SUPABASE RETURNED NO PROCESSED TICKERS YET.", file=sys.stderr)
+            return {"results": []}
+
+        # 3. APPLY USER PREFERENCES (Aggressive vs Conservative)
+        scored_candidates = []
+        for row in db_universe:
+            t = row['ticker']
+            tech_score = row['tech_score']
+            fund_score = row['fund_score']
+            sector = row['sector']
+            daily_change = row['daily_change']
+            db_price = row['price']
+
+            # Blend the pre-calculated scores based on the user's selected Risk Level
+            if req.risk_level == "Aggressive":
+                total_score = (tech_score * 0.8) + (fund_score * 0.2)
+            elif req.risk_level == "Conservative":
+                total_score = (tech_score * 0.2) + (fund_score * 0.8)
+            else:
+                total_score = (tech_score * 0.5) + (fund_score * 0.5)
+
+            # Apply Style Bonuses invisibly
+            style_bonus = 0
+            if req.trade_style == "Day Trade" and t in ["NVDA", "TSLA", "AMD", "COIN"]: style_bonus = 15 
+            elif req.trade_style == "Long Term" and fund_score > 70: style_bonus = 5
+
+            sort_weight = total_score + style_bonus + (daily_change * 0.01)
+            final_display_score = max(10, min(99, math.ceil(total_score + style_bonus)))
             
-            # --- 4. PROPRIETARY SCORING ENGINE ---
-            for index, row in universe_df.iterrows():
-                t = row['Ticker']
-                price = float(row['Price']) if str(row['Price']) != '-' else 0
-                pe_raw = str(row['P/E'])
-                pe = float(pe_raw) if pe_raw != '-' else 0
-                sector = str(row['Sector'])
-                change = str(row['Change']).replace('%', '')
-                daily_change = float(change) if change != '-' else 0
+            scored_candidates.append({
+                "ticker": t,
+                "score": final_display_score,
+                "sort_weight": sort_weight,
+                "sector": sector,
+                "db_price": db_price, # Store the 12-hr price as a fallback
+                "metrics": f"P/E: {row['pe']} | Sector: {sector}"
+            })
 
-                tech_base = 50
-                if daily_change > 0: tech_base += 15
-                else: tech_base -= 15
-                tech_score = max(10, min(95, tech_base))
+        # 4. ISOLATE THE ELITE (Sort and grab only the top 30)
+        scored_candidates.sort(key=lambda x: x['sort_weight'], reverse=True)
+        top_30 = scored_candidates[:30]
 
-                fund_base = 50
-                if pe and 0 < pe < 25: fund_base += 20
-                elif pe and pe > 50: fund_base -= 20
-                fund_score = max(10, min(95, fund_base))
-
-                if req.risk_level == "Aggressive":
-                    total_score = (tech_score * 0.8) + (fund_score * 0.2)
-                elif req.risk_level == "Conservative":
-                    total_score = (tech_score * 0.2) + (fund_score * 0.8)
+        # 5. THE LIVE PRICE STITCH (Only fetch live data for the winners)
+        print(f"[{datetime.now()}] 🔍 STITCHING LIVE PRICES FOR TOP 30...", file=sys.stderr)
+        final_results = []
+        
+        for candidate in top_30:
+            try:
+                stock = yf.Ticker(candidate['ticker'])
+                hist = stock.history(period="1d")
+                if not hist.empty:
+                    # Update with the exact live to-the-minute price
+                    candidate['price'] = round(float(hist['Close'].iloc[-1]), 2)
                 else:
-                    total_score = (tech_score * 0.5) + (fund_score * 0.5)
+                    candidate['price'] = candidate['db_price']
+            except Exception:
+                # If Yahoo Finance fails for one ticker, fall back to the Supabase price gracefully
+                candidate['price'] = candidate['db_price']
+            
+            # Remove the temporary fallback variable before sending to frontend
+            candidate.pop('db_price', None)
+            final_results.append(candidate)
 
-                style_bonus = 0
-                if req.trade_style == "Day Trade" and t in ["NVDA", "TSLA", "AMD"]: style_bonus = 15 
-                elif req.trade_style == "Long Term" and pe and 0 < pe < 35: style_bonus = 5
-
-                sort_weight = total_score + style_bonus + (daily_change * 0.01)
-                final_display_score = max(10, min(99, math.ceil(total_score + style_bonus)))
-
-                scored_candidates.append({
-                    "ticker": t,
-                    "price": price,
-                    "score": final_display_score,
-                    "sort_weight": sort_weight,
-                    "sector": sector,
-                    "metrics": f"P/E: {pe if pe else 'N/A'} | Sector: {sector}"
-                })
-        else:
-            print(f"[{datetime.now()}] ⚠️ GATHERING RETURNED EMPTY DATAFRAME.", file=sys.stderr)
+        # 6. CACHE & RETURN
+        SCREENER_CACHE[cache_key] = (final_results, current_time)
+        return {"results": final_results}
 
     except Exception as e:
-        print(f"❌ PIPELINE ERROR: {e}", file=sys.stderr)
+        print(f"❌ HYBRID FETCH ERROR: {e}", file=sys.stderr)
         return {"results": []}
-
-    scored_candidates.sort(key=lambda x: x['sort_weight'], reverse=True)
-    final_top_30 = scored_candidates[:30]
-    
-    SCREENER_CACHE[cache_key] = (final_top_30, current_time)
-    return {"results": final_top_30}
 
 @app.get("/analyze/{ticker}")
 async def analyze_ticker(ticker: str): 
