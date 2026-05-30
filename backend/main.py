@@ -347,7 +347,7 @@ async def execute_screener(req: ScreenerRequest):
     
     try:
         # 2. FETCH FROM SUPABASE (Only grab tickers the worker has finished processing)
-        response = supabase.table('market_universe').select('*').not_is('tech_score', 'null').execute()
+        response = supabase.table('market_universe').select('*').not_('tech_score', 'is', None).execute()
         db_universe = response.data
         
         if not db_universe:
