@@ -355,13 +355,17 @@ def get_market_universe():
 
 @app.get("/nuke-database")
 def nuke_database():
-    """Forces the Render server to wipe its own database table."""
+    """Forces the Render server to wipe its own database table and expose the response."""
     try:
-        # Deletes every row where the ticker is not '0' (which deletes everything)
-        supabase.table('market_universe').delete().neq('ticker', '0').execute()
-        return {"message": "SUCCESS: The database Render is connected to has been completely wiped. Go restart the Render service now."}
+        response = supabase.table('market_universe').delete().neq('ticker', 'FAKE_TICKER').execute()
+        
+        # If Supabase actually deletes the rows, it will list them in response.data
+        return {
+            "deleted_rows": response.data,
+            "message": "If 'deleted_rows' is an empty list [], Supabase is silently blocking the command."
+        }
     except Exception as e:
-        return {"error": str(e)}
+        return {"CRITICAL_ERROR": str(e)}
 
 @app.get("/")
 async def root_health_check():
