@@ -13,7 +13,7 @@ from supabase import create_client, Client
 import sys
 import pandas as pd
 import asyncio
-from finvizfinance.screener.overview import Overview
+import random
 import httpx
 from contextlib import asynccontextmanager
 import requests
@@ -94,7 +94,11 @@ else:
 
 # --- GLOBAL CACHE ---
 SCREENER_CACHE = {}
-CACHE_MINUTES = 15
+CACHE_MINUTES = 60
+
+# --- WIKIPEDIA UNIVERSE CACHING ---
+TICKER_LIST_CACHE = []
+LAST_TICKER_UPDATE = None
 
 # --- REQUEST MODELS ---
 class TradeRequest(BaseModel):
@@ -155,6 +159,31 @@ def update_ai_cache(cache_key: str, payload: dict):
     except Exception as e:
         print(f"Cache save error: {e}", file=sys.stderr)
 
+def get_market_universe():
+    """Fetches unique tickers from S&P 500, Nasdaq-100, and DJIA from Wikipedia."""
+    all_tickers = set()
+    
+    sources = [
+        {"url": "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", "col": "Symbol"},
+        {"url": "https://en.wikipedia.org/wiki/Nasdaq-100", "col": "Ticker"},
+        {"url": "https://en.wikipedia.org/wiki/Dow_Jones_Industrial_Average", "col": "Symbol"}
+    ]
+    
+    for source in sources:
+        try:
+            tables = pd.read_html(source["url"])
+            df = tables[0] if source["col"] in tables[0].columns else tables[1]
+            tickers = df[source["col"]].tolist()
+            
+            for t in tickers:
+                clean_t = str(t).replace('.', '-').strip()
+                all_tickers.add(clean_t)
+        except Exception as e:
+            print(f"❌ FETCH ERROR ({source['url']}): {e}", file=sys.stderr)
+            
+    print(f"✅ DYNAMIC MARKET UNIVERSE UPDATED: {len(all_tickers)} unique symbols loaded.", file=sys.stderr)
+    return list(all_tickers)
+
 # --- ENDPOINTS ---
 
 @app.get("/")
@@ -164,7 +193,15 @@ async def root_health_check():
 
 @app.post("/run-screener")
 async def execute_screener(req: ScreenerRequest):
-    # 1. THE CACHE CHECK
+    global TICKER_LIST_CACHE, LAST_TICKER_UPDATE
+    
+    # 1. DYNAMIC LIST REFRESH (Checks if 24 hours have passed or cache is empty)
+    if not TICKER_LIST_CACHE or (LAST_TICKER_UPDATE and (datetime.now() - LAST_TICKER_UPDATE).days >= 1):
+        print(f"[{datetime.now()}] 🌐 REFRESHING UNIVERSE FROM WIKIPEDIA...", file=sys.stderr)
+        TICKER_LIST_CACHE = get_market_universe()
+        LAST_TICKER_UPDATE = datetime.now()
+
+    # 2. THE CACHE CHECK (60-minute data cache)
     cache_key = f"{req.trade_style}_{req.risk_level}"
     current_time = datetime.now()
 
@@ -174,12 +211,8 @@ async def execute_screener(req: ScreenerRequest):
             print(f"[{current_time}] ⚡ SERVING {cache_key} FROM CACHE.", file=sys.stderr)
             return {"results": cached_results}
 
-    # 2. THE NEW YFINANCE GATHERING PHASE
-    # This replaces the blocked Finviz scraper with a robust list-based fetcher
-    if req.trade_style in ["Day Trade", "Swing Trade"]:
-        ticker_pool = ["NVDA", "TSLA", "AMD", "META", "PLTR", "COIN", "SMCI", "ARM", "MSTR", "HOOD", "PYPL", "AVGO", "NFLX", "MSFT", "GOOGL"]
-    else:
-        ticker_pool = ["AAPL", "JPM", "LLY", "COST", "WMT", "UNH", "XOM", "CVX", "PG", "JNJ", "ABBV", "MSFT", "GOOGL", "AMZN", "BRK.B"]
+    # 3. SELECT A SAFE SUBSAMPLE FOR PROCESSING
+    ticker_pool = random.sample(TICKER_LIST_CACHE, min(50, len(TICKER_LIST_CACHE)))
 
     data_list = []
     print(f"[{datetime.now()}] 🔍 RUNNING YFINANCE SCAN ON {len(ticker_pool)} ASSETS...", file=sys.stderr)
@@ -195,7 +228,7 @@ async def execute_screener(req: ScreenerRequest):
             prev_price = hist['Close'].iloc[-2]
             change = ((price - prev_price) / prev_price) * 100
             
-            # Formatting to match Finviz dataframe keys EXACTLY
+            # Formatting to match dataframe keys EXACTLY
             data_list.append({
                 "Ticker": t,
                 "Price": f"{price:.2f}",
@@ -208,14 +241,14 @@ async def execute_screener(req: ScreenerRequest):
             
     combined_df = pd.DataFrame(data_list)
 
-    # --- 3. DEDUPLICATION PHASE (Your original logic) ---
+    # --- 3. DEDUPLICATION PHASE ---
     scored_candidates = []
     try:
         if not combined_df.empty:
             universe_df = combined_df.drop_duplicates(subset='Ticker')
             print(f"[{datetime.now()}] ✅ GATHERING SUCCESS: {len(universe_df)} unique assets loaded.", file=sys.stderr)
             
-            # --- 4. PROPRIETARY SCORING ENGINE (Unchanged) ---
+            # --- 4. PROPRIETARY SCORING ENGINE ---
             for index, row in universe_df.iterrows():
                 t = row['Ticker']
                 price = float(row['Price']) if str(row['Price']) != '-' else 0
