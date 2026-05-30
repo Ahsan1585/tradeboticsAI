@@ -296,26 +296,24 @@ def get_market_universe():
         {"url": "https://en.wikipedia.org/wiki/Dow_Jones_Industrial_Average", "col": "Symbol"}
     ]
     
+    # 🚀 THE FIX: Wikipedia blocks fake Chrome browsers. Use a custom app identifier.
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        'User-Agent': 'TradeBoticsApp/1.0 (Data Scraper)'
     }
     
     for source in sources:
         try:
-            response = requests.get(source["url"], headers=headers, timeout=10)
+            response = requests.get(source["url"], headers=headers, timeout=15)
             response.raise_for_status()
             tables = pd.read_html(response.text)
             
             target_df = None
             target_col_name = None
             
-            # 🚀 THE FIX: Fuzzy Column Matching & MultiIndex Flattening
             for df in tables:
-                # Flatten complex Wikipedia table headers if they exist
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = ['_'.join(map(str, col)).strip() for col in df.columns.values]
                     
-                # Look for the target column fuzzily (case-insensitive)
                 for col in df.columns:
                     if source["col"].lower() in str(col).lower():
                         target_df = df
@@ -328,7 +326,6 @@ def get_market_universe():
                 tickers = target_df[target_col_name].tolist()
                 for t in tickers:
                     clean_t = str(t).replace('.', '-').strip()
-                    # STRICT CLEANING: Must be 1-5 letters (removes Wikipedia footnotes)
                     if isinstance(clean_t, str) and 1 <= len(clean_t) <= 5 and clean_t.replace('-', '').isalpha():
                         all_tickers.add(clean_t)
             else:
@@ -337,8 +334,7 @@ def get_market_universe():
         except Exception as e:
             print(f"❌ FETCH ERROR ({source['url']}): {e}", file=sys.stderr)
             
-    # 🚀 THE MEGA-FALLBACK: Top 100 US Equities
-    # If we get less than 50 stocks, something went wrong. Use this massive list instead.
+    # THE MEGA-FALLBACK (Kept as a safety net, but shouldn't trigger now)
     if len(all_tickers) < 50:
         print("⚠️ USING MEGA-FALLBACK LIST DUE TO WIKIPEDIA FORMAT/BLOCK.", file=sys.stderr)
         return [
