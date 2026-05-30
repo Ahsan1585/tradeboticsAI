@@ -177,31 +177,54 @@ def get_market_universe():
         try:
             response = requests.get(source["url"], headers=headers, timeout=10)
             response.raise_for_status()
-            
             tables = pd.read_html(response.text)
             
-            # 🚀 THE FIX: Scan ALL tables on the page until we find the right column
             target_df = None
-            for df in tables:
-                if source["col"] in df.columns:
-                    target_df = df
-                    break  # Found the table, stop searching!
+            target_col_name = None
             
-            if target_df is not None:
-                tickers = target_df[source["col"]].tolist()
+            # 🚀 THE FIX: Fuzzy Column Matching & MultiIndex Flattening
+            for df in tables:
+                # Flatten complex Wikipedia table headers if they exist
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = ['_'.join(map(str, col)).strip() for col in df.columns.values]
+                    
+                # Look for the target column fuzzily (case-insensitive)
+                for col in df.columns:
+                    if source["col"].lower() in str(col).lower():
+                        target_df = df
+                        target_col_name = col
+                        break
+                if target_df is not None:
+                    break
+            
+            if target_df is not None and target_col_name is not None:
+                tickers = target_df[target_col_name].tolist()
                 for t in tickers:
                     clean_t = str(t).replace('.', '-').strip()
-                    all_tickers.add(clean_t)
+                    # STRICT CLEANING: Must be 1-5 letters (removes Wikipedia footnotes)
+                    if isinstance(clean_t, str) and 1 <= len(clean_t) <= 5 and clean_t.replace('-', '').isalpha():
+                        all_tickers.add(clean_t)
             else:
                 print(f"⚠️ COLUMN '{source['col']}' NOT FOUND IN {source['url']}", file=sys.stderr)
                 
         except Exception as e:
             print(f"❌ FETCH ERROR ({source['url']}): {e}", file=sys.stderr)
             
-    # Fallback safety net
-    if not all_tickers:
-        print("⚠️ USING FALLBACK LIST DUE TO WIKIPEDIA BLOCK/FORMAT CHANGE.", file=sys.stderr)
-        return ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "BRK-B", "LLY", "AVGO", "JPM", "V", "WMT", "UNH", "XOM"]
+    # 🚀 THE MEGA-FALLBACK: Top 100 US Equities
+    # If we get less than 50 stocks, something went wrong. Use this massive list instead.
+    if len(all_tickers) < 50:
+        print("⚠️ USING MEGA-FALLBACK LIST DUE TO WIKIPEDIA FORMAT/BLOCK.", file=sys.stderr)
+        return [
+            "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "BRK-B", "LLY", "TSLA", "AVGO",
+            "JPM", "V", "WMT", "UNH", "XOM", "MA", "PG", "JNJ", "HD", "COST", "MRK", "ABBV", 
+            "CRM", "AMD", "CVX", "NFLX", "BAC", "KO", "PEP", "TMO", "LIN", "DIS", "ADBE", 
+            "MCD", "CSCO", "ABT", "INTU", "QCOM", "INTC", "CMCSA", "DHR", "VZ", "IBM", 
+            "AMGN", "NOW", "TXN", "PFE", "PM", "CAT", "SPGI", "UNP", "BA", "COP", "HON", 
+            "AMAT", "GS", "GE", "RTX", "ISRG", "T", "LOW", "SYK", "BKNG", "PLD", "MDT", 
+            "ELV", "LMT", "AXP", "BLK", "ADI", "TJX", "C", "SBUX", "ADP", "GILD", "MMC", 
+            "MDLZ", "VRTX", "LRCX", "CVS", "ZTS", "MO", "FI", "CB", "TMUS", "CME", "DUK", 
+            "CI", "BSX", "BDX", "SO", "SLB", "EQIX", "MU", "PANW", "SNPS", "CDNS", "KLAC"
+        ]
         
     print(f"✅ DYNAMIC MARKET UNIVERSE UPDATED: {len(all_tickers)} unique symbols loaded.", file=sys.stderr)
     return list(all_tickers)
