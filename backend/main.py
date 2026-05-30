@@ -169,35 +169,41 @@ def get_market_universe():
         {"url": "https://en.wikipedia.org/wiki/Dow_Jones_Industrial_Average", "col": "Symbol"}
     ]
     
-    # 🚀 THE FIX: Spoof a real Chrome browser to bypass Wikipedia's bot blocker
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
     
     for source in sources:
         try:
-            # 1. Fetch the raw HTML using requests with our fake headers
             response = requests.get(source["url"], headers=headers, timeout=10)
-            response.raise_for_status()  # Check for HTTP errors
+            response.raise_for_status()
             
-            # 2. Pass the raw HTML text into pandas instead of the URL
             tables = pd.read_html(response.text)
-            df = tables[0] if source["col"] in tables[0].columns else tables[1]
-            tickers = df[source["col"]].tolist()
             
-            for t in tickers:
-                clean_t = str(t).replace('.', '-').strip()
-                all_tickers.add(clean_t)
+            # 🚀 THE FIX: Scan ALL tables on the page until we find the right column
+            target_df = None
+            for df in tables:
+                if source["col"] in df.columns:
+                    target_df = df
+                    break  # Found the table, stop searching!
+            
+            if target_df is not None:
+                tickers = target_df[source["col"]].tolist()
+                for t in tickers:
+                    clean_t = str(t).replace('.', '-').strip()
+                    all_tickers.add(clean_t)
+            else:
+                print(f"⚠️ COLUMN '{source['col']}' NOT FOUND IN {source['url']}", file=sys.stderr)
+                
         except Exception as e:
             print(f"❌ FETCH ERROR ({source['url']}): {e}", file=sys.stderr)
             
-    print(f"✅ DYNAMIC MARKET UNIVERSE UPDATED: {len(all_tickers)} unique symbols loaded.", file=sys.stderr)
-    
-    # Fallback safety net: If Wikipedia still fails, load the heavy hitters so the app doesn't crash
+    # Fallback safety net
     if not all_tickers:
-        print("⚠️ USING FALLBACK LIST DUE TO WIKIPEDIA BLOCK.", file=sys.stderr)
+        print("⚠️ USING FALLBACK LIST DUE TO WIKIPEDIA BLOCK/FORMAT CHANGE.", file=sys.stderr)
         return ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "BRK-B", "LLY", "AVGO", "JPM", "V", "WMT", "UNH", "XOM"]
         
+    print(f"✅ DYNAMIC MARKET UNIVERSE UPDATED: {len(all_tickers)} unique symbols loaded.", file=sys.stderr)
     return list(all_tickers)
 
 # --- ENDPOINTS ---
