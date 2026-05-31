@@ -17,6 +17,7 @@ import random
 import httpx
 from contextlib import asynccontextmanager
 import requests
+import io
 
 load_dotenv()
 
@@ -305,7 +306,7 @@ def get_market_universe():
         try:
             response = requests.get(source["url"], headers=headers, timeout=15)
             response.raise_for_status()
-            tables = pd.read_html(response.text)
+            tables = pd.read_html(io.StringIO(response.text))
             
             target_df = None
             target_col_name = None
