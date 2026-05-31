@@ -698,21 +698,29 @@ async def generate_exit_strategy(req: TranslationRequest, user_id: str = Query(.
         if current_tokens < 2:
             raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 2 Tokens required.")
 
-        prompt = f"Act as an elite quantitative analyst. Define a strict risk-management exit protocol for {req.ticker}.\n\n"
-        prompt += f"CURRENT MARKET CONTEXT:\n- Current Price: ${req.data_context.get('price', 'N/A')}\n\n"
+        # 1. THE DATA FEED (Exact Price Levels + Signals & Indicators)
+        prompt = f"Act as a quantitative risk manager. Define a strict risk-management exit protocol for {req.ticker}.\n\n"
+        prompt += f"CURRENT MARKET CONTEXT:\n"
+        prompt += f"- Current Price: ${req.data_context.get('price', 'N/A')}\n"
+        prompt += f"- Major Support (Floor): ${req.data_context.get('support_level', 'N/A')}\n"
+        prompt += f"- Major Resistance (Ceiling): ${req.data_context.get('resistance_level', 'N/A')}\n\n"
 
         ledger = req.data_context.get("ledger", [])
         if ledger:
-            prompt += f"TECHNICAL LEDGER:\n"
-            for item in ledger: prompt += f"- {item.get('factor')}: {item.get('val')} ({item.get('status')})\n"
+            prompt += f"TECHNICAL LEDGER (SIGNALS):\n"
+            for item in ledger: 
+                prompt += f"- {item.get('factor')}: {item.get('val')} ({item.get('status')})\n"
 
+        # 2. THE FORMATTING MANDATE (Simplified language for everyday users)
         prompt += (
             "\n🚨 CRITICAL MANDATE - EXIT STRATEGY REQUIRED:\n"
-            "DO NOT provide a general summary. OUTPUT STRICTLY IN HTML FORMAT using this exact structure:\n"
+            "DO NOT provide a general summary. OUTPUT STRICTLY IN HTML FORMAT using this exact structure.\n"
+            "CRITICAL: You must explain your reasoning using simple, everyday language. Do NOT use dense institutional jargon (e.g., avoid terms like VWAP, Fibonacci, confluence, or invalidation). Explain it so a beginner can easily understand.\n"
+            "Base your price targets strictly on the Major Support and Resistance levels provided above, adjusting them slightly if the Technical Ledger signals show extreme bullish or bearish momentum.\n\n"
             "<h3>Execution & Exit Protocol</h3>\n"
             "<ul>\n"
-            "<li><strong>🟢 PRIMARY TARGET (TP):</strong> $[Calculate a logical Take Profit price based on near-term resistance]. (Provide 1 sentence of technical reasoning).</li>\n"
-            "<li><strong>🔴 HARD STOP LOSS (SL):</strong> $[Calculate a logical Stop Loss price based on near-term support or moving averages]. (Provide 1 sentence of risk-management reasoning).</li>\n"
+            "<li><strong>🟢 PRIMARY TARGET (TP):</strong> $[Price]. (Provide 1 short, simple sentence explaining why this is a logical place to take profits based on the ceiling).</li>\n"
+            "<li><strong>🔴 HARD STOP LOSS (SL):</strong> $[Price]. (Provide 1 short, simple sentence explaining why dropping below the support floor means the trend is broken and it is time to cut losses).</li>\n"
             "<li><strong>⏱️ TIME HORIZON:</strong> [State the estimated time in days/weeks for this thesis to play out].</li>\n"
             "</ul>"
         )
