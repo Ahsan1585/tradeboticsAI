@@ -79,6 +79,7 @@ function TerminalContent() {
   // 🚨 SECURITY STATE
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [userEmail, setUserEmail] = useState("");
+  const [userId, setUserId] = useState("");
   
   const [data, setData] = useState<any>(null);
   const [globalNews, setGlobalNews] = useState<any[]>([]);
@@ -100,6 +101,14 @@ function TerminalContent() {
   const [risk, setRisk] = useState("Moderate");
   const [screenerResults, setScreenerResults] = useState<any[]>([]);
   const [isScanning, setIsScanning] = useState(false);
+  useEffect(() => {
+      if (!userId) return;
+      
+      const savedScreenerData = localStorage.getItem(`screener_analysis_${userId}`);
+      if (savedScreenerData) {
+          setScreenerResults(JSON.parse(savedScreenerData));
+      }
+  }, [userId]);
 
   const executeMarketScan = async () => {
         setIsScanning(true);
@@ -150,6 +159,12 @@ function TerminalContent() {
                 // Slight delay so the user actually sees "100%" before the UI flips
                 setTimeout(() => {
                     setScreenerResults(responseData.results);
+                    
+                    // 🚀 STEP 3 ADDITION: SAVE TO BROWSER MEMORY
+                    if (userId) {
+                        localStorage.setItem(`screener_analysis_${userId}`, JSON.stringify(responseData.results));
+                    }
+                    
                     showToast(`Matrix Online: ${responseData.results.length} Candidates Found.`);
                     setIsScanning(false);
                 }, 500);
@@ -163,7 +178,6 @@ function TerminalContent() {
             setIsScanning(false);
         }
     };
-
   const handleExecuteTrade = async (tradeType: "BUY" | "SELL", amount: number, mode: "DOLLARS" | "SHARES") => {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
@@ -203,6 +217,7 @@ function TerminalContent() {
               router.push('/'); 
           } else {
               setIsAuthorized(true);
+              setUserId(session.user.id);
               setUserEmail(session.user.email || "OPERATIVE");
               fetchWatchlist(session.user.id);
               fetchGlobalNews();

@@ -45,6 +45,17 @@ export default function PortfolioPage() {
                 setUserId(session.user.id);
                 setUserEmail(session.user.email || "OPERATIVE");
                 fetchPortfolio(session.user.id);
+                
+                // 🚀 BROWSER CACHE CHECK: Load saved analysis for this user on mount
+                const savedAnalysis = localStorage.getItem(`portfolio_analysis_${session.user.id}`);
+                const savedStyle = localStorage.getItem(`portfolio_style_${session.user.id}`);
+                
+                if (savedAnalysis) {
+                    setAiAnalysis(savedAnalysis);
+                }
+                if (savedStyle) {
+                    setTradeStyle(savedStyle);
+                }
             }
         };
         verifyClearance();
@@ -58,6 +69,14 @@ export default function PortfolioPage() {
     const handleSearch = () => {
         if (!searchTicker.trim()) return;
         router.push(`/terminal?ticker=${searchTicker.trim().toUpperCase()}`);
+    };
+
+    // 🚀 CACHE SWEEP LOGIC: Call this function when the user actively logs out
+    const handleLogout = async () => {
+        localStorage.removeItem(`portfolio_analysis_${userId}`);
+        localStorage.removeItem(`portfolio_style_${userId}`);
+        await supabase.auth.signOut();
+        router.push('/');
     };
 
     const fetchPortfolio = async (uid: string) => {
@@ -79,7 +98,7 @@ export default function PortfolioPage() {
 
             const formattedVault = Object.values(aggregated).map((pos: any) => ({
                 ticker: pos.ticker,
-                shares: parseFloat(pos.total_shares.toFixed(2)), // 🚀 Fix: Constrain fractional shares strictly to 2 decimal places
+                shares: parseFloat(pos.total_shares.toFixed(2)),
                 avg_cost: pos.total_shares > 0 ? (pos.total_cost_dollars / pos.total_shares).toFixed(2) : 0
             })).sort((a: any, b: any) => a.ticker.localeCompare(b.ticker));
             
@@ -104,7 +123,13 @@ export default function PortfolioPage() {
             const result = await res.json();
             
             if (res.ok) {
+                // Update UI state
                 setAiAnalysis(result.analysis);
+                
+                // 🚀 SAVE TO BROWSER MEMORY
+                localStorage.setItem(`portfolio_analysis_${userId}`, result.analysis);
+                localStorage.setItem(`portfolio_style_${userId}`, tradeStyle);
+                
             } else {
                 if (res.status === 402) {
                     showToast("NEURAL BANDWIDTH DEPLETED. RECHARGE REQUIRED.");
@@ -153,7 +178,7 @@ export default function PortfolioPage() {
                 </button>
             </div>
 
-            {/* VALUE BANNER DESCRIPTION: VIRTUAL HEDGE FUND MANAGER */}
+            {/* VALUE BANNER DESCRIPTION: VIRTUAL */}
             <div className="max-w-6xl mx-auto mb-10 bg-[#0B0F19] border border-blue-500/10 rounded-[32px] p-8 relative overflow-hidden shadow-xl">
                 <div className="absolute top-0 right-0 w-64 h-64 bg-blue-600/5 rounded-full blur-[60px] pointer-events-none" />
                 <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
@@ -162,7 +187,7 @@ export default function PortfolioPage() {
                             <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-ping" />
                             <span className="text-[10px] font-black uppercase text-blue-400 tracking-[0.3em]">Institutional Grade Allocation Engine</span>
                         </div>
-                        <h2 className="text-2xl font-black text-white uppercase tracking-tight mb-2">Your Virtual Hedge Fund Manager</h2>
+                        <h2 className="text-2xl font-black text-white uppercase tracking-tight mb-2">Your Virtual Quantitative Engine</h2>
                         <p className="text-sm text-slate-400 leading-relaxed font-medium">
                             Track your live capital and let the AI do the heavy lifting. Run a Rotation Scan to get instant, data-driven recommendations on what to buy, sell, or hold to grow your wealth safely.
                         </p>
@@ -231,7 +256,6 @@ export default function PortfolioPage() {
                                             </div>
                                         </div>
                                         
-                                        {/* Added a subtle arrow indicator to show it navigates */}
                                         <div className="hidden sm:flex text-slate-600 group-hover:text-blue-500 transition-colors pr-4">
                                             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
