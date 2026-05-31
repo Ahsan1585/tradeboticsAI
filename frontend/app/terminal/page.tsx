@@ -95,12 +95,15 @@ function TerminalContent() {
   const [deepDiveResult, setDeepDiveResult] = useState<string | null>(null);
   const [selectedArticle, setSelectedArticle] = useState<any | null>(null);
   const [isSummarizing, setIsSummarizing] = useState(false);
+  const [exitStrategyResult, setExitStrategyResult] = useState<string | null>(null);
+  const [isGeneratingExit, setIsGeneratingExit] = useState(false);
 
   // 🚨 NEW SCREENER ENGINE STATES
   const [horizon, setHorizon] = useState("Swing Trade");
   const [risk, setRisk] = useState("Moderate");
   const [screenerResults, setScreenerResults] = useState<any[]>([]);
   const [isScanning, setIsScanning] = useState(false);
+
   useEffect(() => {
       if (!userId) return;
       
@@ -116,7 +119,6 @@ function TerminalContent() {
         setScanProgress(0);
         setLoadingText("Compiling 170-Asset Universe...");
 
-        // Array of cool institutional phrases to cycle through
         const phrases = [
             "Extracting Real-Time Pricing...",
             "Calculating Technical Moving Averages...",
@@ -129,15 +131,13 @@ function TerminalContent() {
         let currentProgress = 0;
         let phraseIndex = 0;
 
-        // Simulate a 16.5 second load time (165ms * 100 = 16.5s)
         const progressInterval = setInterval(() => {
             currentProgress += 1;
             if (currentProgress >= 99) {
-                currentProgress = 99; // Hold at 99% until the server actually replies
+                currentProgress = 99; 
             }
             setScanProgress(currentProgress);
 
-            // Change the text every ~2.5 seconds (every 15 progress ticks)
             if (currentProgress % 15 === 0 && phraseIndex < phrases.length) {
                 setLoadingText(phrases[phraseIndex]);
                 phraseIndex++;
@@ -152,15 +152,13 @@ function TerminalContent() {
             });
             const responseData = await res.json();
             
-            clearInterval(progressInterval); // Stop the fake timer
-            setScanProgress(100); // Snap to 100%
+            clearInterval(progressInterval); 
+            setScanProgress(100); 
 
             if (res.ok) {
-                // Slight delay so the user actually sees "100%" before the UI flips
                 setTimeout(() => {
                     setScreenerResults(responseData.results);
                     
-                    // 🚀 STEP 3 ADDITION: SAVE TO BROWSER MEMORY
                     if (userId) {
                         localStorage.setItem(`screener_analysis_${userId}`, JSON.stringify(responseData.results));
                     }
@@ -178,6 +176,7 @@ function TerminalContent() {
             setIsScanning(false);
         }
     };
+
   const handleExecuteTrade = async (tradeType: "BUY" | "SELL", amount: number, mode: "DOLLARS" | "SHARES") => {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
@@ -256,6 +255,7 @@ function TerminalContent() {
     const target = t || ticker;
     if (!target) return;
     setLoading(true);
+    setExitStrategyResult(null); // Clear previous exit strategies on new scan
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -364,6 +364,37 @@ function TerminalContent() {
     }
     
     setIsAnalyzing(false); 
+  };
+
+  const runExitStrategy = async () => {
+    if (!data || !confirmedTicker) return; 
+    
+    setIsGeneratingExit(true);
+    setExitStrategyResult(null);
+
+    try {
+        const res = await fetch(`${BACKEND_URL}/exit-strategy?user_id=${userId}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                ticker: confirmedTicker,
+                data_context: data
+            })
+        });
+        
+        const result = await res.json();
+        
+        if (res.ok) {
+            setExitStrategyResult(result.analysis);
+        } else {
+            if (res.status === 402) showToast("NEURAL BANDWIDTH DEPLETED.");
+            else showToast("AI Engine Error: " + result.detail);
+        }
+    } catch (error) {
+        showToast("Backend Offline. Check connection.");
+    }
+    
+    setIsGeneratingExit(false);
   };
 
   const handleArticleClick = async (item: any) => {
@@ -783,26 +814,76 @@ function TerminalContent() {
                        <div><p className="text-[9px] font-bold text-slate-400 uppercase mb-2">Rel Surge</p><p className="text-blue-400 font-black text-sm">{data.vol_surge}</p></div>
                     </div>
 
-                    {/* 🚨 TRIGGER AUTH MODAL FOR TACTICAL SCAN (3 TOKENS) */}
-                    <button 
-                        onClick={() => setAuthModal({
-                            isOpen: true,
-                            title: "Tactical Deep Dive",
-                            cost: 3,
-                            actionName: "INITIATE SCAN",
-                            onConfirm: runMasterAnalysis
-                        })}
-                        disabled={isAnalyzing}
-                        className="w-full mb-4 bg-blue-600 border border-blue-500 py-3 rounded-xl text-white font-black text-[10px] uppercase tracking-widest hover:bg-blue-500 hover:text-white transition-all shadow-[0_0_15px_rgba(59,130,246,0.3)] disabled:opacity-50"
-                    >
-                        {isAnalyzing ? "🧠 ANALYZING..." : "🧠 RUN AI ANALYSIS"}
-                    </button>
+                    {/* ACTION BUTTONS GRID */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+                        {/* 1. Existing Deep Dive Button */}
+                        <button 
+                            onClick={() => setAuthModal({
+                                isOpen: true,
+                                title: "Tactical Deep Dive",
+                                cost: 3,
+                                actionName: "INITIATE SCAN",
+                                onConfirm: runMasterAnalysis
+                            })}
+                            disabled={isAnalyzing || !data}
+                            className="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-xl text-white font-black text-[10px] uppercase tracking-widest transition-all shadow-[0_0_15px_rgba(37,99,235,0.3)] disabled:opacity-50 flex flex-col items-center justify-center gap-1"
+                        >
+                            {isAnalyzing ? "🧠 ANALYZING..." : "🧠 DEEP DIVE (3 TKN)"}
+                        </button>
+
+                        {/* 2. NEW Exit Strategy Button */}
+                        <button 
+                            onClick={() => setAuthModal({
+                                isOpen: true,
+                                title: "Quantitative Risk Protocol",
+                                cost: 2,
+                                actionName: "GENERATE EXIT STRATEGY",
+                                onConfirm: runExitStrategy
+                            })}
+                            disabled={isGeneratingExit || !data}
+                            className="w-full bg-red-900/40 border border-red-500/50 hover:bg-red-800/60 hover:border-red-400 py-4 rounded-xl text-red-100 font-black text-[10px] uppercase tracking-widest transition-all shadow-[0_0_15px_rgba(239,68,68,0.15)] disabled:opacity-50 flex items-center justify-center gap-2"
+                        >
+                            {isGeneratingExit ? (
+                                <div className="w-3 h-3 border-2 border-red-900 border-t-red-400 rounded-full animate-spin" />
+                            ) : (
+                                "🎯 EXIT PLAN (2 TKN)"
+                            )}
+                        </button>
+                    </div>
                     
-                    <div className="mb-10 p-5 bg-blue-500/5 border-l-2 border-blue-500 rounded-r-2xl min-h-[50px]">
+                    <div className="mb-6 p-5 bg-blue-500/5 border-l-2 border-blue-500 rounded-r-2xl min-h-[50px]">
                         <p className="text-slate-200 text-sm font-bold italic leading-relaxed">
                             "{data.ai_tactical || "Market conditions currently being synthesized by the neural engine. Please wait for signal calibration."}"
                         </p>
                     </div>
+
+                    {/* MAIN PAGE EXIT STRATEGY OUTPUT DISPLAY */}
+                    {exitStrategyResult && (
+                        <div className="mb-10 bg-slate-950 border border-red-500/30 rounded-3xl p-6 shadow-[inset_0_0_20px_rgba(239,68,68,0.05)] relative overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
+                            <button 
+                                onClick={() => setExitStrategyResult(null)}
+                                className="absolute top-4 right-4 text-slate-500 hover:text-white transition-colors"
+                            >
+                                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                            </button>
+                            <div className="flex items-center gap-2 mb-4">
+                                <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                                <p className="text-[10px] font-black uppercase tracking-[0.3em] text-red-500">Quantitative Risk Protocol</p>
+                            </div>
+                            <div className="prose prose-invert max-w-none text-sm font-medium leading-relaxed">
+                                <style dangerouslySetInnerHTML={{__html: `
+                                    .prose h3 { display: none; }
+                                    .prose ul { list-style-type: none; padding: 0; margin: 0; }
+                                    .prose li { position: relative; padding-left: 1.5rem; margin-bottom: 1rem; color: #cbd5e1; background: rgba(15, 23, 42, 0.5); padding-top: 0.5rem; padding-bottom: 0.5rem; padding-right: 1rem; border-radius: 0.5rem; }
+                                    .prose li::before { content: "→"; position: absolute; left: 0.5rem; color: #f87171; font-weight: 900; }
+                                    .prose strong { color: #fff; font-size: 1.1em; }
+                                `}} />
+                                <div dangerouslySetInnerHTML={{ __html: exitStrategyResult }} />
+                            </div>
+                        </div>
+                    )}
                  </>
                ) : ( <p className="text-slate-600 font-bold uppercase text-[10px] tracking-widest italic text-center">Scan required...</p> )}
             </div>
