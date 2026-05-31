@@ -814,10 +814,10 @@ function TerminalContent() {
                        <div><p className="text-[9px] font-bold text-slate-400 uppercase mb-2">Rel Surge</p><p className="text-blue-400 font-black text-sm">{data.vol_surge}</p></div>
                     </div>
 
-                    {/* ACTION BUTTONS GRID - INSTITUTIONAL DESIGN */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+                    {/* ACTION BUTTONS: STACKED DESIGN */}
+                    <div className="flex flex-col gap-4 mb-6">
                         
-                        {/* 1. Tactical Deep Dive Button */}
+                        {/* 1. Tactical Deep Dive Button (Blue) */}
                         <button 
                             onClick={() => setAuthModal({
                                 isOpen: true,
@@ -827,35 +827,24 @@ function TerminalContent() {
                                 onConfirm: runMasterAnalysis
                             })}
                             disabled={isAnalyzing || !data}
-                            className="group relative w-full flex flex-col justify-between p-5 h-24 bg-slate-900/40 border border-slate-800 hover:border-blue-500/50 hover:bg-slate-800/60 rounded-2xl transition-all duration-300 disabled:opacity-50 text-left overflow-hidden shadow-sm"
+                            className="w-full bg-blue-900/20 border border-blue-500/40 hover:bg-blue-900/40 hover:border-blue-400 py-5 px-6 rounded-2xl transition-all shadow-[0_0_20px_rgba(37,99,235,0.1)] disabled:opacity-50 flex items-center justify-between group"
                         >
-                            {/* Subtle background glow */}
-                            <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500/10 rounded-full blur-2xl -mr-10 -mt-10 group-hover:bg-blue-500/20 transition-all"></div>
-                            
-                            <div className="flex justify-between items-start w-full relative z-10">
-                                <div className="flex items-center gap-2">
-                                    {isAnalyzing ? (
-                                        <div className="w-2 h-2 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                                    ) : (
-                                        <div className="w-1.5 h-1.5 bg-blue-500 rounded-full group-hover:animate-ping" />
-                                    )}
-                                    <span className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-500 group-hover:text-blue-400 transition-colors">
-                                        Analysis
-                                    </span>
-                                </div>
-                                <div className="bg-slate-950 border border-slate-800 px-2.5 py-1 rounded-md text-[9px] font-mono text-slate-500 group-hover:text-blue-400 group-hover:border-blue-500/30 transition-colors">
-                                    -3 TKN
-                                </div>
+                            <div className="flex items-center gap-4">
+                                {isAnalyzing ? (
+                                    <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                                ) : (
+                                    <div className="w-2.5 h-2.5 bg-blue-500 rounded-full shadow-[0_0_8px_rgba(59,130,246,0.8)]" />
+                                )}
+                                <span className="text-blue-100 font-black text-xs md:text-sm uppercase tracking-widest">
+                                    {isAnalyzing ? "Synthesizing Data..." : "Tactical Deep Dive"}
+                                </span>
                             </div>
-                            
-                            <div className="relative z-10 mt-2">
-                                <h4 className="text-white font-black tracking-tight text-sm group-hover:text-blue-50 transition-colors">
-                                    {isAnalyzing ? "SYNTHESIZING..." : "TACTICAL DEEP DIVE"}
-                                </h4>
+                            <div className="bg-slate-950 border border-blue-900/50 px-3 py-1.5 rounded-lg text-[10px] font-mono font-bold text-blue-400">
+                                -3 TKN
                             </div>
                         </button>
 
-                        {/* 2. Quantitative Risk Button */}
+                        {/* 2. Quantitative Risk Button (Red) */}
                         <button 
                             onClick={() => setAuthModal({
                                 isOpen: true,
@@ -865,33 +854,23 @@ function TerminalContent() {
                                 onConfirm: runExitStrategy
                             })}
                             disabled={isGeneratingExit || !data}
-                            className="group relative w-full flex flex-col justify-between p-5 h-24 bg-slate-900/40 border border-slate-800 hover:border-red-500/50 hover:bg-slate-800/60 rounded-2xl transition-all duration-300 disabled:opacity-50 text-left overflow-hidden shadow-sm"
+                            className="w-full bg-red-900/20 border border-red-500/40 hover:bg-red-900/40 hover:border-red-400 py-5 px-6 rounded-2xl transition-all shadow-[0_0_20px_rgba(239,68,68,0.1)] disabled:opacity-50 flex items-center justify-between group"
                         >
-                            {/* Subtle background glow */}
-                            <div className="absolute top-0 right-0 w-24 h-24 bg-red-500/10 rounded-full blur-2xl -mr-10 -mt-10 group-hover:bg-red-500/20 transition-all"></div>
-                            
-                            <div className="flex justify-between items-start w-full relative z-10">
-                                <div className="flex items-center gap-2">
-                                    {isGeneratingExit ? (
-                                        <div className="w-2 h-2 border-2 border-red-500 border-t-transparent rounded-full animate-spin" />
-                                    ) : (
-                                        <div className="w-1.5 h-1.5 bg-red-500 rounded-full group-hover:animate-ping" />
-                                    )}
-                                    <span className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-500 group-hover:text-red-400 transition-colors">
-                                        Protocol
-                                    </span>
-                                </div>
-                                <div className="bg-slate-950 border border-slate-800 px-2.5 py-1 rounded-md text-[9px] font-mono text-slate-500 group-hover:text-red-400 group-hover:border-red-500/30 transition-colors">
-                                    -2 TKN
-                                </div>
+                            <div className="flex items-center gap-4">
+                                {isGeneratingExit ? (
+                                    <div className="w-3 h-3 border-2 border-red-500 border-t-transparent rounded-full animate-spin" />
+                                ) : (
+                                    <div className="w-2.5 h-2.5 bg-red-500 rounded-full shadow-[0_0_8px_rgba(239,68,68,0.8)]" />
+                                )}
+                                <span className="text-red-100 font-black text-xs md:text-sm uppercase tracking-widest">
+                                    {isGeneratingExit ? "Calculating Risk..." : "Generate Exit Strategy"}
+                                </span>
                             </div>
-                            
-                            <div className="relative z-10 mt-2">
-                                <h4 className="text-white font-black tracking-tight text-sm group-hover:text-red-50 transition-colors">
-                                    {isGeneratingExit ? "CALCULATING..." : "EXIT STRATEGY"}
-                                </h4>
+                            <div className="bg-slate-950 border border-red-900/50 px-3 py-1.5 rounded-lg text-[10px] font-mono font-bold text-red-400">
+                                -2 TKN
                             </div>
                         </button>
+
                     </div>
                     
                     <div className="mb-6 p-5 bg-blue-500/5 border-l-2 border-blue-500 rounded-r-2xl min-h-[50px]">
@@ -934,19 +913,7 @@ function TerminalContent() {
             <div className="bg-slate-900/40 border border-slate-800 rounded-[40px] p-8 flex flex-col h-[600px] overflow-hidden shrink-0">
                <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-6 text-center">AI Intelligence Wire</p>
                
-               {/* 🚨 TRIGGER AUTH MODAL FOR SENTIMENT CHECK (3 TOKENS) */}
-               <button 
-                  onClick={() => setAuthModal({
-                      isOpen: true,
-                      title: "Global AI Sentiment Check",
-                      cost: 3,
-                      actionName: "INITIATE SCAN",
-                      onConfirm: runMasterAnalysis
-                  })} 
-                  className="w-full mb-6 bg-blue-900/30 border border-blue-500/50 py-4 rounded-2xl text-blue-400 font-black text-[10px] uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all shadow-[0_0_15px_rgba(59,130,246,0.15)]"
-               >
-                 🌐 Global AI Sentiment Check
-               </button>
+               
 
                <div className="space-y-4 overflow-y-auto custom-scrollbar flex-1">
                   {((data && data.news && data.news.length > 0) 
