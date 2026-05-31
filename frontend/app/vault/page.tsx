@@ -45,18 +45,18 @@ function PortfolioChart({ totalValue, totalProfitLoss }: { totalValue: number, t
   }
 
   return (
-    <div className="bg-[#0B0F19] border border-slate-800 rounded-[40px] p-8 shadow-2xl relative overflow-hidden transition-all duration-500 h-full flex flex-col">
+    <div className="bg-[#0B0F19] border border-slate-800 rounded-[32px] md:rounded-[40px] p-5 md:p-8 shadow-2xl relative overflow-hidden transition-all duration-500 h-full flex flex-col">
       <div 
         className="absolute top-0 left-0 w-full h-full opacity-30 pointer-events-none transition-all duration-500" 
         style={{ background: `linear-gradient(to bottom, ${gradientStart}, transparent)` }} 
       />
       
-      <div className="flex justify-between items-start mb-8 relative z-10">
+      <div className="flex justify-between items-start mb-6 md:mb-8 relative z-10">
         <div>
-          <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Net Liquidation Value</p>
-          <h2 className="text-4xl lg:text-5xl font-black text-white tracking-tighter">${totalValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</h2>
-          <p className={`text-sm font-bold ${colorClass} mt-2 flex items-center gap-1 transition-colors duration-500`}>
-            <span className="text-lg leading-none">{arrow}</span> {sign}${Math.abs(totalProfitLoss).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} (All Time)
+          <p className="text-[9px] md:text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1 md:mb-2">Net Liquidation Value</p>
+          <h2 className="text-3xl md:text-4xl lg:text-5xl font-black text-white tracking-tighter">${totalValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</h2>
+          <p className={`text-xs md:text-sm font-bold ${colorClass} mt-1 md:mt-2 flex items-center gap-1 transition-colors duration-500`}>
+            <span className="text-base md:text-lg leading-none">{arrow}</span> {sign}${Math.abs(totalProfitLoss).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} (All Time)
           </p>
         </div>
         
@@ -73,7 +73,7 @@ function PortfolioChart({ totalValue, totalProfitLoss }: { totalValue: number, t
         </div>
       </div>
 
-      <div className="w-full flex-1 relative z-10 flex items-end min-h-[250px]">
+      <div className="w-full flex-1 relative z-10 flex items-end min-h-[180px] md:min-h-[250px]">
         <svg viewBox="0 0 1000 250" className="w-full h-full preserve-3d transition-all duration-500" preserveAspectRatio="none">
           <defs>
             <linearGradient id="chartGradient" x1="0" x2="0" y1="0" y2="1">
@@ -254,49 +254,55 @@ export default function VaultPage() {
   const { totalStockValue, totalCostBasis, netAccountValue, totalProfitLoss } = calculateTotals();
 
   if (!isAuthorized || loading) {
-    return <main className="min-h-screen bg-[#020617] flex items-center justify-center"><div className="w-16 h-16 border-4 border-slate-800 border-t-blue-500 rounded-full animate-spin" /></main>;
+    return <main className="min-h-screen bg-[#020617] flex items-center justify-center p-4"><div className="w-12 h-12 md:w-16 md:h-16 border-4 border-slate-800 border-t-blue-500 rounded-full animate-spin" /></main>;
   }
 
   return (
     <main className="min-h-screen bg-[#020617] text-slate-300 flex flex-col font-sans relative overflow-x-hidden pb-20">
       
       {toastMessage && (
-        <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[150] pointer-events-none">
-           <div className="bg-slate-900 border border-blue-500/50 px-8 py-4 rounded-full shadow-2xl animate-in slide-in-from-top-4 fade-in flex items-center gap-3">
-              <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
-              <p className="text-white font-black uppercase tracking-widest text-xs">{toastMessage}</p>
+        <div className="fixed inset-x-4 top-4 md:inset-0 md:top-24 md:left-1/2 md:-translate-x-1/2 z-[150] pointer-events-none flex justify-center">
+           <div className="bg-slate-900 border border-blue-500/50 px-6 py-4 md:px-8 md:py-4 rounded-2xl md:rounded-full shadow-2xl animate-in slide-in-from-top-4 fade-in flex items-center gap-3">
+              <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse shrink-0" />
+              <p className="text-white font-black uppercase tracking-widest text-[10px] md:text-xs text-center">{toastMessage}</p>
            </div>
         </div>
       )}
 
-      {/* HEADER */}
-      <header className="w-full flex justify-between items-center p-6 border-b border-slate-800/50 bg-[#020617]/80 backdrop-blur-md z-50 sticky top-0">
-        <h1 className="text-3xl font-black text-white tracking-tighter cursor-pointer" onClick={() => router.push('/hub')}>
-            TRADEBOTICS<span className="text-blue-500">AI</span>
-        </h1>
-        <div className="flex items-center gap-6">
-          <div className="hidden md:flex items-center gap-6 bg-slate-900/50 px-6 py-2 rounded-full border border-slate-800">
-            <div className="text-right border-r border-slate-700 pr-6">
-              <p className="text-[9px] text-slate-400 uppercase tracking-widest font-bold">Virtual Cash</p>
-              <p className="text-sm font-mono font-black text-emerald-400">${virtualCash.toLocaleString(undefined, {minimumFractionDigits: 2})}</p>
+      {/* RESPONSIVE HEADER */}
+      <header className="w-full flex flex-col md:flex-row justify-between items-center p-4 md:p-6 border-b border-slate-800/50 bg-[#020617]/80 backdrop-blur-md z-50 sticky top-0 gap-4 md:gap-0">
+        <div className="w-full flex justify-between items-center md:w-auto">
+           <h1 className="text-2xl md:text-3xl font-black text-white tracking-tighter cursor-pointer" onClick={() => router.push('/hub')}>
+              TRADEBOTICS<span className="text-blue-500">AI</span>
+           </h1>
+           <button onClick={() => router.push('/hub')} className="md:hidden text-[9px] font-black uppercase tracking-widest bg-slate-800/50 hover:bg-slate-800 text-slate-400 hover:text-white px-4 py-2.5 rounded-full transition-colors">
+              Hub
+           </button>
+        </div>
+        
+        <div className="flex items-center gap-4 w-full md:w-auto justify-between md:justify-end">
+          <div className="flex items-center gap-4 md:gap-6 bg-slate-900/50 px-5 md:px-6 py-2 rounded-xl md:rounded-full border border-slate-800 w-full md:w-auto justify-center">
+            <div className="text-right border-r border-slate-700 pr-4 md:pr-6">
+              <p className="text-[8px] md:text-[9px] text-slate-400 uppercase tracking-widest font-bold">Virtual Cash</p>
+              <p className="text-xs md:text-sm font-mono font-black text-emerald-400">${virtualCash.toLocaleString(undefined, {minimumFractionDigits: 2})}</p>
             </div>
             <div className="text-right">
-              <p className="text-[9px] text-slate-400 uppercase tracking-widest font-bold">AI Tokens</p>
-              <p className="text-sm font-mono font-black text-purple-400">{tokens}</p>
+              <p className="text-[8px] md:text-[9px] text-slate-400 uppercase tracking-widest font-bold">AI Tokens</p>
+              <p className="text-xs md:text-sm font-mono font-black text-purple-400">{tokens}</p>
             </div>
           </div>
-          <button onClick={() => router.push('/hub')} className="text-[10px] font-black uppercase tracking-widest bg-slate-800/50 hover:bg-slate-800 text-slate-400 hover:text-white px-5 py-2.5 rounded-full transition-colors">
+          <button onClick={() => router.push('/hub')} className="hidden md:block text-[10px] font-black uppercase tracking-widest bg-slate-800/50 hover:bg-slate-800 text-slate-400 hover:text-white px-5 py-2.5 rounded-full transition-colors">
             Hub
           </button>
         </div>
       </header>
 
-      <div className="max-w-7xl mx-auto w-full px-6 mt-12 flex flex-col gap-12">
+      <div className="max-w-7xl mx-auto w-full px-4 md:px-6 mt-6 md:mt-12 flex flex-col gap-8 md:gap-12">
         
         {/* PROMINENT HERO SEARCH BAR */}
-        <div className="flex w-full bg-[#0B0F19] p-3 rounded-full border border-slate-800 focus-within:border-blue-500/50 shadow-xl transition-all group">
-          <div className="pl-6 flex items-center justify-center text-slate-600 group-focus-within:text-blue-500 transition-colors">
-            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <div className="flex w-full bg-[#0B0F19] p-2 md:p-3 rounded-full border border-slate-800 focus-within:border-blue-500/50 shadow-xl transition-all group">
+          <div className="pl-4 md:pl-6 flex items-center justify-center text-slate-600 group-focus-within:text-blue-500 transition-colors shrink-0">
+            <svg className="w-5 h-5 md:w-6 md:h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
           </div>
@@ -304,12 +310,12 @@ export default function VaultPage() {
             value={searchTicker} 
             onChange={(e) => setSearchTicker(e.target.value)} 
             onKeyDown={(e) => e.key === 'Enter' && handleSearch()} 
-            className="flex-1 bg-transparent border-none text-white font-black px-6 outline-none text-xl uppercase placeholder:text-slate-700 placeholder:normal-case placeholder:font-medium" 
-            placeholder="Search assets to deploy your virtual cash..." 
+            className="flex-1 bg-transparent border-none text-white font-black px-3 md:px-6 outline-none text-base md:text-xl uppercase placeholder:text-slate-700 placeholder:normal-case placeholder:font-medium min-w-0" 
+            placeholder="Search assets to deploy cash..." 
           />
           <button 
             onClick={handleSearch} 
-            className="bg-blue-600 text-white px-10 py-4 rounded-full font-black text-[10px] uppercase tracking-widest hover:bg-blue-500 shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:shadow-[0_0_30px_rgba(37,99,235,0.5)] transition-all"
+            className="bg-blue-600 text-white px-5 md:px-10 py-3 md:py-4 rounded-full font-black text-[9px] md:text-[10px] uppercase tracking-widest hover:bg-blue-500 shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:shadow-[0_0_30px_rgba(37,99,235,0.5)] transition-all shrink-0"
           >
             SCAN & BUY
           </button>
@@ -326,42 +332,42 @@ export default function VaultPage() {
             <div className="lg:col-span-4 flex flex-col gap-6">
                 
                 {/* Panel 1: Purchasing Power & Assets */}
-                <div className="bg-slate-900/40 border border-slate-800 rounded-[40px] p-8 flex-1 flex flex-col justify-center relative overflow-hidden">
+                <div className="bg-slate-900/40 border border-slate-800 rounded-[32px] md:rounded-[40px] p-5 md:p-8 flex-1 flex flex-col justify-center relative overflow-hidden">
                     <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 rounded-full blur-[40px] pointer-events-none" />
                     
-                    <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-6 border-b border-slate-800/50 pb-4">Account Breakdown</h3>
+                    <h3 className="text-[9px] md:text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4 md:mb-6 border-b border-slate-800/50 pb-3 md:pb-4">Account Breakdown</h3>
                     
-                    <div className="space-y-6">
+                    <div className="space-y-4 md:space-y-6">
                         <div className="flex justify-between items-end">
                             <div>
-                                <p className="text-[9px] font-bold text-slate-400 uppercase mb-1">Purchasing Power (Cash)</p>
-                                <p className="text-2xl font-mono font-black text-emerald-400">${virtualCash.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</p>
+                                <p className="text-[8px] md:text-[9px] font-bold text-slate-400 uppercase mb-1">Purchasing Power (Cash)</p>
+                                <p className="text-xl md:text-2xl font-mono font-black text-emerald-400">${virtualCash.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</p>
                             </div>
                         </div>
 
-                        <div className="flex justify-between items-end border-t border-slate-800/50 pt-6">
+                        <div className="flex justify-between items-end border-t border-slate-800/50 pt-4 md:pt-6">
                             <div>
-                                <p className="text-[9px] font-bold text-slate-400 uppercase mb-1">Invested Assets (Market Value)</p>
-                                <p className="text-xl font-mono font-black text-white">${totalStockValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</p>
+                                <p className="text-[8px] md:text-[9px] font-bold text-slate-400 uppercase mb-1">Invested Assets (Market Value)</p>
+                                <p className="text-lg md:text-xl font-mono font-black text-white">${totalStockValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</p>
                             </div>
                         </div>
                     </div>
                 </div>
 
                 {/* Panel 2: AI Pulse / Stats */}
-                <div className="bg-[#020617] border border-blue-500/20 rounded-[40px] p-8 shadow-[inset_0_0_20px_rgba(59,130,246,0.05)]">
-                     <div className="flex items-center gap-3 mb-6">
-                         <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
-                         <h3 className="text-[10px] font-black text-blue-500 uppercase tracking-[0.3em]">AI Portfolio Pulse</h3>
+                <div className="bg-[#020617] border border-blue-500/20 rounded-[32px] md:rounded-[40px] p-5 md:p-8 shadow-[inset_0_0_20px_rgba(59,130,246,0.05)]">
+                     <div className="flex items-center gap-2 md:gap-3 mb-4 md:mb-6">
+                         <div className="w-1.5 h-1.5 md:w-2 md:h-2 bg-blue-500 rounded-full animate-pulse" />
+                         <h3 className="text-[9px] md:text-[10px] font-black text-blue-500 uppercase tracking-[0.3em]">AI Portfolio Pulse</h3>
                      </div>
                      <div className="grid grid-cols-2 gap-4">
                          <div>
-                             <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Active Positions</p>
-                             <p className="text-2xl font-black text-white">{holdings.length}</p>
+                             <p className="text-[8px] md:text-[9px] font-bold text-slate-500 uppercase mb-1">Active Positions</p>
+                             <p className="text-xl md:text-2xl font-black text-white">{holdings.length}</p>
                          </div>
                          <div>
-                             <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Largest Holding</p>
-                             <p className="text-xl font-black text-white">
+                             <p className="text-[8px] md:text-[9px] font-bold text-slate-500 uppercase mb-1">Largest Holding</p>
+                             <p className="text-lg md:text-xl font-black text-white truncate pr-2">
                                 {holdings.length > 0 ? holdings.reduce((prev, current) => ((current.shares * (liveData[current.ticker]?.price || current.cost_basis)) > (prev.shares * (liveData[prev.ticker]?.price || prev.cost_basis))) ? current : prev).ticker : "N/A"}
                              </p>
                          </div>
@@ -373,15 +379,15 @@ export default function VaultPage() {
 
         {/* HOLDINGS GRID */}
         <div>
-            <h3 className="text-2xl font-black text-white uppercase tracking-widest mb-6 border-b border-slate-800 pb-4">Current Holdings</h3>
+            <h3 className="text-xl md:text-2xl font-black text-white uppercase tracking-widest mb-4 md:mb-6 border-b border-slate-800 pb-3 md:pb-4">Current Holdings</h3>
             
             {holdings.length === 0 ? (
-                <div className="bg-slate-900/30 border border-slate-800 p-12 rounded-[32px] text-center">
-                    <p className="text-slate-500 font-bold uppercase tracking-widest">Your vault is empty.</p>
-                    <button onClick={() => router.push('/terminal')} className="mt-6 bg-blue-600 text-white px-8 py-3 rounded-full font-black text-[10px] uppercase tracking-widest hover:bg-blue-500 transition-colors">Find Assets</button>
+                <div className="bg-slate-900/30 border border-slate-800 p-8 md:p-12 rounded-[32px] text-center">
+                    <p className="text-slate-500 font-bold uppercase tracking-widest text-[10px] md:text-xs">Your vault is empty.</p>
+                    <button onClick={() => router.push('/terminal')} className="mt-4 md:mt-6 bg-blue-600 text-white px-6 md:px-8 py-3 rounded-full font-black text-[9px] md:text-[10px] uppercase tracking-widest hover:bg-blue-500 transition-colors">Find Assets</button>
                 </div>
             ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
                     {holdings.map((h: any, i: number) => {
                         const live = liveData[h.ticker];
                         const currentPrice = live ? live.price : h.cost_basis;
@@ -401,35 +407,35 @@ export default function VaultPage() {
                             <div 
                                 key={i} 
                                 onClick={() => setSelectedAsset(h)}
-                                className="bg-slate-900/40 border border-slate-800 p-6 rounded-[32px] hover:border-blue-500/50 hover:bg-slate-900/80 transition-all cursor-pointer group relative overflow-hidden"
+                                className="bg-slate-900/40 border border-slate-800 p-5 md:p-6 rounded-[24px] md:rounded-[32px] hover:border-blue-500/50 hover:bg-slate-900/80 transition-all cursor-pointer group relative overflow-hidden"
                             >
-                                <div className="flex justify-between items-start mb-4">
+                                <div className="flex justify-between items-start mb-3 md:mb-4">
                                     <div>
-                                        <h4 className="text-3xl font-black text-white">{h.ticker}</h4>
-                                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mt-1">{h.shares.toFixed(2)} Shares</p>
+                                        <h4 className="text-2xl md:text-3xl font-black text-white">{h.ticker}</h4>
+                                        <p className="text-[9px] md:text-[10px] font-black text-slate-500 uppercase tracking-widest mt-1">{h.shares.toFixed(2)} Shares</p>
                                     </div>
                                     <div className="text-right">
-                                        <p className="text-[9px] font-bold text-slate-500 uppercase mb-0.5">Market Value</p>
-                                        <p className="text-xl font-mono font-black text-white">${totalMarketValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</p>
+                                        <p className="text-[8px] md:text-[9px] font-bold text-slate-500 uppercase mb-0.5">Market Value</p>
+                                        <p className="text-lg md:text-xl font-mono font-black text-white">${totalMarketValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</p>
                                     </div>
                                 </div>
 
-                                {/* 🚀 ADDED: Sub-Metrics Banner for Average Cost */}
-                                <div className="flex justify-between items-center bg-slate-950/40 border border-slate-800/40 rounded-xl px-4 py-2.5 mb-4 font-mono text-xs text-slate-400">
+                                {/* Sub-Metrics Banner for Average Cost */}
+                                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-950/40 border border-slate-800/40 rounded-xl px-3 py-2 md:px-4 md:py-2.5 mb-3 md:mb-4 font-mono text-[10px] md:text-xs text-slate-400 gap-1 sm:gap-0">
                                   <div>Avg Cost: <span className="text-white font-bold">${Number(h.cost_basis).toFixed(2)}</span></div>
                                   <div>Live: <span className="text-white font-bold">${Number(currentPrice).toFixed(2)}</span></div>
                                 </div>
                                 
-                                <div className="flex justify-between items-end border-t border-slate-800/50 pt-4">
+                                <div className="flex justify-between items-end border-t border-slate-800/50 pt-3 md:pt-4">
                                     <div>
-                                        <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Total Return</p>
-                                        <p className={`text-sm font-mono font-black px-2 py-0.5 rounded-md ${cardColorClass}`}>
+                                        <p className="text-[8px] md:text-[9px] font-bold text-slate-500 uppercase mb-1">Total Return</p>
+                                        <p className={`text-xs md:text-sm font-mono font-black px-2 py-0.5 rounded-md ${cardColorClass}`}>
                                             {isProfit ? '+' : ''}${profitLoss.toFixed(2)}
                                         </p>
                                     </div>
                                     <div className="text-right">
-                                        <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Return %</p>
-                                        <p className={`text-sm font-mono font-black ${cardColorClass} px-2 py-0.5 rounded-md`}>
+                                        <p className="text-[8px] md:text-[9px] font-bold text-slate-500 uppercase mb-1">Return %</p>
+                                        <p className={`text-xs md:text-sm font-mono font-black ${cardColorClass} px-2 py-0.5 rounded-md`}>
                                             {isProfit ? '+' : ''}{percentReturn.toFixed(2)}%
                                         </p>
                                     </div>
@@ -448,19 +454,19 @@ export default function VaultPage() {
               <div className="w-full max-w-xl h-full bg-[#0B0F19] border-l border-slate-800 flex flex-col shadow-2xl animate-in slide-in-from-right-full duration-300">
                   
                   {/* Modal Header */}
-                  <div className="p-8 border-b border-slate-800 flex justify-between items-center bg-slate-900/50 shrink-0">
+                  <div className="p-5 md:p-8 border-b border-slate-800 flex justify-between items-center bg-slate-900/50 shrink-0">
                       <div>
-                          <div className="flex items-center gap-3 mb-2"><div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" /><p className="text-[10px] font-black uppercase text-blue-500 tracking-widest">Asset Details</p></div>
-                          <h2 className="text-4xl font-black text-white">{selectedAsset.ticker}</h2>
-                          <p className="text-xs font-bold text-slate-500 mt-1 uppercase tracking-widest">{liveData[selectedAsset.ticker]?.company_name || 'Loading Profile...'}</p>
+                          <div className="flex items-center gap-2 md:gap-3 mb-1 md:mb-2"><div className="w-1.5 h-1.5 md:w-2 md:h-2 bg-blue-500 rounded-full animate-pulse" /><p className="text-[9px] md:text-[10px] font-black uppercase text-blue-500 tracking-widest">Asset Details</p></div>
+                          <h2 className="text-2xl md:text-4xl font-black text-white">{selectedAsset.ticker}</h2>
+                          <p className="text-[10px] md:text-xs font-bold text-slate-500 mt-1 uppercase tracking-widest truncate max-w-[200px] sm:max-w-xs">{liveData[selectedAsset.ticker]?.company_name || 'Loading Profile...'}</p>
                       </div>
-                      <button onClick={() => setSelectedAsset(null)} className="w-10 h-10 bg-slate-800 rounded-full flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-700 transition-colors">✕</button>
+                      <button onClick={() => setSelectedAsset(null)} className="w-8 h-8 md:w-10 md:h-10 bg-slate-800 rounded-full flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-700 transition-colors shrink-0">✕</button>
                   </div>
 
-                  <div className="flex-1 overflow-y-auto p-8 custom-scrollbar space-y-8">
+                  <div className="flex-1 overflow-y-auto p-5 md:p-8 custom-scrollbar space-y-6 md:space-y-8">
                       
                       {/* Performance Metrics */}
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4">
                         {(() => {
                             const live = liveData[selectedAsset.ticker];
                             const currentPrice = live ? live.price : selectedAsset.cost_basis;
@@ -482,40 +488,40 @@ export default function VaultPage() {
 
                             return (
                                 <>
-                                    <div className="bg-slate-900/50 border border-slate-800 p-5 rounded-2xl">
-                                        <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Live Price</p>
-                                        <p className="text-2xl font-mono font-black text-white">${currentPrice.toFixed(2)}</p>
+                                    <div className="bg-slate-900/50 border border-slate-800 p-4 md:p-5 rounded-2xl">
+                                        <p className="text-[8px] md:text-[9px] font-bold text-slate-500 uppercase mb-1">Live Price</p>
+                                        <p className="text-xl md:text-2xl font-mono font-black text-white">${currentPrice.toFixed(2)}</p>
                                     </div>
                                     
-                                    <div className="bg-slate-900/50 border border-slate-800 p-5 rounded-2xl">
-                                        <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Total Return</p>
-                                        <p className={`text-2xl font-mono font-black ${textClass}`}>
+                                    <div className="bg-slate-900/50 border border-slate-800 p-4 md:p-5 rounded-2xl">
+                                        <p className="text-[8px] md:text-[9px] font-bold text-slate-500 uppercase mb-1">Total Return</p>
+                                        <p className={`text-xl md:text-2xl font-mono font-black ${textClass}`}>
                                             {isProfit ? '+' : ''}${profitLoss.toFixed(2)}
-                                            <span className="text-xs block opacity-80 mt-0.5">
+                                            <span className="text-[10px] md:text-xs block opacity-80 mt-0.5">
                                                 {isProfit ? '+' : ''}{percentReturn.toFixed(2)}%
                                             </span>
                                         </p>
                                     </div>
 
-                                    {/* 🚀 EXTENDED DETAILS: Weighted Average Buy Cost Box */}
-                                    <div className="bg-slate-900/50 border border-slate-800 p-5 rounded-2xl">
-                                        <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Average Cost (Buy Basis)</p>
-                                        <p className="text-2xl font-mono font-black text-blue-400">${Number(selectedAsset.cost_basis).toFixed(2)}</p>
+                                    {/* EXTENDED DETAILS: Weighted Average Buy Cost Box */}
+                                    <div className="bg-slate-900/50 border border-slate-800 p-4 md:p-5 rounded-2xl">
+                                        <p className="text-[8px] md:text-[9px] font-bold text-slate-500 uppercase mb-1">Average Cost (Buy Basis)</p>
+                                        <p className="text-lg md:text-2xl font-mono font-black text-blue-400">${Number(selectedAsset.cost_basis).toFixed(2)}</p>
                                     </div>
 
-                                    {/* 🚀 EXTENDED DETAILS: Live Market Value Position Box */}
-                                    <div className="bg-slate-900/50 border border-slate-800 p-5 rounded-2xl">
-                                        <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Position Market Value</p>
-                                        <p className="text-2xl font-mono font-black text-white">${assetTotalValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</p>
+                                    {/* EXTENDED DETAILS: Live Market Value Position Box */}
+                                    <div className="bg-slate-900/50 border border-slate-800 p-4 md:p-5 rounded-2xl">
+                                        <p className="text-[8px] md:text-[9px] font-bold text-slate-500 uppercase mb-1">Position Market Value</p>
+                                        <p className="text-lg md:text-2xl font-mono font-black text-white">${assetTotalValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</p>
                                     </div>
 
-                                    <div className="bg-slate-900/50 border border-slate-800 p-5 rounded-2xl">
-                                        <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Shares Owned</p>
-                                        <p className="text-lg font-mono font-black text-white">{selectedAsset.shares.toFixed(4)}</p>
+                                    <div className="bg-slate-900/50 border border-slate-800 p-4 md:p-5 rounded-2xl">
+                                        <p className="text-[8px] md:text-[9px] font-bold text-slate-500 uppercase mb-1">Shares Owned</p>
+                                        <p className="text-base md:text-lg font-mono font-black text-white">{selectedAsset.shares.toFixed(4)}</p>
                                     </div>
-                                    <div className="bg-slate-900/50 border border-slate-800 p-5 rounded-2xl">
-                                        <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Portfolio Weight</p>
-                                        <p className="text-lg font-mono font-black text-blue-400">{diversification}%</p>
+                                    <div className="bg-slate-900/50 border border-slate-800 p-4 md:p-5 rounded-2xl">
+                                        <p className="text-[8px] md:text-[9px] font-bold text-slate-500 uppercase mb-1">Portfolio Weight</p>
+                                        <p className="text-base md:text-lg font-mono font-black text-blue-400">{diversification}%</p>
                                     </div>
                                 </>
                             );
@@ -523,39 +529,39 @@ export default function VaultPage() {
                       </div>
 
                       {/* Action Buttons */}
-                      <div className="flex gap-4 pt-4 border-t border-slate-800">
+                      <div className="flex gap-3 md:gap-4 pt-4 border-t border-slate-800">
                           <button 
                             onClick={() => { setTradeType("BUY"); setShowTradeTicket(true); }}
-                            className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-4 rounded-xl font-black text-xs uppercase tracking-widest transition-colors shadow-[0_0_15px_rgba(16,185,129,0.2)]"
+                            className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-3 md:py-4 rounded-xl font-black text-[10px] md:text-xs uppercase tracking-widest transition-colors shadow-[0_0_15px_rgba(16,185,129,0.2)]"
                           >
                               Buy More
                           </button>
                           <button 
                             onClick={() => { setTradeType("SELL"); setShowTradeTicket(true); }}
-                            className="flex-1 bg-rose-600 hover:bg-rose-500 text-white py-4 rounded-xl font-black text-xs uppercase tracking-widest transition-colors shadow-[0_0_15px_rgba(225,29,72,0.2)]"
+                            className="flex-1 bg-rose-600 hover:bg-rose-500 text-white py-3 md:py-4 rounded-xl font-black text-[10px] md:text-xs uppercase tracking-widest transition-colors shadow-[0_0_15px_rgba(225,29,72,0.2)]"
                           >
                               Sell
                           </button>
                       </div>
 
                       {/* Company & News Section */}
-                      <div className="pt-8 border-t border-slate-800">
-                          <h3 className="text-sm font-black text-white uppercase tracking-widest mb-6">Latest Intelligence</h3>
-                          <div className="space-y-4">
+                      <div className="pt-6 md:pt-8 border-t border-slate-800">
+                          <h3 className="text-xs md:text-sm font-black text-white uppercase tracking-widest mb-4 md:mb-6">Latest Intelligence</h3>
+                          <div className="space-y-3 md:space-y-4">
                               {liveData[selectedAsset.ticker]?.news ? (
                                   liveData[selectedAsset.ticker].news.map((article: any, i: number) => (
-                                      <div key={i} className="bg-slate-950 border border-slate-800 p-5 rounded-2xl">
-                                          <p className="text-sm font-bold text-slate-200 mb-3">{article.title}</p>
-                                          <div className="flex justify-between items-center">
-                                              <p className="text-[9px] font-black text-slate-500 uppercase tracking-wider">{article.publisher} • {article.date}</p>
+                                      <div key={i} className="bg-slate-950 border border-slate-800 p-4 md:p-5 rounded-2xl">
+                                          <p className="text-xs md:text-sm font-bold text-slate-200 mb-3">{article.title}</p>
+                                          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 sm:gap-0">
+                                              <p className="text-[8px] md:text-[9px] font-black text-slate-500 uppercase tracking-wider">{article.publisher} • {article.date}</p>
                                               
                                               {article.summary ? (
-                                                 <span className="text-[9px] font-black text-emerald-400 uppercase tracking-widest bg-emerald-500/10 px-2 py-1 rounded">Synthesized</span>
+                                                 <span className="text-[8px] md:text-[9px] font-black text-emerald-400 uppercase tracking-widest bg-emerald-500/10 px-2 py-1 rounded">Synthesized</span>
                                               ) : (
                                                 <button 
                                                     onClick={() => summarizeNews(article)}
                                                     disabled={isSummarizing}
-                                                    className="text-[9px] font-black text-blue-400 uppercase tracking-widest bg-blue-900/30 hover:bg-blue-600 hover:text-white px-3 py-1.5 rounded-lg border border-blue-500/50 transition-all disabled:opacity-50"
+                                                    className="text-[8px] md:text-[9px] font-black text-blue-400 uppercase tracking-widest bg-blue-900/30 hover:bg-blue-600 hover:text-white px-3 py-1.5 rounded-lg border border-blue-500/50 transition-all disabled:opacity-50"
                                                 >
                                                     {isSummarizing ? 'Running...' : 'Summarize (1 Token)'}
                                                 </button>
@@ -564,8 +570,8 @@ export default function VaultPage() {
                                           
                                           {/* Injected Summary Block */}
                                           {article.summary && (
-                                              <div className="mt-4 pt-4 border-t border-slate-800">
-                                                  <p className="text-sm text-slate-300 italic leading-relaxed border-l-2 border-emerald-500 pl-3">
+                                              <div className="mt-3 md:mt-4 pt-3 md:pt-4 border-t border-slate-800">
+                                                  <p className="text-xs md:text-sm text-slate-300 italic leading-relaxed border-l-2 border-emerald-500 pl-3">
                                                       "{article.summary}"
                                                   </p>
                                               </div>
@@ -573,7 +579,7 @@ export default function VaultPage() {
                                       </div>
                                   ))
                               ) : (
-                                  <p className="text-xs text-slate-500 italic">No recent intelligence found for this asset.</p>
+                                  <p className="text-[10px] md:text-xs text-slate-500 italic">No recent intelligence found for this asset.</p>
                               )}
                           </div>
                       </div>
