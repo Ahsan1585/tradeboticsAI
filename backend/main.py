@@ -355,20 +355,6 @@ def get_market_universe():
 
 # --- ENDPOINTS ---
 
-@app.get("/nuke-database")
-def nuke_database():
-    """Forces the Render server to wipe its own database table and expose the response."""
-    try:
-        response = supabase.table('market_universe').delete().neq('ticker', 'FAKE_TICKER').execute()
-        
-        # If Supabase actually deletes the rows, it will list them in response.data
-        return {
-            "deleted_rows": response.data,
-            "message": "If 'deleted_rows' is an empty list [], Supabase is silently blocking the command."
-        }
-    except Exception as e:
-        return {"CRITICAL_ERROR": str(e)}
-
 @app.get("/")
 async def root_health_check():
     """Lightweight endpoint for the background keep-alive ping."""
@@ -761,13 +747,10 @@ async def summarize_article(req: SummaryRequest, user_id: str = Query(...)):
 async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)): 
     if not model: return {"analysis": "AI Node Offline."}
     try:
-        # 🚀 CACHE REMOVED: Always run a fresh live scan for the portfolio
-        
         profile_res = supabase.table('profiles').select('ai_token_balance').eq('id', user_id).execute()
         if not profile_res.data: raise HTTPException(status_code=404, detail="Operative profile not found.")
         current_tokens = int(profile_res.data[0]['ai_token_balance'])
 
-        # Check Token Balance
         if current_tokens < 5:
             raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 5 Tokens required.")
 
@@ -799,73 +782,85 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
                 continue 
 
         if not portfolio_summary: return {"analysis": "No valid data could be retrieved.", "holdings": []}
-
         batch_data = "\n".join([f"{p['ticker']}: {p['shares']} shares @ live ${p['current_price']} (Total: ${p['value']})" for p in portfolio_summary])
         
-        if req.trade_style == "Day Trade":
-            screener_universe = ["NVDA", "AMD", "SMCI", "TSLA", "COIN"]
-        elif req.trade_style == "Swing Trade":
-            screener_universe = ["META", "AVGO", "NFLX", "PLTR", "NOW"]
-        else: 
-            screener_universe = ["LLY", "JPM", "COST", "WMT", "UNH"]
+        # 🚀 THE FIX: Pull the elite candidates directly from your 500+ DB table instead of the hardcoded 5
+        print(f"[{datetime.now()}] 🔍 Fetching top candidates from Supabase for portfolio rotation...", file=sys.stderr)
+        
+        try:
+            db_response = supabase.table('market_universe').select('*').not_.is_('tech_score', 'null').execute()
+            db_universe = db_response.data
+        except Exception as db_err:
+            print(f"❌ Failed to fetch market universe from DB: {db_err}", file=sys.stderr)
+            db_universe = []
 
         scored_candidates = []
-        for t in screener_universe:
-            try:
-                if any(h['ticker'] == t for h in portfolio_summary): continue
-                stock = yf.Ticker(t)
-                hist = stock.history(period="1mo", prepost=True)
-                if hist.empty: continue
-                price = round(hist['Close'].iloc[-1], 2)
-                prev_price = round(hist['Close'].iloc[-2], 2)
+        
+        if db_universe:
+            for row in db_universe:
+                t = row['ticker']
                 
-                # 🚀 EXACT MATH MATCH TO TERMINAL
-                tech_base = 50
-                if len(hist) >= 20:
-                    sma_20 = hist['Close'].rolling(window=20).mean().iloc[-1]
-                    if price > sma_20: tech_base += 25
-                    else: tech_base -= 25
-                if price > prev_price: tech_base += 15
-                else: tech_base -= 15
-                tech_score = max(10, min(95, tech_base))
-
-                info = stock.info
-                pe = info.get("trailingPE", 0)
-                margins = info.get("profitMargins", 0)
-                sector = info.get("sector", "Macro Profile")
-
-                fund_base = 50
-                if pe and 0 < pe < 25: fund_base += 20
-                elif pe and pe > 50: fund_base -= 20
-                if margins and margins > 0.15: fund_base += 20
-                elif margins and margins < 0: fund_base -= 25
-                fund_score = max(10, min(95, fund_base))
+                # Skip assets the user already owns
+                if any(h['ticker'] == t for h in portfolio_summary): 
+                    continue
+                    
+                tech_score = row['tech_score']
+                fund_score = row['fund_score']
+                sector = row['sector']
+                pe = row['pe']
+                price = row['price']
                 
-                total_score = math.ceil((tech_score + fund_score) / 2)
-
-                # 🚀 HIDDEN ALIGNMENT ALGORITHM (Keeps AI choosing the right style without faking the score)
-                style_bonus = 0
-                if req.trade_style == "Day Trade" and t in ["NVDA", "TSLA", "COIN"]: style_bonus = 20 
-                elif req.trade_style == "Swing Trade" and t in ["META", "AVGO", "PLTR"]: style_bonus = 20 
-                elif req.trade_style == "Long Term" and t in ["LLY", "COST", "JPM"]: style_bonus = 20 
-
-                sort_weight = total_score + style_bonus
-
-                health_str = f"Sector: {sector} | P/E: {round(pe, 1) if pe else 'N/A'} | Margin: {round(margins*100, 1) if margins else '0'}%"
-
+                # Align scoring weights to the user's trading horizon style
+                if req.trade_style == "Day Trade":
+                    total_score = (tech_score * 0.8) + (fund_score * 0.2)
+                elif req.trade_style == "Conservative" or req.trade_style == "Long Term":
+                    total_score = (tech_score * 0.2) + (fund_score * 0.8)
+                else: 
+                    total_score = (tech_score * 0.5) + (fund_score * 0.5)
+                
+                total_score = math.ceil(total_score)
+                
                 scored_candidates.append({
                     "ticker": t,
                     "price": price,
-                    "score": total_score,          # Pure Terminal Score is now isolated
-                    "sort_weight": sort_weight,    # Internal AI Sorting handles the style boost invisibly
-                    "health": health_str
+                    "score": total_score,
+                    "sort_weight": total_score,
+                    "health": f"Sector: {sector} | P/E: {pe if pe else 'N/A'}"
                 })
-            except Exception:
-                continue
+        else:
+            # FALLBACK: If Supabase fails, use a tiny static list so the endpoint doesn't crash
+            print("⚠️ DB empty or unreachable. Falling back to static lists.", file=sys.stderr)
+            screener_universe = ["NVDA", "AMD", "META", "LLY", "JPM", "COST"]
+            for t in screener_universe:
+                try:
+                    if any(h['ticker'] == t for h in portfolio_summary): continue
+                    stock = yf.Ticker(t)
+                    hist = stock.history(period="1d")
+                    if hist.empty: continue
+                    price = round(hist['Close'].iloc[-1], 2)
+                    scored_candidates.append({
+                        "ticker": t,
+                        "price": price,
+                        "score": 50,
+                        "sort_weight": 50,
+                        "health": "Screener Fallback Mode"
+                    })
+                except Exception:
+                    continue
 
-        # Sort by the hidden weight, not the raw score!
+        # Sort the entire universe and apply the Strict Guardrail
         scored_candidates.sort(key=lambda x: x['sort_weight'], reverse=True)
-        elite_basket = scored_candidates[:3]
+        
+        # 🛡️ GUARDRAIL: Only allow assets with a pure score of 70 or higher
+        elite_basket = [c for c in scored_candidates if c['score'] >= 70][:3]
+
+        # 🛑 EARLY EXIT: If no high-quality targets exist, tell the user to HOLD.
+        if not elite_basket:
+            return {
+                "analysis": "<h3>1. Horizon Alignment</h3><ul><li>Current core positions are sustaining higher quantitative stability than available sector rotation targets.</li></ul><h3>2. Capital Rotation</h3><ul><li>Market-wide screening shows macro-technical distribution. No high-conviction transition setups detected.</li></ul><h3>3. Precision Execution</h3><ul><li><strong>HOLD ALL POSITIONS:</strong> Capital allocation remains optimized for current volatility models. Maintain baseline structures.</li></ul>",
+                "holdings": portfolio_summary,
+                "remaining_tokens": current_tokens # Do not deduct tokens if we tell them to just hold
+            }
 
         basket_str = f"QUALIFIED TARGET BASKET FOR {req.trade_style.upper()}:\n"
         for c in elite_basket:
@@ -890,7 +885,7 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
             "<ul>\n"
             "<li><strong>LIQUIDATE [Current Asset Ticker]:</strong> Close position at current market price to free up capital.</li>\n"
             "<li><strong>REALLOCATE TO [Target Basket Ticker]:</strong> Deploy freed capital into this high-scoring asset.</li>\n"
-            "<li><strong>STRATEGIC LOGIC:</strong> [1 sentence explaining why this asset wins based on its Quant Score].</li>\n"
+            "<li><strong>STRATEGIC LOGIC:</strong> [1 sentence explaining the data-driven reality of the Quant Score. Be brutally honest: do NOT call scores under 70 'strong' or 'high-conviction'. Describe them objectively based on their numerical value].</li>\n"
             "</ul>"
         )
 
@@ -911,18 +906,14 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
             print(f"GEMINI BLOCKED RESPONSE: {response.prompt_feedback}", file=sys.stderr)
             ai_text = "<h3>Execution Blocked</h3><ul><li>AI Node rejected synthesis due to strict safety protocols regarding direct financial execution.</li></ul>"
 
-        # Deduct exactly 5 tokens for this fresh run
         new_token_balance = current_tokens - 5
         supabase.table('profiles').update({'ai_token_balance': new_token_balance}).eq('id', user_id).execute()
 
-        final_response = {
+        return {
             "analysis": ai_text,
             "holdings": portfolio_summary,
             "remaining_tokens": new_token_balance
         }
-        
-        # 🚀 NO update_ai_cache() call here anymore!
-        return final_response
         
     except HTTPException as he:
         raise he
@@ -933,27 +924,43 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
 @app.post("/swap-thesis")
 async def generate_swap_thesis(req: SwapRequest):
     try:
-        sector_targets = {
-            "Technology": {"ticker": "NVDA", "score": 94},
-            "Consumer Cyclical": {"ticker": "AMZN", "score": 88},
-            "Financial Services": {"ticker": "JPM", "score": 85},
-            "Healthcare": {"ticker": "LLY", "score": 90},
-            "Communication Services": {"ticker": "META", "score": 89},
-            "Energy": {"ticker": "XOM", "score": 82}
-        }
         stock = yf.Ticker(req.ticker)
         sector = stock.info.get("sector", "Technology")
-        target = sector_targets.get(sector, sector_targets["Technology"])
-        if req.ticker.upper() == target["ticker"]: target = {"ticker": "MSFT", "score": 91}
         
-        target_stock = yf.Ticker(target["ticker"])
-        target_hist = target_stock.history(period="1d", prepost=True)
-        target_price = 150.00 if target_hist.empty else round(target_hist['Close'].iloc[-1], 2)
+        # 🚀 THE FIX: Dynamically find the best stock in the SAME SECTOR from your database!
+        target_ticker = "MSFT" # Fallback defaults
+        target_score = 90
+        target_price = 150.00
+        
+        if supabase:
+            try:
+                # Query DB for all stocks in the same sector
+                res = supabase.table('market_universe').select('*').eq('sector', sector).not_.is_('tech_score', 'null').execute()
+                if res.data:
+                    # Sort them by their combined average score
+                    sorted_sector = sorted(res.data, key=lambda x: (x['tech_score'] + x['fund_score'])/2, reverse=True)
+                    for candidate in sorted_sector:
+                        # Make sure we don't recommend swapping the stock for itself
+                        if candidate['ticker'] != req.ticker.upper():
+                            target_ticker = candidate['ticker']
+                            target_score = math.ceil((candidate['tech_score'] + candidate['fund_score'])/2)
+                            target_price = candidate['price']
+                            break
+            except Exception as db_err:
+                print(f"Swap DB Error: {db_err}", file=sys.stderr)
+
         freed_capital = req.shares * req.price
-        target_shares = math.floor(freed_capital / target_price)
-        thesis = f"Liquidating your {req.shares} shares of {req.ticker.upper()} frees up ${freed_capital:,.2f} in capital. Reallocating into {target_shares} shares of {target['ticker']} (Quant Score {target['score']}) upgrades asset quality and increases Alpha potential."
+        target_shares = math.floor(freed_capital / target_price) if target_price > 0 else 0
+        thesis = f"Liquidating your {req.shares} shares of {req.ticker.upper()} frees up ${freed_capital:,.2f} in capital. Reallocating into {target_shares} shares of {target_ticker} (Quant Score {target_score}) upgrades asset quality and increases Alpha potential within the {sector} sector."
         
-        return {"target_ticker": target["ticker"], "target_price": target_price, "target_score": target["score"], "target_shares": target_shares, "freed_capital": freed_capital, "thesis": thesis}
+        return {
+            "target_ticker": target_ticker, 
+            "target_price": target_price, 
+            "target_score": target_score, 
+            "target_shares": target_shares, 
+            "freed_capital": freed_capital, 
+            "thesis": thesis
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
