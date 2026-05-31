@@ -504,6 +504,11 @@ async def analyze_ticker(ticker: str):
             sma_20 = hist['Close'].rolling(window=20).mean().iloc[-1]
             if current_price > sma_20: tech_base += 25
             else: tech_base -= 25
+            
+        # 🚀 ADD THESE TWO LINES RIGHT HERE:
+        sma_50 = hist['Close'].rolling(window=50).mean().iloc[-1] if len(hist) >= 50 else current_price * 0.95
+        recent_high = hist['High'].max()
+
         if current_price > prev_price: tech_base += 15
         else: tech_base -= 15
         tech_score = max(10, min(95, tech_base))
@@ -588,6 +593,9 @@ async def analyze_ticker(ticker: str):
             "ledger": ledger,
             "news": news_list,  
             "ai_tactical": f"Market conditions evaluated for {ticker_upper}. Execution guidance dynamically adjusting to real-time volatility.",
+            "support_level": round(sma_50, 2),
+            "resistance_level": round(recent_high, 2),
+
             "fundamentals": {
                 "market_cap": formatted_mcap, 
                 "pe_ratio": str(round(pe, 2)) if pe else "N/A",
@@ -672,6 +680,66 @@ async def translate_ai(req: TranslationRequest, user_id: str = Query(...)):
         
         update_ai_cache(cache_key, final_response)
         return final_response
+        
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@app.post("/exit-strategy")
+async def generate_exit_strategy(req: TranslationRequest, user_id: str = Query(...)): 
+    if not model: return {"analysis": "AI Node Offline."}
+    try:
+        # Check token balance (Charging 2 tokens for a focused exit strategy)
+        profile_res = supabase.table('profiles').select('ai_token_balance').eq('id', user_id).execute()
+        if not profile_res.data: raise HTTPException(status_code=404, detail="Operative profile not found.")
+        current_tokens = int(profile_res.data[0]['ai_token_balance'])
+
+        if current_tokens < 2:
+            raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 2 Tokens required.")
+
+        prompt = f"Act as an elite quantitative analyst. Define a strict risk-management exit protocol for {req.ticker}.\n\n"
+        prompt += f"CURRENT MARKET CONTEXT:\n- Current Price: ${req.data_context.get('price', 'N/A')}\n\n"
+
+        ledger = req.data_context.get("ledger", [])
+        if ledger:
+            prompt += f"TECHNICAL LEDGER:\n"
+            for item in ledger: prompt += f"- {item.get('factor')}: {item.get('val')} ({item.get('status')})\n"
+
+        prompt += (
+            "\n🚨 CRITICAL MANDATE - EXIT STRATEGY REQUIRED:\n"
+            "DO NOT provide a general summary. OUTPUT STRICTLY IN HTML FORMAT using this exact structure:\n"
+            "<h3>Execution & Exit Protocol</h3>\n"
+            "<ul>\n"
+            "<li><strong>🟢 PRIMARY TARGET (TP):</strong> $[Calculate a logical Take Profit price based on near-term resistance]. (Provide 1 sentence of technical reasoning).</li>\n"
+            "<li><strong>🔴 HARD STOP LOSS (SL):</strong> $[Calculate a logical Stop Loss price based on near-term support or moving averages]. (Provide 1 sentence of risk-management reasoning).</li>\n"
+            "<li><strong>⏱️ TIME HORIZON:</strong> [State the estimated time in days/weeks for this thesis to play out].</li>\n"
+            "</ul>"
+        )
+
+        response = model.generate_content(
+            prompt,
+            safety_settings=[
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+            ]
+        )
+
+        try:
+            ai_text = response.text.strip()
+        except ValueError:
+            ai_text = "<h3>Execution Blocked</h3><ul><li>AI Node rejected synthesis due to strict safety protocols.</li></ul>"
+
+        # Deduct the 2 tokens
+        new_token_balance = current_tokens - 2
+        supabase.table('profiles').update({'ai_token_balance': new_token_balance}).eq('id', user_id).execute()
+
+        return {
+            "analysis": ai_text,
+            "remaining_tokens": new_token_balance
+        }
         
     except HTTPException as he:
         raise he
