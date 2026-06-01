@@ -171,7 +171,8 @@ async def staleness_worker_loop():
                                 'last_scanned': current_time
                             }).eq('ticker', t).execute()
                             
-                        continue
+                    # 🚦 ANTI-BOT THROTTLE: Random sleep between 0.5 and 1.5 seconds to bypass Yahoo rate limits
+                    await asyncio.sleep(random.uniform(0.5, 1.5))
                         
                 # 🚀 5. ENHANCED CYCLE: Sleep for 15 minutes instead of 1 hour to handle 10k assets
                 print(f"[{datetime.now()}] ✅ WORKER FINISHED: Queue updated. Sleeping for 15 minutes.", file=sys.stderr)
