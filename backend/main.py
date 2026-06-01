@@ -159,19 +159,24 @@ async def staleness_worker_loop():
                         print(f"✅ Successfully updated {t}", file=sys.stderr)
                         
                     except Exception as e:
-                        # --- THE FATAL ERROR FIX ---
-                        print(f"❌ Error processing {t}: {e}. Advancing queue...", file=sys.stderr)
+                        error_msg = str(e)
+                        print(f"❌ Error processing {t}: {error_msg}", file=sys.stderr)
                         
+                        # 🚨 NEW: YAHOO RATE LIMIT ABORT PROTOCOL
+                        if "Too Many Requests" in error_msg or "429" in error_msg:
+                            print(f"[{datetime.now()}] 🛑 RATE LIMIT TRIGGERED: Aborting batch to cool down IP...", file=sys.stderr)
+                            break # Instantly breaks out of the loop and triggers the 15-minute sleep
+                            
                         # Check if it's a known Yahoo delisted error
-                        if "Not Found" in str(e) or "delisted" in str(e).lower():
+                        if "Not Found" in error_msg or "delisted" in error_msg.lower():
                             supabase.table('market_universe').delete().eq('ticker', t).execute()
                         else:
                             # For all other random errors, force the timestamp update so it moves to the back of the line
                             supabase.table('market_universe').update({
                                 'last_scanned': current_time
                             }).eq('ticker', t).execute()
-                            
-                    # 🚦 ANTI-BOT THROTTLE: Random sleep between 0.5 and 1.5 seconds to bypass Yahoo rate limits
+
+                    # 🚦 ANTI-BOT THROTTLE: Executes on both SUCCESS and FAILURE to bypass Yahoo rate limits
                     await asyncio.sleep(random.uniform(0.5, 1.5))
                         
                 # 🚀 5. ENHANCED CYCLE: Sleep for 15 minutes instead of 1 hour to handle 10k assets
