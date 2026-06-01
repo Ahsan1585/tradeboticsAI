@@ -17,7 +17,6 @@ import random
 import httpx
 from contextlib import asynccontextmanager
 import requests
-import io
 import numpy as np
 from scipy.signal import argrelextrema
 import cloudscraper
@@ -734,9 +733,17 @@ async def translate_ai(req: TranslationRequest, user_id: str = Query(...)):
 async def generate_exit_strategy(req: TranslationRequest, user_id: str = Query(...)): 
     if not model: return {"analysis": "AI Node Offline."}
     try:
+        # 🛡️ THE CACHE SHIELD
+        cache_key = f"EXIT_STRAT_{req.ticker.upper()}"
+        cached_data = check_ai_cache(cache_key)
+        
         profile_res = supabase.table('profiles').select('ai_token_balance').eq('id', user_id).execute()
         if not profile_res.data: raise HTTPException(status_code=404, detail="Operative profile not found.")
         current_tokens = int(profile_res.data[0]['ai_token_balance'])
+
+        if cached_data:
+            cached_data["remaining_tokens"] = current_tokens
+            return cached_data
 
         if current_tokens < 2:
             raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 2 Tokens required.")
@@ -817,10 +824,15 @@ async def generate_exit_strategy(req: TranslationRequest, user_id: str = Query(.
         new_token_balance = current_tokens - 2
         supabase.table('profiles').update({'ai_token_balance': new_token_balance}).eq('id', user_id).execute()
 
-        return {
+        final_response = {
             "analysis": ai_text,
             "remaining_tokens": new_token_balance
         }
+        
+        # 🛡️ SAVE TO CACHE FOR 30 MINS
+        update_ai_cache(cache_key, final_response)
+        
+        return final_response
         
     except HTTPException as he:
         raise he
@@ -1004,37 +1016,37 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
         # 🛡️ THE ELITE BASKET FILTER
         elite_basket = [c for c in scored_candidates if c['score'] >= 70][:3]
 
-        if not elite_basket:
+        if not elite_basket or not portfolio_summary:
             return {
                 "analysis": "<h3>1. Horizon Alignment</h3><ul><li>Current core positions are sustaining higher quantitative stability than available sector rotation targets.</li></ul><h3>2. Capital Rotation</h3><ul><li>Market-wide screening shows macro-technical distribution. No high-conviction transition setups detected.</li></ul><h3>3. Precision Execution</h3><ul><li><strong>HOLD ALL POSITIONS:</strong> Capital allocation remains optimized for current volatility models. Maintain baseline structures.</li></ul>",
                 "holdings": portfolio_summary,
                 "remaining_tokens": current_tokens 
             }
 
-        basket_str = f"QUALIFIED TARGET BASKET FOR {req.trade_style.upper()}:\n"
-        for c in elite_basket:
-            basket_str += f"- {c['ticker']}: Live Price ${c['price']} | Quant Score: {c['score']} | {c['health']}\n"
+        # 🚀 PRE-COMPUTE THE MATH IN PYTHON (Saves massive AI tokens)
+        weakest_asset = min(portfolio_summary, key=lambda x: x['score'])
+        strongest_target = elite_basket[0]
+        score_delta = strongest_target['score'] - weakest_asset['score']
+        
+        # Calculate visual confidence purely in Python
+        confidence_pct = min(99, max(50, 50 + (score_delta * 2)))
 
+        # 🚀 THE MICRO-PROMPT (70% smaller)
         prompt = (
-            f"You are a Quantitative Execution Engine. You have access to ONLY these current holdings:\n{batch_data}\n\n"
-            f"Target Strategy Horizon: {req.trade_style}\n\n"
-            "CRITICAL: You MUST strictly choose the liquidation target from the CURRENT HOLDINGS list above. DO NOT suggest tickers not held by the user.\n"
-            f"Qualified Target Basket (for reinvestment):\n{basket_str}\n\n"
+            f"You are a Quantitative Execution Engine.\n"
+            f"Target Horizon: {req.trade_style}\n\n"
+            f"ROTATION DIRECTIVE:\n"
+            f"- LIQUIDATE: {weakest_asset['ticker']} (Score: {weakest_asset['score']}, Sector: {weakest_asset['sector']})\n"
+            f"- ALLOCATE: {strongest_target['ticker']} (Score: {strongest_target['score']}, Sector: {strongest_target['sector']})\n"
+            f"- DELTA: +{score_delta} Points\n\n"
             "CRITICAL INSTRUCTIONS:\n"
-            "1. Be extremely brief. No conversational fluff or introductions.\n"
-            "2. Analyze the quantitative delta between the weakest held asset and the strongest available target. Output must explain the 'Quant Score' improvement, the sector shift, and the projected impact on portfolio health.\n"
-            "3. DO NOT attempt to calculate precise fractional share math. Use institutional reallocation terms.\n"
-            "4. OUTPUT STRICTLY IN HTML FORMAT. DO NOT use markdown like ### or **.\n\n"
-            "Structure your HTML output exactly like this:\n"
-            "<h3>1. Horizon Alignment</h3>\n"
-            "<ul><li>[1 short bullet sentence analyzing alpha alignment]</li></ul>\n"
-            "<h3>2. Capital Rotation</h3>\n"
-            "<ul><li>[1 short bullet sentence explaining macro flow advantages. Include sector shift and Quant Score Delta]</li></ul>\n"
-            "<h3>3. Precision Execution</h3>\n"
-            "<ul><li><strong>LIQUIDATE:</strong> [Weak Ticker] to harvest liquidity.</li>\n"
-            "<li><strong>ALLOCATE:</strong> Reinvest proceeds directly into [Strongest Basket Ticker].</li></ul>\n"
-            "<h3>4. Rotation Confidence</h3>\n"
-            "<ul><li><strong>Confidence:</strong> [||||||----] [Percentage]% (Calculate based on the Quant Score delta)</li></ul>"
+            "Write the institutional narrative for this exact rotation. OUTPUT STRICTLY IN HTML FORMAT. DO NOT use markdown.\n"
+            "Structure exactly like this:\n"
+            "<h3>1. Horizon Alignment</h3>\n<ul><li>[1 short sentence analyzing alpha alignment]</li></ul>\n"
+            "<h3>2. Capital Rotation</h3>\n<ul><li>[1 short sentence explaining the sector shift and the quantitative improvement]</li></ul>\n"
+            f"<h3>3. Precision Execution</h3>\n<ul><li><strong>LIQUIDATE:</strong> {weakest_asset['ticker']} to harvest liquidity.</li>\n"
+            f"<li><strong>ALLOCATE:</strong> Reinvest proceeds directly into {strongest_target['ticker']}.</li></ul>\n"
+            f"<h3>4. Rotation Confidence</h3>\n<ul><li><strong>Confidence:</strong> [||||||----] {confidence_pct}%</li></ul>"
         )
 
         response = model.generate_content(prompt)
