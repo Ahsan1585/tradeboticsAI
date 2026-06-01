@@ -1168,7 +1168,7 @@ async def execute_trade(req: TradeRequest, request: Request):
             "total_cost": trade_cost,
             "remaining_cash": new_cash
         }
-
+# FORCE DEPLOY UPDATE 1
     except Exception as e:
         print(f"TRADE EXECUTION ERROR: {e}", file=sys.stderr)
         raise HTTPException(status_code=500, detail=str(e))
