@@ -18,6 +18,8 @@ import httpx
 from contextlib import asynccontextmanager
 import requests
 import io
+import numpy as np
+from scipy.signal import argrelextrema
 
 load_dotenv()
 
@@ -286,6 +288,25 @@ def update_ai_cache(cache_key: str, payload: dict):
         print(f"CACHE SAVED [{cache_key}]: Locked for 30 minutes.", file=sys.stderr)
     except Exception as e:
         print(f"Cache save error: {e}", file=sys.stderr)
+
+def get_support_resistance(hist):
+    # Ensure we have enough data (e.g., 30 days)
+    if len(hist) < 30:
+        return None, None
+        
+    prices = hist['Close'].values
+    
+    # Identify local maxima (Resistance) and minima (Support)
+    # The 'order' parameter defines the window size for a "peak" or "trough"
+    order = 5
+    maxima = argrelextrema(prices, np.greater, order=order)[0]
+    minima = argrelextrema(prices, np.less, order=order)[0]
+    
+    # Extract the prices at these points
+    res_levels = prices[maxima][-3:] # Get last 3 resistance levels
+    sup_levels = prices[minima][-3:] # Get last 3 support levels
+    
+    return float(np.mean(sup_levels)), float(np.mean(res_levels))
 
 def get_market_universe():
     """Fetches unique tickers from S&P 500, Nasdaq-100, and DJIA from Wikipedia."""
