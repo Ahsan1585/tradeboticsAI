@@ -47,32 +47,28 @@ async def keep_alive_loop():
             await asyncio.sleep(600)
 
 async def staleness_worker_loop():
-    """Runs every 15 minutes. Sweeps 200 stale tickers, scores them, and cleans DB."""
+    """Runs continuously every 60 seconds. Sweeps 15 stale tickers to bypass Yahoo burst limits."""
     # Give the server 60 seconds to fully boot up before starting the heavy math
     await asyncio.sleep(60)
     
     while True:
         if supabase:
             try:
-                print(f"[{datetime.now()}] 🤖 WORKER WAKING UP: Initiating Staleness Sweep...", file=sys.stderr)
-                
                 # 🧹 1. DATABASE CLEANUP: Auto-delete AI Cache older than 30 minutes to protect free tier
                 try:
                     expiration_cutoff = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
                     supabase.table('ai_scan_cache').delete().lt('last_scanned', expiration_cutoff).execute()
-                    print(f"[{datetime.now()}] 🧹 DATABASE CLEANUP: Swept expired AI cache rows.", file=sys.stderr)
                 except Exception as e:
                     print(f"❌ Database cleanup failed: {e}", file=sys.stderr)
 
-                # 🚀 2. INCREASED PACE: Grab 200 stocks instead of 50
-                response = supabase.table('market_universe').select('ticker').order('last_scanned', desc=False, nullsfirst=True).limit(200).execute()
+                # 🚀 2. MICRO-BATCHING: Grab only 15 stocks to prevent Yahoo burst detection
+                response = supabase.table('market_universe').select('ticker').order('last_scanned', desc=False, nullsfirst=True).limit(15).execute()
                 stale_tickers = [row['ticker'] for row in response.data]
                 
                 # 3. Database Seeding (If table is completely empty)
                 if not stale_tickers:
                     print(f"[{datetime.now()}] ⚠️ EMPTY QUEUE: Seeding database from SEC Master List...", file=sys.stderr)
                     universe = get_market_universe()
-                    print(f"[{datetime.now()}] 📦 Scraped {len(universe)} tickers. Breaking into safe batches of 200...", file=sys.stderr)
                     
                     # Batch insert to avoid overwhelming Supabase limits 
                     for i in range(0, len(universe), 200):
@@ -80,15 +76,13 @@ async def staleness_worker_loop():
                         seed_data = [{'ticker': t} for t in chunk]
                         try:
                             supabase.table('market_universe').upsert(seed_data).execute()
-                            print(f"✅ SEC Batch {i} to {i+len(chunk)} inserted successfully.", file=sys.stderr)
                         except Exception as e:
-                            print(f"❌ Failed to insert batch {i}: {e}", file=sys.stderr)
+                            pass
                         
-                    # Re-fetch the first 200 now that the queue exists
-                    response = supabase.table('market_universe').select('ticker').order('last_scanned', desc=False, nullsfirst=True).limit(200).execute()
+                    response = supabase.table('market_universe').select('ticker').order('last_scanned', desc=False, nullsfirst=True).limit(15).execute()
                     stale_tickers = [row['ticker'] for row in response.data]
 
-                print(f"[{datetime.now()}] 🔍 WORKER SCANNING: Processing {len(stale_tickers)} tickers...", file=sys.stderr)
+                print(f"[{datetime.now()}] 🔍 MICRO-BATCH: Processing {len(stale_tickers)} tickers...", file=sys.stderr)
                 
                 # 4. Gather Data & Calculate Core Baselines
                 for t in stale_tickers:
@@ -100,12 +94,10 @@ async def staleness_worker_loop():
                         
                         # --- THE QUEUE LOGJAM FIX ---
                         if hist.empty:
-                            print(f"⚠️ {t} is empty or delisted. Deleting from DB...", file=sys.stderr)
                             supabase.table('market_universe').delete().eq('ticker', t).execute()
                             continue
                             
                         if len(hist) < 2: 
-                            # If data is weird but not totally empty, update timestamp so it doesn't block the queue
                             supabase.table('market_universe').update({'last_scanned': current_time}).eq('ticker', t).execute()
                             continue
                         
@@ -122,26 +114,18 @@ async def staleness_worker_loop():
                         tech_base = 50
                         if len(hist) >= 20:
                             sma_20 = hist['Close'].rolling(window=20).mean().iloc[-1]
-                            if price > sma_20: 
-                                tech_base += 25
-                            else: 
-                                tech_base -= 25
-                        if price > prev_price: 
-                            tech_base += 15
-                        else: 
-                            tech_base -= 15
+                            if price > sma_20: tech_base += 25
+                            else: tech_base -= 25
+                        if price > prev_price: tech_base += 15
+                        else: tech_base -= 15
                         tech_score = max(10, min(95, tech_base))
                         
                         # --- ISOLATED FUNDAMENTAL MATH ---
                         fund_base = 50
-                        if pe and 0 < pe < 25: 
-                            fund_base += 20
-                        elif pe and pe > 50: 
-                            fund_base -= 20
-                        if margins and margins > 0.15: 
-                            fund_base += 20
-                        elif margins and margins < 0: 
-                            fund_base -= 25
+                        if pe and 0 < pe < 25: fund_base += 20
+                        elif pe and pe > 50: fund_base -= 20
+                        if margins and margins > 0.15: fund_base += 20
+                        elif margins and margins < 0: fund_base -= 25
                         fund_score = max(10, min(95, fund_base))
                         
                         # 5. Upsert the fresh intelligence back to the queue
@@ -156,37 +140,29 @@ async def staleness_worker_loop():
                             'last_scanned': current_time
                         }).execute()
                         
-                        print(f"✅ Successfully updated {t}", file=sys.stderr)
-                        
                     except Exception as e:
                         error_msg = str(e)
-                        print(f"❌ Error processing {t}: {error_msg}", file=sys.stderr)
                         
-                        # 🚨 NEW: YAHOO RATE LIMIT ABORT PROTOCOL
+                        # 🚨 YAHOO RATE LIMIT ABORT PROTOCOL
                         if "Too Many Requests" in error_msg or "429" in error_msg:
-                            print(f"[{datetime.now()}] 🛑 RATE LIMIT TRIGGERED: Aborting batch to cool down IP...", file=sys.stderr)
-                            break # Instantly breaks out of the loop and triggers the 15-minute sleep
+                            print(f"[{datetime.now()}] 🛑 RATE LIMIT CAUGHT: Aborting micro-batch to cool down...", file=sys.stderr)
+                            break 
                             
-                        # Check if it's a known Yahoo delisted error
+                        # Handle delisted/random errors
                         if "Not Found" in error_msg or "delisted" in error_msg.lower():
                             supabase.table('market_universe').delete().eq('ticker', t).execute()
                         else:
-                            # For all other random errors, force the timestamp update so it moves to the back of the line
-                            supabase.table('market_universe').update({
-                                'last_scanned': current_time
-                            }).eq('ticker', t).execute()
+                            supabase.table('market_universe').update({'last_scanned': current_time}).eq('ticker', t).execute()
 
-                    # 🚦 ANTI-BOT THROTTLE: Executes on both SUCCESS and FAILURE to bypass Yahoo rate limits
+                    # 🚦 ANTI-BOT THROTTLE: Human-like delay between each of the 15 stocks
                     await asyncio.sleep(random.uniform(0.5, 1.5))
                         
-                # 🚀 5. ENHANCED CYCLE: Sleep for 15 minutes instead of 1 hour to handle 10k assets
-                print(f"[{datetime.now()}] ✅ WORKER FINISHED: Queue updated. Sleeping for 15 minutes.", file=sys.stderr)
-                await asyncio.sleep(900) 
+                # 🚀 5. MICRO-CYCLE: Sleep for only 60 seconds before pulling the next 15 stocks
+                await asyncio.sleep(60) 
                 
             except Exception as e:
                 # --- THE MASTER LOOP SAFETY NET ---
                 print(f"❌ CRITICAL WORKER ERROR: {e}", file=sys.stderr)
-                print("Worker crashed. Reviving in 60 seconds...", file=sys.stderr)
                 await asyncio.sleep(60) 
         else:
             await asyncio.sleep(60) 
