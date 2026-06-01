@@ -20,14 +20,13 @@ import requests
 import io
 import numpy as np
 from scipy.signal import argrelextrema
+import cloudscraper
 
 load_dotenv()
 
 # ==========================================
 # --- THE BROWSER SPOOFER (CLOUDFLARE BYPASS) ---
 # ==========================================
-import cloudscraper
-
 def get_yf_session():
     """Uses Cloudscraper to bypass Cloudflare's Data Center IP bans and anti-bot pages."""
     scraper = cloudscraper.create_scraper(
@@ -47,7 +46,6 @@ RENDER_APP_URL = "https://tradebotics-api.onrender.com/market-briefing"
 
 async def keep_alive_loop():
     """Loops infinitely every 10 minutes to ping the public URL and prevent sleep."""
-    # Give the server 30 seconds to fully boot up before the first ping
     await asyncio.sleep(30)
     
     async with httpx.AsyncClient() as client:
@@ -59,50 +57,45 @@ async def keep_alive_loop():
             except Exception as e:
                 print(f"[{datetime.now()}] ⚠️ KEEP-ALIVE PING FAILED: {e}", file=sys.stderr)
             
-            # Sleep for 10 minutes (600 seconds) before pinging again
             await asyncio.sleep(600)
 
 async def staleness_worker_loop():
-    """Runs continuously every 3 minutes. Sweeps 15 stale tickers using Browser Spoofer."""
-    # Give the server 60 seconds to fully boot up before starting the heavy math
+    """Runs continuously every 3 minutes. Sweeps 15 stale tickers using Cloudscraper."""
     await asyncio.sleep(60)
     
     while True:
         if supabase:
             try:
-                # 🧹 1. DATABASE CLEANUP: Auto-delete AI Cache older than 30 minutes to protect free tier
+                # 🧹 1. DATABASE CLEANUP
                 try:
                     expiration_cutoff = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
                     supabase.table('ai_scan_cache').delete().lt('last_scanned', expiration_cutoff).execute()
                 except Exception as e:
                     pass
 
-                # 🚀 2. MICRO-BATCHING: Grab only 15 stocks to prevent Yahoo burst detection
+                # 🚀 2. MICRO-BATCHING
                 response = supabase.table('market_universe').select('ticker').order('last_scanned', desc=False, nullsfirst=True).limit(15).execute()
                 stale_tickers = [row['ticker'] for row in response.data]
                 
-                # 3. Database Seeding (If table is completely empty)
+                # 3. Database Seeding 
                 if not stale_tickers:
                     print(f"[{datetime.now()}] ⚠️ EMPTY QUEUE: Seeding database from SEC Master List...", file=sys.stderr)
                     universe = get_market_universe()
-                    
-                    # Batch insert to avoid overwhelming Supabase limits 
                     for i in range(0, len(universe), 200):
                         chunk = universe[i:i + 200]
                         seed_data = [{'ticker': t} for t in chunk]
                         try:
                             supabase.table('market_universe').upsert(seed_data).execute()
-                        except Exception as e:
+                        except Exception:
                             pass
                         
                     response = supabase.table('market_universe').select('ticker').order('last_scanned', desc=False, nullsfirst=True).limit(15).execute()
                     stale_tickers = [row['ticker'] for row in response.data]
 
                 print(f"[{datetime.now()}] 🔍 STEALTH BATCH: Processing {len(stale_tickers)} tickers...", file=sys.stderr)
+                rate_limit_hit = False
                 
-                rate_limit_hit = False  # 🚩 NEW: Flag to track if we get banned during this batch
-                
-                # 4. Gather Data & Calculate Core Baselines
+                # 4. Gather Data
                 for t in stale_tickers:
                     current_time = datetime.now(timezone.utc).isoformat()
                     
@@ -111,7 +104,6 @@ async def staleness_worker_loop():
                         stock = yf.Ticker(t, session=get_yf_session())
                         hist = stock.history(period="1mo")
                         
-                        # --- THE QUEUE LOGJAM FIX ---
                         if hist.empty:
                             supabase.table('market_universe').delete().eq('ticker', t).execute()
                             continue
@@ -129,7 +121,6 @@ async def staleness_worker_loop():
                         margins = info.get("profitMargins", 0)
                         sector = info.get("sector", "Macro Profile")
                         
-                        # --- ISOLATED TECHNICAL MATH ---
                         tech_base = 50
                         if len(hist) >= 20:
                             sma_20 = hist['Close'].rolling(window=20).mean().iloc[-1]
@@ -139,7 +130,6 @@ async def staleness_worker_loop():
                         else: tech_base -= 15
                         tech_score = max(10, min(95, tech_base))
                         
-                        # --- ISOLATED FUNDAMENTAL MATH ---
                         fund_base = 50
                         if pe and 0 < pe < 25: fund_base += 20
                         elif pe and pe > 50: fund_base -= 20
@@ -147,7 +137,6 @@ async def staleness_worker_loop():
                         elif margins and margins < 0: fund_base -= 25
                         fund_score = max(10, min(95, fund_base))
                         
-                        # 5. Upsert the fresh intelligence back to the queue
                         supabase.table('market_universe').upsert({
                             'ticker': t,
                             'price': round(price, 2),
@@ -161,32 +150,28 @@ async def staleness_worker_loop():
                         
                     except Exception as e:
                         error_msg = str(e)
-                        
-                        # 🚨 YAHOO RATE LIMIT ABORT PROTOCOL
                         if "Too Many Requests" in error_msg or "429" in error_msg:
                             print(f"[{datetime.now()}] 🛑 RATE LIMIT CAUGHT: Aborting micro-batch to cool down...", file=sys.stderr)
-                            rate_limit_hit = True  # Set the flag!
+                            rate_limit_hit = True 
                             break 
                             
-                        # Handle delisted/random errors
                         if "Not Found" in error_msg or "delisted" in error_msg.lower():
                             supabase.table('market_universe').delete().eq('ticker', t).execute()
                         else:
                             supabase.table('market_universe').update({'last_scanned': current_time}).eq('ticker', t).execute()
 
-                    # 🚦 ANTI-BOT THROTTLE: Human-like delay between each of the 15 stocks
+                    # 🚦 ANTI-BOT THROTTLE
                     await asyncio.sleep(random.uniform(0.5, 1.5))
                         
                 # 🚀 5. SMART CYCLE SLEEP
                 if rate_limit_hit:
                     print(f"[{datetime.now()}] 💤 ENTERING PENALTY BOX: Sleeping for 15 minutes to clear ban.", file=sys.stderr)
-                    await asyncio.sleep(900)  # Wait 15 minutes if banned
+                    await asyncio.sleep(900)
                 else:
                     print(f"[{datetime.now()}] ✅ Stealth Batch complete. Sleeping for 3 minutes.", file=sys.stderr)
-                    await asyncio.sleep(180)  # Wait 3 minutes if healthy
+                    await asyncio.sleep(180) 
                 
             except Exception as e:
-                # --- THE MASTER LOOP SAFETY NET ---
                 print(f"❌ CRITICAL WORKER ERROR: {e}", file=sys.stderr)
                 await asyncio.sleep(60) 
         else:
@@ -194,15 +179,10 @@ async def staleness_worker_loop():
 
 @asynccontextmanager
 async def lifecycle(app: FastAPI):
-    # 1. The Ping loop (Prevents Render Sleep)
     asyncio.create_task(keep_alive_loop())
-    
-    # 2. THE DATA AGENT (Sweeps stale stocks every 3 minutes)
     asyncio.create_task(staleness_worker_loop())
-    
     yield
 
-# Initialize FastAPI with the lifecycle manager to run the loops
 app = FastAPI(lifespan=lifecycle)
 
 app.add_middleware(
@@ -213,17 +193,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- MARKET DATA IN-MEMORY CACHE (Prevents yfinance rate limits) ---
+# --- MARKET DATA IN-MEMORY CACHE ---
 market_cache = {}
-MARKET_CACHE_TTL = 60  # Cache market data for 60 seconds
+MARKET_CACHE_TTL = 60
 
 # --- SUPABASE CONFIGURATION ---
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY") 
-
-print(f"DEBUG: Checking Env Variables...", file=sys.stderr)
-print(f"DEBUG: SUPABASE_URL present: {bool(SUPABASE_URL)}", file=sys.stderr)
-print(f"DEBUG: SUPABASE_SERVICE_KEY present: {bool(SUPABASE_KEY)}", file=sys.stderr)
 
 if SUPABASE_URL and SUPABASE_KEY:
     try:
@@ -234,7 +210,7 @@ if SUPABASE_URL and SUPABASE_KEY:
         supabase = None
 else:
     supabase = None
-    print("CRITICAL ERROR: SUPABASE_URL or SUPABASE_SERVICE_KEY missing from environment.", file=sys.stderr)
+    print("CRITICAL ERROR: SUPABASE_URL or SUPABASE_SERVICE_KEY missing.", file=sys.stderr)
 
 # --- AI CONFIGURATION ---
 GOOGLE_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -247,11 +223,6 @@ else:
 
 # --- GLOBAL CACHE ---
 SCREENER_CACHE = {}
-CACHE_MINUTES = 60
-
-# --- SEC UNIVERSE CACHING ---
-TICKER_LIST_CACHE = []
-LAST_TICKER_UPDATE = None
 
 # --- REQUEST MODELS ---
 class TradeRequest(BaseModel):
@@ -292,12 +263,11 @@ def check_ai_cache(cache_key: str) -> dict | None:
             record = response.data[0]
             last_scanned = datetime.fromisoformat(record['last_scanned'].replace('Z', '+00:00'))
             time_diff = (datetime.now(timezone.utc) - last_scanned).total_seconds()
-            
-            if time_diff < 1800: # 1800 seconds = 30 minutes
-                print(f"CACHE HIT [{cache_key}]: Serving from memory. Saves AI Tokens.", file=sys.stderr)
+            if time_diff < 1800:
+                print(f"CACHE HIT [{cache_key}]: Serving from memory.", file=sys.stderr)
                 return record['cached_response']
     except Exception as e:
-        print(f"Cache read error: {e}", file=sys.stderr)
+        pass
     return None
 
 def update_ai_cache(cache_key: str, payload: dict):
@@ -308,12 +278,11 @@ def update_ai_cache(cache_key: str, payload: dict):
             'last_scanned': datetime.now(timezone.utc).isoformat(),
             'cached_response': payload
         }).execute()
-        print(f"CACHE SAVED [{cache_key}]: Locked for 30 minutes.", file=sys.stderr)
     except Exception as e:
-        print(f"Cache save error: {e}", file=sys.stderr)
+        pass
 
 # ==========================================
-# --- MATH ENGINE: SUPPORT & RESISTANCE ---
+# --- MATH ENGINE ---
 # ==========================================
 def get_support_resistance(hist):
     if len(hist) < 30:
@@ -333,37 +302,27 @@ def get_support_resistance(hist):
     return float(np.mean(sup_levels)), float(np.mean(res_levels))
 
 def get_market_universe():
-    """Fetches the official SEC active ticker list (Over 10,000 US stocks)"""
     print(f"[{datetime.now()}] 📡 Fetching Master Ticker List from the SEC...", file=sys.stderr)
     all_tickers = set()
-    
     try:
-        # The SEC strictly requires a descriptive, customized User-Agent identification header
         headers = {'User-Agent': 'TradeBoticsApp/1.0 (Data Engine)'}
         response = requests.get("https://www.sec.gov/files/company_tickers.json", headers=headers, timeout=15)
         response.raise_for_status()
-        
         data = response.json()
-        
         for key, value in data.items():
             ticker = str(value.get("ticker", "")).strip().upper()
-            # Strict format filter ensuring standard alphabetical listings
             if ticker and ticker.isalpha() and len(ticker) <= 5: 
                 all_tickers.add(ticker)
-                
         print(f"✅ SEC UNIVERSE UPDATED: {len(all_tickers)} unique symbols loaded.", file=sys.stderr)
         return list(all_tickers)
-        
     except Exception as e:
         print(f"❌ SEC FETCH ERROR: {e}", file=sys.stderr)
-        # Institutional disaster recovery baseline
         return ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "BRK-B", "LLY", "TSLA"]
 
 # --- ENDPOINTS ---
 
 @app.get("/")
 async def root_health_check():
-    """Lightweight endpoint for the background keep-alive ping."""
     return {"status": "Matrix Online", "timestamp": datetime.now()}
 
 @app.post("/run-screener")
@@ -380,7 +339,6 @@ async def execute_screener(req: ScreenerRequest):
     print(f"[{datetime.now()}] ⚡ PULLING PRE-CALCULATED SCORES FROM SUPABASE...", file=sys.stderr)
     
     try:
-        # FETCH FROM SUPABASE (Only grab tickers the worker has finished processing)
         response = supabase.table('market_universe').select('*').not_.is_('tech_score', 'null').execute()
         db_universe = response.data
         
@@ -388,7 +346,6 @@ async def execute_screener(req: ScreenerRequest):
             print("⚠️ SUPABASE RETURNED NO PROCESSED TICKERS YET.", file=sys.stderr)
             return {"results": []}
 
-        # APPLY USER PREFERENCES (Aggressive vs Conservative)
         scored_candidates = []
         for row in db_universe:
             t = row['ticker']
@@ -398,7 +355,6 @@ async def execute_screener(req: ScreenerRequest):
             daily_change = row['daily_change']
             db_price = row['price']
 
-            # Blend the pre-calculated scores based on the user's selected Risk Level
             if req.risk_level == "Aggressive":
                 total_score = (tech_score * 0.8) + (fund_score * 0.2)
             elif req.risk_level == "Conservative":
@@ -406,7 +362,6 @@ async def execute_screener(req: ScreenerRequest):
             else:
                 total_score = (tech_score * 0.5) + (fund_score * 0.5)
 
-            # Apply Style Bonuses invisibly
             style_bonus = 0
             if req.trade_style == "Day Trade" and t in ["NVDA", "TSLA", "AMD", "COIN"]: 
                 style_bonus = 15 
@@ -425,17 +380,14 @@ async def execute_screener(req: ScreenerRequest):
                 "metrics": f"P/E: {row['pe']} | Sector: {sector}"
             })
 
-        # Sort and grab only the top 50 elite performers
         scored_candidates.sort(key=lambda x: x['sort_weight'], reverse=True)
         top_50 = scored_candidates[:50]
 
-        # THE LIVE PRICE STITCH (Only fetch live data for the winners)
         print(f"[{datetime.now()}] 🔍 STITCHING LIVE PRICES FOR TOP 50...", file=sys.stderr)
         final_results = []
         
         for candidate in top_50:
             try:
-                # 🛡️ INJECT THE SPOOFER
                 stock = yf.Ticker(candidate['ticker'], session=get_yf_session())
                 hist = stock.history(period="1d")
                 if not hist.empty:
@@ -463,7 +415,6 @@ async def analyze_ticker(ticker: str):
     ticker_upper = ticker.upper()
     now = time.time()
 
-    # CHECK CACHE FIRST (Prevents Yahoo Finance Rate Limiting)
     if ticker_upper in market_cache:
         cached_time, cached_data = market_cache[ticker_upper]
         if now - cached_time < MARKET_CACHE_TTL:
@@ -471,12 +422,10 @@ async def analyze_ticker(ticker: str):
             return cached_data
 
     try:
-        # 🛡️ INJECT THE SPOOFER
         stock = yf.Ticker(ticker_upper, session=get_yf_session())
         hist = stock.history(period="3mo", prepost=True)
         if hist.empty: raise HTTPException(status_code=404, detail="Ticker data not found.")
 
-        # CALCULATE ROBUST SUPPORT & RESISTANCE
         support, resistance = get_support_resistance(hist)
 
         current_price = round(hist['Close'].iloc[-1], 2)
@@ -515,7 +464,6 @@ async def analyze_ticker(ticker: str):
                 tech_base -= 25
             
         sma_50 = hist['Close'].rolling(window=50).mean().iloc[-1] if len(hist) >= 50 else current_price * 0.95
-        recent_high = hist['High'].max()
 
         if current_price > prev_price: 
             tech_base += 15
@@ -537,7 +485,6 @@ async def analyze_ticker(ticker: str):
         
         vol_surge = f"{round((volume / avg_volume) * 100, 1)}%" if avg_volume > 0 else "N/A"
 
-        # 🚀 REAL 14-DAY RSI CALCULATION WITH WILDER'S SMOOTHING
         try:
             delta = hist['Close'].diff()
             gain = delta.clip(lower=0)
@@ -553,7 +500,6 @@ async def analyze_ticker(ticker: str):
             
         rsi_status = "OVERBOUGHT" if real_rsi >= 70 else "OVERSOLD" if real_rsi <= 30 else "BULLISH" if real_rsi > 50 else "BEARISH"
 
-        # 🚀 BOLLINGER BANDS & VWAP PROXY MATH EXTRACTION
         std_dev = hist['Close'].rolling(window=20).std().iloc[-1] if len(hist) >= 20 else current_price * 0.02
         upper_band = round(sma_20 + (2 * std_dev), 2) if len(hist) >= 20 else current_price * 1.05
         lower_band = round(sma_20 - (2 * std_dev), 2) if len(hist) >= 20 else current_price * 0.95
@@ -564,7 +510,6 @@ async def analyze_ticker(ticker: str):
         except Exception:
             vwap_proxy = current_price
 
-        # PULL LIVE NEWS
         news_list = []
         try:
             finnhub_key = os.getenv("FINNHUB_API_KEY")
@@ -581,12 +526,10 @@ async def analyze_ticker(ticker: str):
                 
                 with urllib.request.urlopen(req) as response:
                     finnhub_news = json.loads(response.read().decode())
-                    
                     for item in finnhub_news[:5]:
                         pub_time = item.get("datetime", time.time())
                         hours_ago = int((time.time() - pub_time) / 3600)
                         date_str = "JUST NOW" if hours_ago <= 0 else f"{hours_ago} HR{'S' if hours_ago > 1 else ''} AGO"
-                        
                         news_list.append({
                             "title": item.get("headline", "Market Update"),
                             "publisher": item.get("source", "Financial Wire"),
@@ -603,18 +546,15 @@ async def analyze_ticker(ticker: str):
                         pub_time = item.get("providerPublishTime", time.time())
                         hours_ago = int((time.time() - pub_time) / 3600)
                         date_str = "JUST NOW" if hours_ago <= 0 else f"{hours_ago} HR{'S' if hours_ago > 1 else ''} AGO"
-                        
                         news_list.append({
                             "title": title,
                             "publisher": item.get("publisher", "Market Wire"),
                             "date": date_str,
                             "content": item.get("summary", item.get("link", ""))
                         })
-                        
         except Exception as e:
             print(f"News fetch error for {ticker_upper}: {e}", file=sys.stderr)
 
-        # 🚀 RESTORED & EXPANDED 7-POINT TECHNICAL LEDGER UTILITY MATRIX
         ledger = [
             {"factor": "Momentum (RSI)", "val": str(real_rsi), "status": rsi_status, "reasoning": f"Asset momentum velocity registering true algorithmic score at {real_rsi}."},
             {"factor": "Institutional Flow", "val": "High" if volume > avg_volume else "Low", "status": "BULLISH" if volume > avg_volume else "NEUTRAL", "reasoning": f"Current transaction volume sits at {volume:,} vs historical norm of {avg_volume:,}."},
@@ -657,15 +597,12 @@ async def analyze_ticker(ticker: str):
     except HTTPException as he:
         raise he
     except Exception as e:
-        # 🛡️ THE DATABASE FALLBACK PROTOCOL
         if 'Too Many Requests' in str(e) or '429' in str(e):
             print(f"⚠️ RATE LIMIT ACTIVE. Serving DB Fallback for {ticker_upper}...", file=sys.stderr)
-            
             fallback_res = supabase.table('market_universe').select('*').eq('ticker', ticker_upper).execute()
             if fallback_res.data:
                 db_data = fallback_res.data[0]
                 total_score = math.ceil((db_data['tech_score'] + db_data['fund_score']) / 2)
-                
                 fallback_response = {
                     "ticker": ticker_upper,
                     "company_name": f"{ticker_upper} (Cached Data)",
@@ -808,17 +745,22 @@ async def generate_exit_strategy(req: TranslationRequest, user_id: str = Query(.
         support_level = float(req.data_context.get('support_level', 0))
         resistance_level = float(req.data_context.get('resistance_level', 0))
 
-        # 🛡️ BREAKOUT GUARDRAIL: Automatically calculate expanding upside ranges to fix structural inversions
+        # 🛡️ BREAKOUT GUARDRAIL
         if current_price >= resistance_level:
             implied_volatility_range = current_price - support_level if support_level < current_price else current_price * 0.05
             support_level = current_price * 0.95  
             resistance_level = current_price + implied_volatility_range  
+            
+        distance_to_support = round(current_price - support_level, 2)
+        distance_to_resistance = round(resistance_level - current_price, 2)
 
         prompt = f"Act as a quantitative risk manager. Define a strict, scaled risk-management exit protocol for {req.ticker}.\n\n"
         prompt += f"CURRENT MARKET CONTEXT:\n"
         prompt += f"- Current Price: ${current_price}\n"
         prompt += f"- Major Support (Floor): ${round(support_level, 2)}\n"
-        prompt += f"- Major Resistance (Ceiling): ${round(resistance_level, 2)}\n\n"
+        prompt += f"- Major Resistance (Ceiling): ${round(resistance_level, 2)}\n"
+        prompt += f"- Distance to Support: ${distance_to_support}\n"
+        prompt += f"- Distance to Resistance: ${distance_to_resistance}\n\n"
         prompt += "MANDATORY: You must base your Strike Zones and Exit Strategy strictly on these mathematical Support and Resistance levels. Take Profit levels MUST be higher than the Current Price.\n\n"
 
         ledger = req.data_context.get("ledger", [])
@@ -830,14 +772,17 @@ async def generate_exit_strategy(req: TranslationRequest, user_id: str = Query(.
         prompt += (
             "\n🚨 CRITICAL MANDATE - SCALED EXIT STRATEGY REQUIRED:\n"
             "DO NOT provide a general summary. OUTPUT STRICTLY IN HTML FORMAT using this exact structure.\n"
-            "CRITICAL: Explain your reasoning using simple, everyday language. Do NOT use dense institutional jargon.\n"
-            "You must create a 'scaled' exit plan featuring two distinct profit-taking levels completely above the current price.\n\n"
+            "CRITICAL: Before suggesting an exit, evaluate the 'Thesis Health'.\n"
+            "1. If the current price is within 5% of the Hard Stop Loss, explicitly label the thesis as 'Under Stress' and suggest a 'Hold for Support Test' rather than a profit-taking level.\n"
+            "2. Do not suggest a Take Profit level if the price is significantly closer to the Stop Loss than the Resistance Ceiling.\n"
+            "3. Always explain: 'Current price is testing structural support; wait for a bounce before planning exit strategies' if applicable.\n\n"
             "<h3>Scaled Execution Protocol</h3>\n"
             "<ul>\n"
+            f"<li><strong>📏 DISTANCE TO TARGETS:</strong> Support is ${distance_to_support} away. Resistance is ${distance_to_resistance} away.</li>\n"
             "<li><strong>🟢 TAKE PROFIT 1 (Conservative):</strong> $[Price]. (Explain this as a safe place to take partial profits, typically right before or at the main resistance ceiling).</li>\n"
             "<li><strong>🟢 TAKE PROFIT 2 (Aggressive):</strong> $[Price]. (Explain this as the ultimate runner target if the stock breaks through the ceiling, based on current momentum).</li>\n"
             "<li><strong>🔴 HARD STOP LOSS (SL):</strong> $[Price]. (Explain why dropping below the mathematical support floor invalidates the trade).</li>\n"
-            "<li><strong>⚖️ THESIS HEALTH:</strong> [Calculate the Risk/Reward Ratio using TP1 and the Stop Loss]. (Label as 'Aggressive' if R/R is < 1:1, 'Balanced' if 1:1 to 2:1, or 'High-Probability' if > 2:1).</li>\n"
+            "<li><strong>⚖️ THESIS HEALTH:</strong> [Calculate the Risk/Reward Ratio using TP1 and the Stop Loss]. (Label as 'Under Stress', 'Aggressive', 'Balanced', or 'High-Probability').</li>\n"
             "<li><strong>⏱️ TIME HORIZON:</strong> [State the estimated time in days/weeks for this thesis to play out].</li>\n"
             "</ul>"
         )
@@ -958,6 +903,14 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
         if current_tokens < 5:
             raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 5 Tokens required.")
 
+        print(f"[{datetime.now()}] 🔍 Fetching market universe from DB for deep analysis...", file=sys.stderr)
+        try:
+            db_response = supabase.table('market_universe').select('*').not_.is_('tech_score', 'null').execute()
+            db_universe = db_response.data
+        except Exception as db_err:
+            print(f"❌ Failed to fetch market universe from DB: {db_err}", file=sys.stderr)
+            db_universe = []
+
         portfolio_summary = []
         if not req.holdings: raise HTTPException(status_code=400, detail="No holdings provided.")
 
@@ -975,29 +928,27 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
                 if hist.empty: continue 
                 
                 price = round(hist['Close'].iloc[-1], 2)
+
+                # Fetch exact quant score and sector from DB to make AI output highly accurate
+                db_match = next((item for item in db_universe if item["ticker"] == ticker), None)
+                score = math.ceil((db_match['tech_score'] + db_match['fund_score']) / 2) if db_match else 75
+                sector = db_match['sector'] if db_match else stock.info.get("sector", "Unknown")
+
                 portfolio_summary.append({
                     "ticker": ticker,
                     "shares": shares,
                     "avg_cost": cost,
                     "current_price": price,
-                    "score": 75, 
+                    "score": score, 
+                    "sector": sector,
                     "value": round(shares * price, 2)
                 })
             except Exception:
                 continue 
 
         if not portfolio_summary: return {"analysis": "No valid data could be retrieved.", "holdings": []}
-        batch_data = "\n".join([f"{p['ticker']}: {p['shares']} shares @ live ${p['current_price']} (Total: ${p['value']})" for p in portfolio_summary])
+        batch_data = "\n".join([f"{p['ticker']}: {p['shares']} shares @ live ${p['current_price']} (Score: {p['score']} | Sector: {p['sector']} | Total: ${p['value']})" for p in portfolio_summary])
         
-        print(f"[{datetime.now()}] 🔍 Fetching top candidates from SEC pipeline table for portfolio rotation...", file=sys.stderr)
-        
-        try:
-            db_response = supabase.table('market_universe').select('*').not_.is_('tech_score', 'null').execute()
-            db_universe = db_response.data
-        except Exception as db_err:
-            print(f"❌ Failed to fetch market universe from DB: {db_err}", file=sys.stderr)
-            db_universe = []
-
         scored_candidates = []
         
         if db_universe:
@@ -1065,23 +1016,25 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
             basket_str += f"- {c['ticker']}: Live Price ${c['price']} | Quant Score: {c['score']} | {c['health']}\n"
 
         prompt = (
-            f"You are a Quantitative Execution Engine operating in a SIMULATED paper-trading environment.\n"
-            f"Process this simulated portfolio data:\n{batch_data}\n\n"
+            f"You are a Quantitative Execution Engine. You have access to ONLY these current holdings:\n{batch_data}\n\n"
             f"Target Strategy Horizon: {req.trade_style}\n\n"
-            f"Qualified Target Basket:\n{basket_str}\n\n"
+            "CRITICAL: You MUST strictly choose the liquidation target from the CURRENT HOLDINGS list above. DO NOT suggest tickers not held by the user.\n"
+            f"Qualified Target Basket (for reinvestment):\n{basket_str}\n\n"
             "CRITICAL INSTRUCTIONS:\n"
             "1. Be extremely brief. No conversational fluff or introductions.\n"
-            "2. Under Precision Execution, identify the weakest holding to liquidate, and the strongest basket asset to acquire.\n"
+            "2. Analyze the quantitative delta between the weakest held asset and the strongest available target. Output must explain the 'Quant Score' improvement, the sector shift, and the projected impact on portfolio health.\n"
             "3. DO NOT attempt to calculate precise fractional share math. Use institutional reallocation terms.\n"
             "4. OUTPUT STRICTLY IN HTML FORMAT. DO NOT use markdown like ### or **.\n\n"
             "Structure your HTML output exactly like this:\n"
             "<h3>1. Horizon Alignment</h3>\n"
             "<ul><li>[1 short bullet sentence analyzing alpha alignment]</li></ul>\n"
             "<h3>2. Capital Rotation</h3>\n"
-            "<ul><li>[1 short bullet sentence explaining macro flow advantages]</li></ul>\n"
+            "<ul><li>[1 short bullet sentence explaining macro flow advantages. Include sector shift and Quant Score Delta]</li></ul>\n"
             "<h3>3. Precision Execution</h3>\n"
             "<ul><li><strong>LIQUIDATE:</strong> [Weak Ticker] to harvest liquidity.</li>\n"
-            "<li><strong>ALLOCATE:</strong> Reinvest proceeds directly into [Strongest Basket Ticker].</li></ul>"
+            "<li><strong>ALLOCATE:</strong> Reinvest proceeds directly into [Strongest Basket Ticker].</li></ul>\n"
+            "<h3>4. Rotation Confidence</h3>\n"
+            "<ul><li><strong>Confidence:</strong> [||||||----] [Percentage]% (Calculate based on the Quant Score delta)</li></ul>"
         )
 
         response = model.generate_content(prompt)
@@ -1112,8 +1065,7 @@ async def generate_swap_thesis(req: SwapRequest):
         stock = yf.Ticker(req.ticker, session=get_yf_session())
         sector = stock.info.get("sector", "Technology")
         
-        # Dynamically find the best stock in the SAME SECTOR
-        target_ticker = "MSFT" # Fallback defaults
+        target_ticker = "MSFT" 
         target_score = 90
         target_price = 150.00
         
@@ -1160,9 +1112,8 @@ async def market_briefing():
 async def execute_trade(req: TradeRequest, request: Request):
     try:
         body = await request.json()
-        print(f"DEBUG: Received JSON body: {body}", file=sys.stderr)
     except Exception as e:
-        print(f"DEBUG: Could not parse JSON body: {e}", file=sys.stderr)
+        pass
 
     if not supabase:
         raise HTTPException(status_code=500, detail="Database connection offline.")
@@ -1170,14 +1121,12 @@ async def execute_trade(req: TradeRequest, request: Request):
     try:
         ticker = req.ticker.upper()
         
-        # 1. Fetch Live Price & Ensure Float 
         # 🛡️ INJECT THE SPOOFER
         stock = yf.Ticker(ticker, session=get_yf_session())
         hist = stock.history(period="1d", prepost=True)
         if hist.empty: raise HTTPException(status_code=404, detail="Asset pricing unavailable.")
         live_price = float(hist['Close'].iloc[-1])
 
-        # 2. Strict Math & Rounding
         request_amount = float(req.amount)
         if req.mode == "DOLLARS":
             trade_cost = round(request_amount, 2)
@@ -1186,7 +1135,6 @@ async def execute_trade(req: TradeRequest, request: Request):
             trade_shares = request_amount
             trade_cost = round(trade_shares * live_price, 2)
 
-        # 3. Pull Current Balances
         profile_res = supabase.table('profiles').select('virtual_cash_balance').eq('id', req.user_id).execute()
         if not profile_res.data: raise HTTPException(status_code=404, detail="Operative profile not found.")
         current_cash = float(profile_res.data[0]['virtual_cash_balance'])
@@ -1195,7 +1143,6 @@ async def execute_trade(req: TradeRequest, request: Request):
         current_position = portfolio_res.data[0] if portfolio_res.data else None
         current_shares_held = float(current_position['shares']) if current_position else 0.0
 
-        # 4. Execute Logic
         if req.trade_type == "BUY":
             if trade_cost > current_cash: 
                 raise HTTPException(status_code=400, detail="Insufficient virtual capital.")
@@ -1233,7 +1180,6 @@ async def execute_trade(req: TradeRequest, request: Request):
         else:
             raise HTTPException(status_code=400, detail="Invalid trade type.")
 
-        # 5. Inject Clean Data into Database
         supabase.table('profiles').update({'virtual_cash_balance': new_cash}).eq('id', req.user_id).execute()
         
         supabase.table('transaction_ledger').insert({
