@@ -84,6 +84,8 @@ async def staleness_worker_loop():
 
                 print(f"[{datetime.now()}] 🔍 MICRO-BATCH: Processing {len(stale_tickers)} tickers...", file=sys.stderr)
                 
+                rate_limit_hit = False  # 🚩 NEW: Flag to track if we get banned during this batch
+                
                 # 4. Gather Data & Calculate Core Baselines
                 for t in stale_tickers:
                     current_time = datetime.now(timezone.utc).isoformat()
@@ -146,6 +148,7 @@ async def staleness_worker_loop():
                         # 🚨 YAHOO RATE LIMIT ABORT PROTOCOL
                         if "Too Many Requests" in error_msg or "429" in error_msg:
                             print(f"[{datetime.now()}] 🛑 RATE LIMIT CAUGHT: Aborting micro-batch to cool down...", file=sys.stderr)
+                            rate_limit_hit = True  # Set the flag!
                             break 
                             
                         # Handle delisted/random errors
@@ -157,8 +160,12 @@ async def staleness_worker_loop():
                     # 🚦 ANTI-BOT THROTTLE: Human-like delay between each of the 15 stocks
                     await asyncio.sleep(random.uniform(0.5, 1.5))
                         
-                # 🚀 5. MICRO-CYCLE: Sleep for only 60 seconds before pulling the next 15 stocks
-                await asyncio.sleep(60) 
+                # 🚀 5. SMART CYCLE SLEEP
+                if rate_limit_hit:
+                    print(f"[{datetime.now()}] 💤 ENTERING PENALTY BOX: Sleeping for 15 minutes to clear ban.", file=sys.stderr)
+                    await asyncio.sleep(900)  # Wait 15 minutes if banned
+                else:
+                    await asyncio.sleep(60)   # Wait 60 seconds if everything is healthy
                 
             except Exception as e:
                 # --- THE MASTER LOOP SAFETY NET ---
