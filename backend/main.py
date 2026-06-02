@@ -372,22 +372,47 @@ def get_support_resistance(hist):
     return float(np.mean(sup_levels)), float(np.mean(res_levels))
 
 def get_market_universe():
-    """Fetches the official S&P 500 elite universe directly from Wikipedia."""
-    print(f"[{datetime.now()}] 📡 Fetching Elite S&P 500 List from Wikipedia...", file=sys.stderr)
+    """Fetches the elite S&P 500, Nasdaq 100, and Dow Jones universes from Wikipedia."""
+    print(f"[{datetime.now()}] 📡 Fetching Elite S&P 500, Nasdaq 100, & Dow...", file=sys.stderr)
     try:
-        url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
-        html = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}).text
-        df = pd.read_html(io.StringIO(html))[0]
-        tickers = df['Symbol'].tolist()
+        # 1. Get S&P 500
+        sp_url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
+        sp_html = requests.get(sp_url, headers={'User-Agent': 'Mozilla/5.0'}).text
+        sp_df = pd.read_html(io.StringIO(sp_html))[0]
+        sp_tickers = sp_df['Symbol'].tolist()
         
-        # Replace Wikipedia's dot notation (BRK.B) with Yahoo's hyphen notation (BRK-B)
-        clean_tickers = [str(t).replace('.', '-') for t in tickers]
+        # 2. Get Nasdaq 100
+        ndx_url = 'https://en.wikipedia.org/wiki/Nasdaq-100'
+        ndx_html = requests.get(ndx_url, headers={'User-Agent': 'Mozilla/5.0'}).text
+        ndx_df = pd.read_html(io.StringIO(ndx_html), match='Ticker')[0]
+        ndx_tickers = ndx_df['Ticker'].tolist()
+
+        # 3. Get Dow Jones Industrial Average
+        dow_url = 'https://en.wikipedia.org/wiki/Dow_Jones_Industrial_Average'
+        dow_html = requests.get(dow_url, headers={'User-Agent': 'Mozilla/5.0'}).text
+        dow_df = pd.read_html(io.StringIO(dow_html))[1]
+        dow_tickers = dow_df['Symbol'].tolist()
         
-        print(f"✅ UNIVERSE UPDATED: {len(clean_tickers)} elite S&P 500 symbols loaded.", file=sys.stderr)
+        # Combine all lists, remove duplicates, and fix dot notation (BRK.B -> BRK-B)
+        combined = list(set(sp_tickers + ndx_tickers + dow_tickers))
+        clean_tickers = [str(t).replace('.', '-') for t in combined]
+        
+        print(f"✅ UNIVERSE UPDATED: {len(clean_tickers)} elite symbols loaded.", file=sys.stderr)
         return clean_tickers
     except Exception as e:
-        print(f"❌ WIKIPEDIA FETCH ERROR: {e}", file=sys.stderr)
-        return ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "BRK-B", "LLY", "TSLA"]
+        print(f"❌ WIKIPEDIA FETCH ERROR: {e} | Activating Top 100 Emergency Fallback Universe...", file=sys.stderr)
+        return [
+            "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "BRK-B", "LLY", "TSLA", "V",
+            "UNH", "JPM", "XOM", "MA", "WMT", "JNJ", "AVGO", "PG", "ORCL", "COST",
+            "HD", "CVX", "MRK", "AMD", "NFLX", "KO", "PEP", "BAC", "ADBE", "MCD",
+            "CRM", "ABBV", "TMO", "CSCO", "ACN", "WFC", "QCOM", "LIN", "INTU", "VZ",
+            "GE", "AMGN", "TXN", "PM", "DIS", "NEE", "HON", "IBM", "LOW", "CAT",
+            "UNP", "SCHW", "INTC", "BKNG", "SPGI", "AMAT", "DE", "ISRG", "AXP", "TJX",
+            "MDLZ", "NOW", "SYK", "LRCX", "ADI", "MS", "GS", "PGR", "REGN", "MMC",
+            "ETN", "VRTX", "RTX", "LMT", "BSX", "CVS", "PANW", "MU", "CI", "NKE",
+            "PLTR", "BX", "HOOD", "COIN", "SMCI", "SBUX", "MELI", "UBER", "MSTR", "PANW",
+            "GILD", "ABT", "MDT", "BA", "F", "GM", "CAT", "SO", "DUK", "PYPL"
+        ]
 
 # --- ENDPOINTS ---
 
