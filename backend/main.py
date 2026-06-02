@@ -28,7 +28,7 @@ load_dotenv()
 # --- THE BROWSER SPOOFER (CLOUDFLARE BYPASS) ---
 # ==========================================
 def get_yf_session():
-    """Uses Cloudscraper to bypass Cloudflare's Data Center IP bans and anti-bot pages."""
+    """Uses Cloudscraper with randomized headers to bypass Render IP bans."""
     scraper = cloudscraper.create_scraper(
         browser={
             'browser': 'chrome',
@@ -36,28 +36,22 @@ def get_yf_session():
             'desktop': True
         }
     )
+    
+    # Randomize the User-Agent to slip past WAF fingerprinting
+    user_agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0"
+    ]
+    scraper.headers.update({
+        "User-Agent": random.choice(user_agents),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1"
+    })
     return scraper
 
-# ==========================================
-# --- KEEP ALIVE CONFIGURATION ---
-# ==========================================
-# ⚠️ REPLACE WITH YOUR ACTUAL LIVE RENDER APP URL
-RENDER_APP_URL = "https://tradebotics-api.onrender.com/market-briefing" 
-
-async def keep_alive_loop():
-    """Loops infinitely every 10 minutes to ping the public URL and prevent sleep."""
-    await asyncio.sleep(30)
-    
-    async with httpx.AsyncClient() as client:
-        while True:
-            try:
-                print(f"[{datetime.now()}] 🛰️ SENDING KEEP-ALIVE PING TO PUBLIC URL...", file=sys.stderr)
-                response = await client.get(RENDER_APP_URL, timeout=10.0)
-                print(f"[{datetime.now()}] 💚 KEEP-ALIVE SUCCESS: Status {response.status_code}", file=sys.stderr)
-            except Exception as e:
-                print(f"[{datetime.now()}] ⚠️ KEEP-ALIVE PING FAILED: {e}", file=sys.stderr)
-            
-            await asyncio.sleep(600)
 
 # ==========================================
 # --- THE STEALTH DATA WORKER ---
@@ -98,7 +92,7 @@ async def staleness_worker_loop():
                 print(f"[{datetime.now()}] 🔍 STEALTH BATCH: Processing {len(stale_tickers)} tickers...", file=sys.stderr)
                 rate_limit_hit = False
                 
-                # 🛡️ THE FIX: Create ONE master session for the entire batch to avoid crumb-spamming
+                # 🛡️ Create one heavily disguised master session
                 master_session = get_yf_session()
                 
                 # 4. Gather Data
@@ -106,8 +100,9 @@ async def staleness_worker_loop():
                     current_time = datetime.now(timezone.utc).isoformat()
                     
                     try:
-                        # Pass the shared master_session instead of generating a new one
                         stock = yf.Ticker(t, session=master_session)
+                        
+                        # 1. Fetch Prices (High priority, rarely blocked)
                         hist = stock.history(period="1mo")
                         
                         if hist.empty:
@@ -121,16 +116,23 @@ async def staleness_worker_loop():
                         price = float(hist['Close'].iloc[-1])
                         prev_price = float(hist['Close'].iloc[-2])
                         daily_change = ((price - prev_price) / prev_price) * 100
-                        
-                        info = stock.info
-                        pe = info.get("trailingPE", 0)
-                        margins = info.get("profitMargins", 0)
-                        sector = info.get("sector", "Macro Profile")
+
+                        # 2. Fetch Fundamentals (Low priority, heavily blocked by Yahoo)
+                        # We wrap this in a try/except so a block doesn't kill the price update!
+                        pe, margins, sector = 0, 0, "S&P 500"
+                        try:
+                            info = stock.info
+                            pe = info.get("trailingPE", 0)
+                            margins = info.get("profitMargins", 0)
+                            sector = info.get("sector", "Macro Profile")
+                        except Exception:
+                            # If info is blocked, we just ignore it and move on with default values
+                            pass
 
                         # --- MULTI-FACTOR QUANT ENGINE (WORKER) ---
                         tech_base = 50
                         
-                        # 1. Trend & Bollinger Bands
+                        # Trend & Bollinger Bands
                         if len(hist) >= 20:
                             sma_20 = hist['Close'].rolling(window=20).mean().iloc[-1]
                             std_dev = hist['Close'].rolling(window=20).std().iloc[-1]
@@ -143,11 +145,11 @@ async def staleness_worker_loop():
                             if price > upper_band: tech_base -= 10
                             elif price < lower_band: tech_base += 10
 
-                        # 2. MACD Momentum Proxy
+                        # MACD Momentum Proxy
                         if price > prev_price: tech_base += 10
                         else: tech_base -= 10
 
-                        # 3. RSI
+                        # RSI
                         try:
                             delta = hist['Close'].diff()
                             gain = delta.clip(lower=0)
@@ -165,7 +167,7 @@ async def staleness_worker_loop():
                         elif real_rsi <= 30: tech_base += 15
                         elif real_rsi > 50: tech_base += 5
 
-                        # 4. Institutional Flow & VWAP
+                        # Institutional Flow & VWAP
                         try:
                             volume = int(hist['Volume'].iloc[-1])
                             avg_volume = int(hist['Volume'].mean())
@@ -189,6 +191,7 @@ async def staleness_worker_loop():
                         elif margins and margins < 0: fund_base -= 25
                         fund_score = max(10, min(95, fund_base))
                         
+                        # Save successful data to Supabase
                         supabase.table('market_universe').upsert({
                             'ticker': t,
                             'price': round(price, 2),
@@ -202,7 +205,7 @@ async def staleness_worker_loop():
                         
                     except Exception as e:
                         error_msg = str(e)
-                        if "Too Many Requests" in error_msg or "429" in error_msg:
+                        if "Too Many Requests" in error_msg or "429" in error_msg or "Rate limited" in error_msg:
                             print(f"[{datetime.now()}] 🛑 RATE LIMIT CAUGHT: Aborting micro-batch to cool down...", file=sys.stderr)
                             rate_limit_hit = True 
                             break 
@@ -212,8 +215,8 @@ async def staleness_worker_loop():
                         else:
                             supabase.table('market_universe').update({'last_scanned': current_time}).eq('ticker', t).execute()
 
-                    # 🚦 ANTI-BOT THROTTLE
-                    await asyncio.sleep(random.uniform(0.5, 1.5))
+                    # 🚦 ANTI-BOT THROTTLE (Increased slightly for safety)
+                    await asyncio.sleep(random.uniform(1.0, 2.5))
                         
                 # 🚀 5. SMART CYCLE SLEEP
                 if rate_limit_hit:
