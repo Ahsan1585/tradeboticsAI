@@ -710,13 +710,19 @@ async def translate_ai(req: TranslationRequest, user_id: str = Query(...)):
         if current_tokens < 3:
             raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 3 Tokens required.")
 
+        # 🛡️ SAFETY FALLBACKS FOR MISSING DATA
+        support_raw = req.data_context.get('support_level')
+        res_raw = req.data_context.get('resistance_level')
+        
+        support_str = f"${support_raw}" if support_raw and support_raw > 0 else "Calculating Base..."
+        res_str = f"${res_raw}" if res_raw and res_raw > 0 else "Price Discovery Mode"
+
         prompt = f"Act as an elite quantitative analyst. Provide a definitive briefing on {req.ticker}.\n\n"
         prompt += f"CURRENT MARKET CONTEXT:\n"
         prompt += f"- Current Price: ${req.data_context.get('price', 'N/A')}\n"
         prompt += f"- Quant Score: {req.data_context.get('score', 'N/A')}\n"
-        prompt += f"- Major Support (Floor): ${req.data_context.get('support_level', 'N/A')}\n"
-        prompt += f"- Major Resistance (Ceiling): ${req.data_context.get('resistance_level', 'N/A')}\n\n"
-        prompt += "MANDATORY: You must base your Strike Zones and Analysis strictly on these mathematical Support and Resistance levels.\n\n"
+        prompt += f"- Major Support (Floor): {support_str}\n"
+        prompt += f"- Major Resistance (Ceiling): {res_str}\n\n"
         
         funds = req.data_context.get("fundamentals", {})
         if funds:
@@ -737,17 +743,31 @@ async def translate_ai(req: TranslationRequest, user_id: str = Query(...)):
         next_earnings = funds.get("next_earnings", "N/A")
         if next_earnings != "N/A" and next_earnings != "Unknown":
             prompt += f"\nEARNINGS RISK:\n- Next Earnings Date: {next_earnings}\n"
-            prompt += "If the Next Earnings Date is today or tomorrow, heavily weigh the binary risk of an earnings gap in your tactical verdict. Downgrade pure technical indicators.\n"
+            prompt += "If the Next Earnings Date is today or tomorrow, heavily weigh the binary risk of an earnings gap in your tactical verdict.\n"
 
         prompt += (
-            "\n🚨 TEMPLATE REQUIREMENT - YOU MUST FOLLOW THIS EXACTLY:\n"
-            "Line 1: '🎯 TARGET PRICE RANGE: $[low] - $[high]'\n"
-            "Line 2: '⚖️ AI SIGNAL: [BUY/HOLD/TRIM/SELL]'\n"
-            f"Line 3: '📊 STRUCTURAL ZONES: Support Floor at ${req.data_context.get('support_level')} | Resistance Ceiling at ${req.data_context.get('resistance_level')}'\n\n"
-            "BRIEFING REQUIREMENTS:\n"
-            "1. Macro & Fundamentals: Analyze how current macro conditions and company DNA impact the stock.\n"
-            "2. Technical Analysis: Incorporate the provided Technical Ledger. You MUST explicitly reference the Support Floor and Resistance Ceiling from Line 3 in your analysis. Explain how the current price behaves relative to these two mathematical zones.\n"
-            "Keep it professional, data-driven, and ruthless. No pleasantries. Do NOT use markdown formatting like ** or ###."
+            "\n🚨 CRITICAL FORMATTING MANDATE:\n"
+            "OUTPUT STRICTLY IN HTML FORMAT. DO NOT use markdown. You must use headings (<h3>, <h4>), bold text (<strong>), and unordered lists (<ul><li>) to make the briefing scannable and user-friendly.\n\n"
+            "Follow this exact HTML structure:\n"
+            "<h3>🎯 TARGET PRICE RANGE: $[low] - $[high]</h3>\n"
+            "<h3>⚖️ AI SIGNAL: [BUY/HOLD/TRIM/SELL]</h3>\n"
+            f"<h4>📊 STRUCTURAL ZONES: Support: {support_str} | Resistance: {res_str}</h4>\n"
+            "<hr style='border-color: #334155; margin-top: 15px; margin-bottom: 15px;'/>\n"
+            "<h4>1. Macro & Fundamentals</h4>\n"
+            "<ul>\n"
+            "  <li><strong>Valuation:</strong> [1 concise sentence evaluating P/E and Market Cap]</li>\n"
+            "  <li><strong>Efficiency:</strong> [1 concise sentence evaluating Profit Margin]</li>\n"
+            "  <li><strong>Catalyst Risk:</strong> [1 concise sentence on the Earnings Date or News context]</li>\n"
+            "</ul>\n"
+            "<h4>2. Technical Analysis</h4>\n"
+            "<ul>\n"
+            "  <li><strong>Price Action:</strong> [Analyze current price relative to the structural zones]</li>\n"
+            "  <li><strong>Momentum (RSI & MACD):</strong> [Synthesize the RSI and MACD ledger signals]</li>\n"
+            "  <li><strong>Institutional Flow & VWAP:</strong> [Synthesize Volume and VWAP ledger signals]</li>\n"
+            "  <li><strong>Volatility:</strong> [Synthesize Bollinger Bands ledger signal]</li>\n"
+            "</ul>\n"
+            "<h4>3. The Verdict</h4>\n"
+            "<p style='color: #cbd5e1;'>[A final, punchy 2-sentence conclusion summarizing the Quant Score and justifying your AI Signal]</p>"
         )
         
         response = model.generate_content(prompt)
