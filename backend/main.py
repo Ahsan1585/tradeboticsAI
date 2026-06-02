@@ -17,6 +17,7 @@ import random
 import httpx
 from contextlib import asynccontextmanager
 import requests
+import io
 import numpy as np
 from scipy.signal import argrelextrema
 import cloudscraper
@@ -58,6 +59,9 @@ async def keep_alive_loop():
             
             await asyncio.sleep(600)
 
+# ==========================================
+# --- THE STEALTH DATA WORKER ---
+# ==========================================
 async def staleness_worker_loop():
     """Runs continuously every 3 minutes. Sweeps 15 stale tickers using Cloudscraper."""
     await asyncio.sleep(60)
@@ -69,7 +73,7 @@ async def staleness_worker_loop():
                 try:
                     expiration_cutoff = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
                     supabase.table('ai_scan_cache').delete().lt('last_scanned', expiration_cutoff).execute()
-                except Exception as e:
+                except Exception:
                     pass
 
                 # 🚀 2. MICRO-BATCHING
@@ -78,7 +82,7 @@ async def staleness_worker_loop():
                 
                 # 3. Database Seeding 
                 if not stale_tickers:
-                    print(f"[{datetime.now()}] ⚠️ EMPTY QUEUE: Seeding database from SEC Master List...", file=sys.stderr)
+                    print(f"[{datetime.now()}] ⚠️ EMPTY QUEUE: Seeding database from Wikipedia S&P 500...", file=sys.stderr)
                     universe = get_market_universe()
                     for i in range(0, len(universe), 200):
                         chunk = universe[i:i + 200]
@@ -223,6 +227,7 @@ async def staleness_worker_loop():
 
 @asynccontextmanager
 async def lifecycle(app: FastAPI):
+    # Running both the worker loop and the internal keep-alive loop
     asyncio.create_task(keep_alive_loop())
     asyncio.create_task(staleness_worker_loop())
     yield
@@ -249,7 +254,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 if SUPABASE_URL and SUPABASE_KEY:
     try:
         supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-    except Exception as e:
+    except Exception:
         supabase = None
 else:
     supabase = None
@@ -339,18 +344,21 @@ def get_support_resistance(hist):
     return float(np.mean(sup_levels)), float(np.mean(res_levels))
 
 def get_market_universe():
-    all_tickers = set()
+    """Fetches the official S&P 500 elite universe directly from Wikipedia."""
+    print(f"[{datetime.now()}] 📡 Fetching Elite S&P 500 List from Wikipedia...", file=sys.stderr)
     try:
-        headers = {'User-Agent': 'TradeBoticsApp/1.0 (Data Engine)'}
-        response = requests.get("https://www.sec.gov/files/company_tickers.json", headers=headers, timeout=15)
-        response.raise_for_status()
-        data = response.json()
-        for key, value in data.items():
-            ticker = str(value.get("ticker", "")).strip().upper()
-            if ticker and ticker.isalpha() and len(ticker) <= 5: 
-                all_tickers.add(ticker)
-        return list(all_tickers)
-    except Exception:
+        url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
+        html = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}).text
+        df = pd.read_html(io.StringIO(html))[0]
+        tickers = df['Symbol'].tolist()
+        
+        # Replace Wikipedia's dot notation (BRK.B) with Yahoo's hyphen notation (BRK-B)
+        clean_tickers = [str(t).replace('.', '-') for t in tickers]
+        
+        print(f"✅ UNIVERSE UPDATED: {len(clean_tickers)} elite S&P 500 symbols loaded.", file=sys.stderr)
+        return clean_tickers
+    except Exception as e:
+        print(f"❌ WIKIPEDIA FETCH ERROR: {e}", file=sys.stderr)
         return ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "BRK-B", "LLY", "TSLA"]
 
 # --- ENDPOINTS ---
@@ -482,7 +490,6 @@ async def analyze_ticker(ticker: str):
         # --- MULTI-FACTOR QUANT ENGINE (LIVE) ---
         tech_base = 50
         
-        # 1. Trend & Bollinger Bands
         std_dev = hist['Close'].rolling(window=20).std().iloc[-1] if len(hist) >= 20 else current_price * 0.02
         sma_20 = hist['Close'].rolling(window=20).mean().iloc[-1] if len(hist) >= 20 else current_price
         upper_band = round(sma_20 + (2 * std_dev), 2)
@@ -495,11 +502,9 @@ async def analyze_ticker(ticker: str):
             if current_price > upper_band: tech_base -= 10
             elif current_price < lower_band: tech_base += 10
 
-        # 2. MACD Proxy
         if current_price > prev_price: tech_base += 10
         else: tech_base -= 10
 
-        # 3. RSI
         try:
             delta = hist['Close'].diff()
             gain = delta.clip(lower=0)
@@ -519,7 +524,6 @@ async def analyze_ticker(ticker: str):
         elif real_rsi <= 30: tech_base += 15
         elif real_rsi > 50: tech_base += 5
 
-        # 4. Institutional Flow & VWAP
         try:
             typical_price = (hist['High'] + hist['Low'] + hist['Close']) / 3
             vwap_proxy = round((typical_price * hist['Volume']).sum() / hist['Volume'].sum(), 2)
@@ -534,7 +538,6 @@ async def analyze_ticker(ticker: str):
 
         tech_score = max(10, min(95, tech_base))
         
-        # --- FUNDAMENTALS ---
         fund_base = 50
         if pe and 0 < pe < 25: fund_base += 20
         elif pe and pe > 50: fund_base -= 20
@@ -549,24 +552,21 @@ async def analyze_ticker(ticker: str):
         try:
             finnhub_key = os.getenv("FINNHUB_API_KEY")
             if finnhub_key:
-                import urllib.request
-                import json
                 end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
                 start_date = (datetime.now(timezone.utc) - timedelta(days=7)).strftime('%Y-%m-%d')
                 url = f"https://finnhub.io/api/v1/company-news?symbol={ticker_upper}&from={start_date}&to={end_date}&token={finnhub_key}"
-                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-                with urllib.request.urlopen(req) as response:
-                    finnhub_news = json.loads(response.read().decode())
-                    for item in finnhub_news[:5]:
-                        pub_time = item.get("datetime", time.time())
-                        hours_ago = int((time.time() - pub_time) / 3600)
-                        date_str = "JUST NOW" if hours_ago <= 0 else f"{hours_ago} HR{'S' if hours_ago > 1 else ''} AGO"
-                        news_list.append({
-                            "title": item.get("headline", "Market Update"),
-                            "publisher": item.get("source", "Financial Wire"),
-                            "date": date_str,
-                            "content": item.get("summary", item.get("url", ""))
-                        })
+                req = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
+                finnhub_news = req.json()
+                for item in finnhub_news[:5]:
+                    pub_time = item.get("datetime", time.time())
+                    hours_ago = int((time.time() - pub_time) / 3600)
+                    date_str = "JUST NOW" if hours_ago <= 0 else f"{hours_ago} HR{'S' if hours_ago > 1 else ''} AGO"
+                    news_list.append({
+                        "title": item.get("headline", "Market Update"),
+                        "publisher": item.get("source", "Financial Wire"),
+                        "date": date_str,
+                        "content": item.get("summary", item.get("url", ""))
+                    })
             if not news_list:
                 raw_news = stock.news
                 if isinstance(raw_news, list):
@@ -609,7 +609,6 @@ async def analyze_ticker(ticker: str):
             "ai_tactical": f"Market conditions evaluated for {ticker_upper}. Execution guidance dynamically adjusting to real-time volatility.",
             "support_level": round(support, 2),
             "resistance_level": round(resistance, 2),
-
             "fundamentals": {
                 "market_cap": formatted_mcap, 
                 "pe_ratio": str(round(pe, 2)) if pe else "N/A",
@@ -908,7 +907,7 @@ async def summarize_article(req: SummaryRequest, user_id: str = Query(...)):
         
     except HTTPException as he:
         raise he
-    except Exception as e: 
+    except Exception: 
         return {"summary": [f"Synthesis Offline. Error logged in terminal."]}
 
 @app.post("/portfolio-analysis")
