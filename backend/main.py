@@ -98,12 +98,16 @@ async def staleness_worker_loop():
                 print(f"[{datetime.now()}] 🔍 STEALTH BATCH: Processing {len(stale_tickers)} tickers...", file=sys.stderr)
                 rate_limit_hit = False
                 
+                # 🛡️ THE FIX: Create ONE master session for the entire batch to avoid crumb-spamming
+                master_session = get_yf_session()
+                
                 # 4. Gather Data
                 for t in stale_tickers:
                     current_time = datetime.now(timezone.utc).isoformat()
                     
                     try:
-                        stock = yf.Ticker(t, session=get_yf_session())
+                        # Pass the shared master_session instead of generating a new one
+                        stock = yf.Ticker(t, session=master_session)
                         hist = stock.history(period="1mo")
                         
                         if hist.empty:
@@ -223,7 +227,7 @@ async def staleness_worker_loop():
                 print(f"❌ CRITICAL WORKER ERROR: {e}", file=sys.stderr)
                 await asyncio.sleep(60) 
         else:
-            await asyncio.sleep(60) 
+            await asyncio.sleep(60)
 
 @asynccontextmanager
 async def lifecycle(app: FastAPI):
