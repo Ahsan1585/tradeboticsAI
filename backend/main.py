@@ -52,6 +52,27 @@ def get_yf_session():
     })
     return scraper
 
+# ==========================================
+# --- KEEP ALIVE CONFIGURATION ---
+# ==========================================
+# ⚠️ REPLACE WITH YOUR ACTUAL LIVE RENDER APP URL
+RENDER_APP_URL = "https://tradebotics-api.onrender.com/market-briefing" 
+
+async def keep_alive_loop():
+    """Loops infinitely every 10 minutes to ping the public URL and prevent sleep."""
+    await asyncio.sleep(30)
+    
+    async with httpx.AsyncClient() as client:
+        while True:
+            try:
+                print(f"[{datetime.now()}] 🛰️ SENDING KEEP-ALIVE PING TO PUBLIC URL...", file=sys.stderr)
+                response = await client.get(RENDER_APP_URL, timeout=10.0)
+                print(f"[{datetime.now()}] 💚 KEEP-ALIVE SUCCESS: Status {response.status_code}", file=sys.stderr)
+            except Exception as e:
+                print(f"[{datetime.now()}] ⚠️ KEEP-ALIVE PING FAILED: {e}", file=sys.stderr)
+            
+            await asyncio.sleep(600)
+
 
 # ==========================================
 # --- THE STEALTH DATA WORKER ---
