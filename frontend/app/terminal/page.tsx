@@ -455,14 +455,22 @@ function TerminalContent() {
                         <style dangerouslySetInnerHTML={{__html: `
                             .prose h3 { color: #fff; font-size: 1.1em; margin-top: 1.5em; margin-bottom: 0.75em; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 900; }
                             .prose h4 { color: #94a3b8; font-size: 0.9em; margin-top: 1.5em; margin-bottom: 0.75em; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 800; }
-                            .prose ul { padding-left: 0; list-style-type: none; }
-                            .prose li { position: relative; padding-left: 1.5rem; margin-bottom: 0.75rem; color: #cbd5e1; }
+                            .prose ul { padding-left: 0; list-style-type: none; margin-bottom: 1.5em; }
+                            .prose li { position: relative; padding-left: 1.5rem; margin-bottom: 0.75rem; color: #cbd5e1; display: block; }
                             .prose li::before { content: "→"; position: absolute; left: 0; color: #3b82f6; font-weight: 900; }
                             .prose strong { color: #fff; }
                             .prose p { color: #94a3b8; margin-bottom: 1em; }
                             .prose hr { border-color: #1e293b; margin: 2em 0; }
                         `}} />
-                        <div dangerouslySetInnerHTML={{ __html: deepDiveResult }} />
+                        <div dangerouslySetInnerHTML={{ 
+                            __html: deepDiveResult
+                                .replace(/^### (.*$)/gim, '<h3>$1</h3>')                 // Converts ### to Headers
+                                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')        // Converts **text** to Bold
+                                .replace(/^---$/gim, '<hr/>')                            // Converts --- to Dividers
+                                .replace(/^\* (.*$)/gim, '<li>$1</li>')                  // Converts * to Bullet Points
+                                .replace(/\n\n/g, '<br/><br/>')                          // Handles Paragraph Spacing
+                                .replace(/\*(LEGAL DISCLAIMER:.*?)\*/gim, '<em class="text-[9px] leading-tight text-slate-600 block mt-8 border-t border-slate-800 pt-4">$1</em>') // Isolates and shrinks the disclaimer
+                        }} />
                     </div>
                 </div>
             </div>
