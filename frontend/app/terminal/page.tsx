@@ -371,8 +371,13 @@ function TerminalContent() {
   // --- DERIVED SCREENER STATE (Pulse Cards & Filtering) ---
   const filteredScreenerResults = screenerResults.filter(stock => {
       if (activeSector === "ALL") return true;
-      if (!stock.sector) return true; 
-      return stock.sector.toLowerCase().includes(activeSector.toLowerCase());
+      if (!stock.sector) return false; // Fix: Hide stocks with unknown sectors from specific tabs
+      
+      // Fix: Handle the Yahoo Finance "Financial Services" naming mismatch
+      let searchTerm = activeSector.toLowerCase();
+      if (activeSector === "Financials") searchTerm = "financial";
+      
+      return stock.sector.toLowerCase().includes(searchTerm);
   });
 
   const topAlpha = screenerResults.length > 0 ? [...screenerResults].sort((a, b) => (b.score || 0) - (a.score || 0))[0] : null;
