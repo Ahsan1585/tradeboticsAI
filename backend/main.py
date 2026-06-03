@@ -529,16 +529,31 @@ async def analyze_ticker(ticker: str):
             if raw_mcap >= 1e12: formatted_mcap = f"${raw_mcap / 1e12:.2f} Trillion"
             else: formatted_mcap = f"${raw_mcap / 1e9:.2f} Billion"
 
+        # --- ROBUST EARNINGS DATE EXTRACTION ---
         calendar = stock.calendar
         next_earnings = "Unknown"
+        
         if calendar is not None:
             try:
+                # yfinance format 1: Dictionary
                 if isinstance(calendar, dict) and 'Earnings Date' in calendar:
-                    next_earnings = str(calendar['Earnings Date'][0])
-                elif 'Earnings Date' in calendar and not calendar.empty:
-                    next_earnings = str(calendar['Earnings Date'].iloc[0].date())
+                    dates = calendar['Earnings Date']
+                    if isinstance(dates, list) and len(dates) > 0:
+                        # Extract the first date from the list and strip any time data
+                        next_earnings = str(dates[0]).split(' ')[0]
+                    elif dates:
+                        next_earnings = str(dates).split(' ')[0]
+                
+                # yfinance format 2: Pandas DataFrame
+                elif hasattr(calendar, 'empty') and not calendar.empty and 'Earnings Date' in calendar:
+                    val = calendar['Earnings Date'].iloc[0]
+                    if hasattr(val, 'date'):
+                        next_earnings = str(val.date())
+                    else:
+                        next_earnings = str(val).split(' ')[0]
             except Exception:
-                pass
+                # If Yahoo changes their format again, safely fail and pass "Unknown"
+                next_earnings = "Unknown"
 
         # --- MULTI-FACTOR QUANT ENGINE (LIVE) ---
         tech_base = 50
@@ -765,10 +780,14 @@ async def translate_ai(req: TranslationRequest, user_id: str = Query(...)):
             for item in news[:3]:
                 prompt += f"- {item.get('title')} ({item.get('date')})\n"
 
+        # 🛑 ANTI-HALLUCINATION LEASH
         next_earnings = funds.get("next_earnings", "N/A")
         if next_earnings != "N/A" and next_earnings != "Unknown":
             prompt += f"\nEARNINGS RISK:\n- Next Earnings Date: {next_earnings}\n"
             prompt += "If the Next Earnings Date is today or tomorrow, heavily weigh the binary risk of an earnings gap in your tactical verdict.\n"
+        else:
+            prompt += "\nEARNINGS RISK:\n- Next Earnings Date: UNKNOWN\n"
+            prompt += "CRITICAL MANDATE: The earnings date is currently unavailable. You MUST explicitly state that the catalyst timeline is pending. DO NOT invent, estimate, or assume a future date under any circumstances.\n"
 
         prompt += (
             "\n🚨 CRITICAL FORMATTING MANDATE:\n"
