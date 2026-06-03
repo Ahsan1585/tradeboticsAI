@@ -821,15 +821,18 @@ async def translate_ai(req: TranslationRequest, user_id: str = Query(...)):
             for item in news[:3]:
                 prompt += f"- {item.get('title')} ({item.get('date')})\n"
 
-        # 🛑 ANTI-HALLUCINATION LEASH
+        from datetime import datetime
+        today_str = datetime.now().strftime('%Y-%m-%d')
+
+        # 🛑 ANTI-HALLUCINATION LEASH (Upgraded with Temporal Anchor)
         next_earnings = funds.get("next_earnings", "N/A")
         if next_earnings != "N/A" and next_earnings != "Unknown":
-            prompt += f"\nEARNINGS RISK:\n- Next Earnings Date: {next_earnings}\n"
-            prompt += "If the Next Earnings Date is today or tomorrow, heavily weigh the binary risk of an earnings gap in your tactical verdict.\n"
+            prompt += f"\nEARNINGS RISK:\n- Today's Date: {today_str}\n- Next Earnings Date: {next_earnings}\n"
+            prompt += "CRITICAL MANDATE: You must accurately calculate the relative time between Today's Date and the Next Earnings Date. Do not state it is years away if it is happening this year.\n"
         else:
             prompt += "\nEARNINGS RISK:\n- Next Earnings Date: UNKNOWN\n"
             prompt += "CRITICAL MANDATE: The earnings date is currently unavailable. You MUST explicitly state that the catalyst timeline is pending. DO NOT invent, estimate, or assume a future date under any circumstances.\n"
-
+            
         prompt += (
             "\n🚨 CRITICAL FORMATTING MANDATE:\n"
             "OUTPUT STRICTLY IN CLEAN MARKDOWN. DO NOT use HTML tags. You must use markdown headings (###), bold text (**), and bullet points (*) to make the briefing highly scannable and user-friendly.\n\n"
