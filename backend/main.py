@@ -216,23 +216,40 @@ async def staleness_worker_loop():
 
                         tech_score = max(10, min(95, tech_base))
                         
-                        # --- 2. FUNDAMENTAL ENGINE (Balanced for Growth, Software & Value) ---
+                        # --- 2. FUNDAMENTAL ENGINE (Sector-Aware Balancer) ---
                         fund_base = 50
                         
-                        # Valuation Metric (Maintains Value/Bank balance)
-                        if pe and 0 < pe < 25: fund_base += 10
-                        elif pe and 25 <= pe <= 45: fund_base += 5 # Reasonable multiple for tech scaling
-                        elif pe and pe > 50: fund_base -= 15
+                        is_tech = "Technology" in sector or "Communication" in sector
+                        is_financial = "Financial" in sector
                         
-                        # Operational Efficiency (Maintains high-performing structures)
-                        if margins and margins > 0.20: fund_base += 10
-                        elif margins and margins > 0.10: fund_base += 5
-                        elif margins and margins < 0: fund_base -= 20
+                        # Valuation (Sector-Aware Multiples)
+                        if pe and 0 < pe < 25: 
+                            fund_base += 10 # Value reward for traditional companies
+                        elif pe and 25 <= pe <= 60 and is_tech:
+                            fund_base += 10 # Tech gets a pass for higher scaling multiples
+                        elif pe and pe > 60:
+                            # Only penalize extreme multiples if they aren't hyper-growing
+                            if rev_growth and rev_growth < 0.20:
+                                fund_base -= 15
                         
-                        # Explosive Growth Factor (The Equalizer: Elevates Tech & Penalizes Stagnant Assets)
-                        if rev_growth and rev_growth > 0.15: fund_base += 15 # Top-tier institutional growth
-                        elif rev_growth and rev_growth > 0.05: fund_base += 5
-                        elif rev_growth and rev_growth < 0: fund_base -= 15 # Decelerating revenue metrics penalized
+                        # Operational Efficiency (Nerfing the Bank Margin Exploit)
+                        if margins and margins > 0.20:
+                            if is_financial:
+                                fund_base += 5  # Nerfed reward (Banks naturally have 30%+ margins)
+                            else:
+                                fund_base += 15 # Massive reward (Software/Consumer hitting 20% is elite)
+                        elif margins and margins > 0.10: 
+                            fund_base += 5
+                        elif margins and margins < 0: 
+                            fund_base -= 20
+                        
+                        # Explosive Growth (The Ultimate Tech Catalyst)
+                        if rev_growth and rev_growth > 0.20: 
+                            fund_base += 20 # Hyper-growth reward
+                        elif rev_growth and rev_growth > 0.10: 
+                            fund_base += 10
+                        elif rev_growth and rev_growth < 0: 
+                            fund_base -= 15 # Decelerating companies heavily penalized
 
                         fund_score = max(10, min(95, fund_base))
                         
