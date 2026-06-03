@@ -116,21 +116,21 @@ async def staleness_worker_loop():
                 # 🛡️ Create one heavily disguised master session
                 master_session = get_yf_session()
                 
-                # 4. Gather Data
+                # # 4. Gather Data
                 for t in stale_tickers:
                     current_time = datetime.now(timezone.utc).isoformat()
                     
                     try:
                         stock = yf.Ticker(t, session=master_session)
                         
-                        # 1. Fetch Prices (High priority, rarely blocked)
-                        hist = stock.history(period="1mo")
+                        # 1. UPGRADED MEMORY: Fetch 3 months of data to calculate multi-horizon metrics
+                        hist = stock.history(period="3mo")
                         
                         if hist.empty:
                             supabase.table('market_universe').delete().eq('ticker', t).execute()
                             continue
                             
-                        if len(hist) < 2: 
+                        if len(hist) < 40: # We need at least 40 trading days to construct the 1-month trend proxy
                             supabase.table('market_universe').update({'last_scanned': current_time}).eq('ticker', t).execute()
                             continue
                         
@@ -138,39 +138,47 @@ async def staleness_worker_loop():
                         prev_price = float(hist['Close'].iloc[-2])
                         daily_change = ((price - prev_price) / prev_price) * 100
 
-                        # 2. Fetch Fundamentals (Low priority, heavily blocked by Yahoo)
-                        # We wrap this in a try/except so a block doesn't kill the price update!
-                        pe, margins, sector = 0, 0, "S&P 500"
+                        # 2. Fetch Fundamentals (Added Revenue Growth to eliminate Bank/Value Bias)
+                        pe, margins, rev_growth, sector = 0, 0, 0, "S&P 500"
                         try:
                             info = stock.info
                             pe = info.get("trailingPE", 0)
                             margins = info.get("profitMargins", 0)
+                            rev_growth = info.get("revenueGrowth", 0) 
                             sector = info.get("sector", "Macro Profile")
                         except Exception:
-                            # If info is blocked, we just ignore it and move on with default values
+                            # If info endpoint is throttled, safely proceed with baseline data
                             pass
 
-                        # --- MULTI-FACTOR QUANT ENGINE (WORKER) ---
+                        # =======================================================
+                        # --- MULTI-FACTOR QUANT ENGINE 2.0 (DUAL-HORIZON) ---
+                        # =======================================================
+                        
+                        # --- 1. TECHNICAL ENGINE (1-Week Velocity & 1-Month Trend) ---
                         tech_base = 50
                         
-                        # Trend & Bollinger Bands
-                        if len(hist) >= 20:
-                            sma_20 = hist['Close'].rolling(window=20).mean().iloc[-1]
-                            std_dev = hist['Close'].rolling(window=20).std().iloc[-1]
-                            upper_band = round(sma_20 + (2 * std_dev), 2)
-                            lower_band = round(sma_20 - (2 * std_dev), 2)
-                            
-                            if price > sma_20: tech_base += 10
-                            else: tech_base -= 10
-                            
-                            if price > upper_band: tech_base -= 10
-                            elif price < lower_band: tech_base += 10
+                        sma_20 = hist['Close'].rolling(window=20).mean().iloc[-1]
+                        sma_40 = hist['Close'].rolling(window=40).mean().iloc[-1] # 1-Month Trend Proxy
+                        std_dev = hist['Close'].rolling(window=20).std().iloc[-1]
+                        upper_band = sma_20 + (2 * std_dev)
+                        lower_band = sma_20 - (2 * std_dev)
+
+                        # Trend Alignment (1-Month Horizon Support)
+                        if price > sma_20: tech_base += 10
+                        else: tech_base -= 10
+                        
+                        if sma_20 > sma_40: tech_base += 10 # Strong medium-term structural layout
+                        else: tech_base -= 5
+
+                        # Mean Reversion & Extreme Volatility (1-Week Swing Target)
+                        if price > upper_band: tech_base -= 15 # Overextended this week, high pullback risk
+                        elif price < lower_band: tech_base += 15 # Drastically oversold, primed for a technical bounce
 
                         # MACD Momentum Proxy
-                        if price > prev_price: tech_base += 10
-                        else: tech_base -= 10
+                        if price > prev_price: tech_base += 5
+                        else: tech_base -= 5
 
-                        # RSI
+                        # RSI Execution Momentum
                         try:
                             delta = hist['Close'].diff()
                             gain = delta.clip(lower=0)
@@ -184,17 +192,21 @@ async def staleness_worker_loop():
                         except Exception:
                             real_rsi = 50.0
 
-                        if real_rsi >= 70: tech_base -= 15
-                        elif real_rsi <= 30: tech_base += 15
-                        elif real_rsi > 50: tech_base += 5
+                        if real_rsi >= 70: tech_base -= 15 # Overbought ceiling reached
+                        elif real_rsi <= 30: tech_base += 15 # Deep exhaustion floor reached
+                        elif 50 < real_rsi < 65: tech_base += 5 # Healthy accumulation track
 
-                        # Institutional Flow & VWAP
+                        # Institutional Volume Profile
                         try:
                             volume = int(hist['Volume'].iloc[-1])
-                            avg_volume = int(hist['Volume'].mean())
-                            if volume > avg_volume: tech_base += 10
+                            avg_volume = int(hist['Volume'].rolling(20).mean().iloc[-1])
+                            if volume > (avg_volume * 1.2): tech_base += 10 # Heavy institutional conviction
                             else: tech_base -= 5
+                        except Exception:
+                            pass
                             
+                        # Volume Weighted Average Price (VWAP Proxy)
+                        try:
                             typical_price = (hist['High'] + hist['Low'] + hist['Close']) / 3
                             vwap_proxy = round((typical_price * hist['Volume']).sum() / hist['Volume'].sum(), 2)
                             if price > vwap_proxy: tech_base += 10
@@ -204,12 +216,24 @@ async def staleness_worker_loop():
 
                         tech_score = max(10, min(95, tech_base))
                         
-                        # --- FUNDAMENTAL ENGINE ---
+                        # --- 2. FUNDAMENTAL ENGINE (Balanced for Growth, Software & Value) ---
                         fund_base = 50
-                        if pe and 0 < pe < 25: fund_base += 20
-                        elif pe and pe > 50: fund_base -= 20
-                        if margins and margins > 0.15: fund_base += 20
-                        elif margins and margins < 0: fund_base -= 25
+                        
+                        # Valuation Metric (Maintains Value/Bank balance)
+                        if pe and 0 < pe < 25: fund_base += 10
+                        elif pe and 25 <= pe <= 45: fund_base += 5 # Reasonable multiple for tech scaling
+                        elif pe and pe > 50: fund_base -= 15
+                        
+                        # Operational Efficiency (Maintains high-performing structures)
+                        if margins and margins > 0.20: fund_base += 10
+                        elif margins and margins > 0.10: fund_base += 5
+                        elif margins and margins < 0: fund_base -= 20
+                        
+                        # Explosive Growth Factor (The Equalizer: Elevates Tech & Penalizes Stagnant Assets)
+                        if rev_growth and rev_growth > 0.15: fund_base += 15 # Top-tier institutional growth
+                        elif rev_growth and rev_growth > 0.05: fund_base += 5
+                        elif rev_growth and rev_growth < 0: fund_base -= 15 # Decelerating revenue metrics penalized
+
                         fund_score = max(10, min(95, fund_base))
                         
                         # Save successful data to Supabase
@@ -236,7 +260,7 @@ async def staleness_worker_loop():
                         else:
                             supabase.table('market_universe').update({'last_scanned': current_time}).eq('ticker', t).execute()
 
-                    # 🚦 ANTI-BOT THROTTLE (Increased slightly for safety)
+                    # 🚦 ANTI-BOT THROTTLE (Maintained for safety)
                     await asyncio.sleep(random.uniform(1.0, 2.5))
                         
                 # 🚀 5. SMART CYCLE SLEEP

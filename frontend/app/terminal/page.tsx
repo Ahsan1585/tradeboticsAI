@@ -100,7 +100,8 @@ function TerminalContent() {
 
   // 🚨 NEW SCREENER ENGINE STATES
   const [horizon, setHorizon] = useState("Swing Trade");
-  const [risk, setRisk] = useState("Moderate");
+  const [risk, setRisk] = useState("Medium");
+  const [activeSector, setActiveSector] = useState("ALL");
   const [screenerResults, setScreenerResults] = useState<any[]>([]);
   const [isScanning, setIsScanning] = useState(false);
 
@@ -367,6 +368,17 @@ function TerminalContent() {
     try { const res = await fetch(`${BACKEND_URL}/market-briefing`); if (res.ok) setGlobalNews(await res.json()); } catch { console.warn("Briefing offline."); } 
   };
 
+  // --- DERIVED SCREENER STATE (Pulse Cards & Filtering) ---
+  const filteredScreenerResults = screenerResults.filter(stock => {
+      if (activeSector === "ALL") return true;
+      if (!stock.sector) return true; 
+      return stock.sector.toLowerCase().includes(activeSector.toLowerCase());
+  });
+
+  const topAlpha = screenerResults.length > 0 ? [...screenerResults].sort((a, b) => (b.score || 0) - (a.score || 0))[0] : null;
+  const topGrowth = screenerResults.length > 1 ? [...screenerResults].sort((a, b) => (b.tech_score || 0) - (a.tech_score || 0))[0] : null;
+  const topValue = screenerResults.length > 2 ? [...screenerResults].sort((a, b) => (b.fund_score || 0) - (a.fund_score || 0))[0] : null;
+
   if (!isAuthorized) {
       return (
           <main className="min-h-screen bg-[#020617] flex items-center justify-center p-4">
@@ -420,14 +432,34 @@ function TerminalContent() {
         </div>
       )}
 
+      {/* 🚀 SLIDE-OUT AI DRAWER */}
       {deepDiveResult && !isAnalyzing && (
-        <div className="fixed inset-0 z-[110] bg-black/95 backdrop-blur-xl flex items-center justify-center p-3 md:p-4">
-            <div className="w-full max-w-2xl max-h-[95vh] md:max-h-[90vh] bg-slate-900 border border-blue-500/30 p-6 md:p-10 rounded-[32px] md:rounded-[48px] shadow-2xl flex flex-col overflow-hidden">
-              <div className="flex items-center gap-3 mb-6 md:mb-8 shrink-0"><div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" /><p className="text-[10px] font-black uppercase tracking-[0.4em] text-blue-500">AI Deep Dive Analysis</p></div>
-              <div className="overflow-y-auto custom-scrollbar flex-1 mb-6 md:mb-10 pr-2">
-                  <p className="text-slate-200 text-sm md:text-lg font-medium leading-relaxed italic whitespace-pre-wrap">"{deepDiveResult}"</p>
-              </div>
-              <button onClick={() => setDeepDiveResult(null)} className="w-full bg-slate-800 py-4 rounded-xl md:rounded-2xl font-black text-[10px] uppercase tracking-widest hover:text-white transition-colors shrink-0">Close Briefing</button>
+        <div className="fixed inset-0 z-[110] bg-black/60 backdrop-blur-sm flex justify-end animate-in fade-in duration-300">
+            <div className="w-full md:w-[450px] lg:w-[500px] h-full bg-[#020617] border-l border-blue-500/30 shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
+                <div className="p-6 md:p-8 border-b border-slate-800 flex justify-between items-center bg-slate-900/50 shrink-0">
+                    <div className="flex items-center gap-3">
+                        <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
+                        <p className="text-[10px] font-black uppercase tracking-[0.4em] text-blue-500">AI Deep Dive</p>
+                    </div>
+                    <button onClick={() => setDeepDiveResult(null)} className="text-slate-500 hover:text-white transition-colors">
+                        <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                    </button>
+                </div>
+                <div className="p-6 md:p-8 overflow-y-auto custom-scrollbar flex-1">
+                    <div className="prose prose-invert max-w-none text-sm md:text-base font-medium leading-relaxed">
+                        <style dangerouslySetInnerHTML={{__html: `
+                            .prose h3 { color: #fff; font-size: 1.1em; margin-top: 1.5em; margin-bottom: 0.75em; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 900; }
+                            .prose h4 { color: #94a3b8; font-size: 0.9em; margin-top: 1.5em; margin-bottom: 0.75em; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 800; }
+                            .prose ul { padding-left: 0; list-style-type: none; }
+                            .prose li { position: relative; padding-left: 1.5rem; margin-bottom: 0.75rem; color: #cbd5e1; }
+                            .prose li::before { content: "→"; position: absolute; left: 0; color: #3b82f6; font-weight: 900; }
+                            .prose strong { color: #fff; }
+                            .prose p { color: #94a3b8; margin-bottom: 1em; }
+                            .prose hr { border-color: #1e293b; margin: 2em 0; }
+                        `}} />
+                        <div dangerouslySetInnerHTML={{ __html: deepDiveResult }} />
+                    </div>
+                </div>
             </div>
         </div>
       )}
@@ -564,7 +596,7 @@ function TerminalContent() {
                         <button 
                             onClick={executeMarketScan} 
                             disabled={isScanning}
-                            className="w-full sm:w-auto px-6 py-4 sm:py-3 bg-white hover:bg-slate-200 text-slate-950 rounded-xl lg:rounded-2xl font-black text-[10px] uppercase tracking-widest disabled:opacity-50 transition-all"
+                            className="w-full sm:w-auto px-6 py-4 sm:py-3 bg-white hover:bg-slate-200 text-slate-950 rounded-xl lg:rounded-2xl font-black text-[10px] uppercase tracking-widest disabled:opacity-50 transition-all shadow-[0_0_15px_rgba(255,255,255,0.2)]"
                         >
                             {isScanning ? "Scanning..." : "Execute Matrix"}
                         </button>
@@ -587,12 +619,12 @@ function TerminalContent() {
                         <div>
                             <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-3">Risk Profile</p>
                             <div className="flex gap-2">
-                                {["Conservative", "Moderate", "Aggressive"].map((r) => (
+                                {["Low", "Medium", "High"].map((r) => (
                                     <button
                                         key={r} onClick={() => setRisk(r)}
-                                        className={`flex-1 py-3 rounded-lg lg:rounded-xl font-bold text-[9px] uppercase tracking-wider transition-all border text-center truncate px-1 ${risk === r ? (r === 'Aggressive' ? 'bg-red-900/40 border-red-500 text-red-200' : r === 'Conservative' ? 'bg-emerald-900/40 border-emerald-500 text-emerald-200' : 'bg-purple-900/40 border-purple-500 text-purple-200') : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'}`}
+                                        className={`flex-1 py-3 rounded-lg lg:rounded-xl font-bold text-[9px] uppercase tracking-wider transition-all border text-center truncate px-1 ${risk === r ? (r === 'High' ? 'bg-red-900/40 border-red-500 text-red-200' : r === 'Low' ? 'bg-emerald-900/40 border-emerald-500 text-emerald-200' : 'bg-purple-900/40 border-purple-500 text-purple-200') : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'}`}
                                     >
-                                        {r.substring(0, 3)}
+                                        {r}
                                     </button>
                                 ))}
                             </div>
@@ -629,35 +661,102 @@ function TerminalContent() {
                                 <p className="font-black uppercase tracking-[0.2em] text-[9px] lg:text-[10px]">Awaiting Execution Parameters</p>
                             </div>
                         ) : (
-                            <div className="flex flex-col h-full">
-                                <div className="grid grid-cols-12 gap-2 lg:gap-4 bg-slate-900/40 px-4 lg:px-6 py-3 lg:py-4 border-b border-slate-800/80 text-[8px] lg:text-[9px] font-black uppercase tracking-widest text-slate-500">
-                                    <div className="col-span-4 lg:col-span-4">Asset</div>
-                                    <div className="col-span-4 lg:col-span-4 text-right">Valuation</div>
-                                    <div className="col-span-4 lg:col-span-4 text-right text-blue-400">Score</div>
+                            <div className="flex flex-col h-full bg-[#020617]">
+                                {/* THE PULSE CARDS GRID */}
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-4 bg-slate-900/30 border-b border-slate-800/80">
+                                    {topAlpha && (
+                                    <div onClick={() => { setTicker(topAlpha.ticker); runAnalysis(topAlpha.ticker); }} className="bg-slate-950 border border-blue-900/50 rounded-xl p-4 hover:border-blue-500 transition-colors cursor-pointer shadow-sm group">
+                                        <h4 className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-2 group-hover:text-blue-400 transition-colors">🏆 Top Alpha</h4>
+                                        <div className="flex justify-between items-end">
+                                            <div>
+                                                <h2 className="text-lg font-black text-white leading-none">{topAlpha.ticker}</h2>
+                                                <p className="text-[10px] font-mono font-bold text-slate-400 mt-1">${topAlpha.price?.toFixed(2)}</p>
+                                            </div>
+                                            <div className="bg-blue-600/20 border border-blue-500/50 text-blue-400 font-black text-sm px-2 py-1 rounded-md">{topAlpha.score}</div>
+                                        </div>
+                                    </div>
+                                    )}
+
+                                    {topGrowth && (
+                                    <div onClick={() => { setTicker(topGrowth.ticker); runAnalysis(topGrowth.ticker); }} className="bg-slate-950 border border-purple-900/50 rounded-xl p-4 hover:border-purple-500 transition-colors cursor-pointer shadow-sm group">
+                                        <h4 className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-2 group-hover:text-purple-400 transition-colors">🚀 Momentum</h4>
+                                        <div className="flex justify-between items-end">
+                                            <div>
+                                                <h2 className="text-lg font-black text-white leading-none">{topGrowth.ticker}</h2>
+                                                <p className="text-[10px] font-mono font-bold text-slate-400 mt-1">${topGrowth.price?.toFixed(2)}</p>
+                                            </div>
+                                            <div className="bg-purple-600/20 border border-purple-500/50 text-purple-400 font-black text-sm px-2 py-1 rounded-md">{topGrowth.score}</div>
+                                        </div>
+                                    </div>
+                                    )}
+
+                                    {topValue && (
+                                    <div onClick={() => { setTicker(topValue.ticker); runAnalysis(topValue.ticker); }} className="bg-slate-950 border border-emerald-900/50 rounded-xl p-4 hover:border-emerald-500 transition-colors cursor-pointer shadow-sm group hidden md:block">
+                                        <h4 className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-2 group-hover:text-emerald-400 transition-colors">⚖️ Value Floor</h4>
+                                        <div className="flex justify-between items-end">
+                                            <div>
+                                                <h2 className="text-lg font-black text-white leading-none">{topValue.ticker}</h2>
+                                                <p className="text-[10px] font-mono font-bold text-slate-400 mt-1">${topValue.price?.toFixed(2)}</p>
+                                            </div>
+                                            <div className="bg-emerald-600/20 border border-emerald-500/50 text-emerald-400 font-black text-sm px-2 py-1 rounded-md">{topValue.score}</div>
+                                        </div>
+                                    </div>
+                                    )}
+                                </div>
+
+                                {/* SECTOR FILTERS */}
+                                <div className="flex space-x-2 px-4 py-3 border-b border-slate-800/80 overflow-x-auto custom-scrollbar bg-slate-900/20 shrink-0">
+                                    {["ALL", "Technology", "Financials", "Healthcare", "Consumer", "Energy"].map(sector => (
+                                        <button 
+                                            key={sector}
+                                            onClick={() => setActiveSector(sector)}
+                                            className={`px-3 py-1.5 rounded-full text-[9px] font-bold uppercase tracking-widest whitespace-nowrap transition-all ${activeSector === sector ? 'bg-blue-600 text-white' : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800'}`}
+                                        >
+                                            {sector}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                <div className="grid grid-cols-12 gap-2 lg:gap-4 px-4 lg:px-6 py-3 border-b border-slate-800/80 text-[8px] lg:text-[9px] font-black uppercase tracking-widest text-slate-500 shrink-0">
+                                    <div className="col-span-5 lg:col-span-5">Asset</div>
+                                    <div className="col-span-4 lg:col-span-3 text-right">Price / Change</div>
+                                    <div className="hidden lg:block lg:col-span-2 text-right">{horizon === "Long Term" ? "Fund Score" : "Tech Score"}</div>
+                                    <div className="col-span-3 lg:col-span-2 text-right text-blue-400">Total</div>
                                 </div>
                                 <div className="overflow-y-auto custom-scrollbar flex-1 pb-4">
-                                    {screenerResults.map((stock, idx) => (
+                                    {filteredScreenerResults.map((stock, idx) => (
                                         <div 
                                             key={stock.ticker}
                                             onClick={() => { setTicker(stock.ticker); runAnalysis(stock.ticker); }}
-                                            className="grid grid-cols-12 gap-2 lg:gap-4 px-4 lg:px-6 py-3 lg:py-4 items-center border-b border-slate-800/30 hover:bg-slate-900/60 cursor-pointer group transition-colors"
+                                            className="grid grid-cols-12 gap-2 lg:gap-4 px-4 lg:px-6 py-3 lg:py-4 items-center border-b border-slate-800/30 hover:bg-slate-900/80 cursor-pointer group transition-colors"
                                         >
-                                            <div className="col-span-4 lg:col-span-4 flex items-center gap-2 lg:gap-3">
+                                            <div className="col-span-5 lg:col-span-5 flex items-center gap-2 lg:gap-3">
                                                 <span className="hidden sm:inline-block text-[10px] text-slate-600 font-mono w-4">{idx + 1}</span>
-                                                <div className="bg-slate-900 border border-slate-800 px-2 py-1 lg:px-3 lg:py-1.5 rounded-lg group-hover:border-blue-500/50 transition-colors">
-                                                    <span className="font-black text-white text-[10px] lg:text-xs">{stock.ticker}</span>
+                                                <div>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="font-black text-white text-xs lg:text-sm">{stock.ticker}</span>
+                                                    </div>
+                                                    <span className="text-[8px] font-bold text-slate-500 uppercase tracking-widest hidden lg:block mt-0.5">{stock.sector || "Equities"}</span>
                                                 </div>
                                             </div>
-                                            <div className="col-span-4 lg:col-span-4 text-right">
-                                                <p className="text-xs lg:text-sm font-mono font-bold text-slate-300">${stock.price.toFixed(2)}</p>
+                                            <div className="col-span-4 lg:col-span-3 text-right">
+                                                <p className="text-xs lg:text-sm font-mono font-bold text-slate-200">${stock.price?.toFixed(2)}</p>
                                             </div>
-                                            <div className="col-span-4 lg:col-span-4 flex justify-end">
-                                                <div className="bg-blue-950/30 border border-blue-900/30 px-2 lg:px-3 py-1 rounded-md text-center">
+                                            <div className="hidden lg:block lg:col-span-2 text-right">
+                                                <p className={`text-[10px] font-mono font-bold ${horizon === "Long Term" ? "text-emerald-400" : "text-purple-400"}`}>
+                                                    {horizon === "Long Term" ? stock.fund_score || '--' : stock.tech_score || '--'}
+                                                </p>
+                                            </div>
+                                            <div className="col-span-3 lg:col-span-2 flex justify-end">
+                                                <div className="bg-blue-600/20 border border-blue-500/30 px-2 lg:px-3 py-1 rounded-md text-center">
                                                     <span className="text-xs lg:text-sm font-black font-mono text-blue-400">{stock.score}</span>
                                                 </div>
                                             </div>
                                         </div>
                                     ))}
+                                    {filteredScreenerResults.length === 0 && (
+                                        <div className="p-8 text-center text-slate-500 text-[10px] font-bold uppercase tracking-widest">No assets found in this sector.</div>
+                                    )}
                                 </div>
                             </div>
                         )}
