@@ -115,6 +115,10 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price, ti
     alpha_bonus = 0
     extra_ledger = []
     
+    # 🧹 CLEAN THE DATA: Drop trailing NaNs that poison the rolling math
+    clean_close = hist['Close'].dropna()
+    valid_hist = hist.dropna(subset=['High', 'Low', 'Close', 'Volume'])
+    
     sector = info.get("sector", "Macro Profile")
     pe = safe_float(info.get("trailingPE", 0))
     margins = safe_float(info.get("profitMargins", 0))
@@ -126,10 +130,12 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price, ti
     insider_hold = safe_float(info.get("heldPercentInsiders", 0))
 
     # --- TECHNICAL ENGINE (6 Cylinders) ---
-    if len(hist) >= 40:
-        sma_20 = safe_float(hist['Close'].rolling(window=20).mean().iloc[-1])
-        sma_40 = safe_float(hist['Close'].rolling(window=40).mean().iloc[-1])
-        std_dev = safe_float(hist['Close'].rolling(window=20).std().iloc[-1])
+    if len(clean_close) >= 40:
+        sma_20 = safe_float(clean_close.rolling(window=20).mean().iloc[-1])
+        sma_40 = safe_float(clean_close.rolling(window=40).mean().iloc[-1])
+        std_dev = safe_float(clean_close.rolling(window=20).std().iloc[-1])
+        
+        # Safely round to prevent massive decimals
         upper_band = round(sma_20 + (2 * std_dev), 2)
         lower_band = round(sma_20 - (2 * std_dev), 2)
 
@@ -159,7 +165,7 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price, ti
     else: tech_base -= 5
 
     try:
-        delta = hist['Close'].diff()
+        delta = clean_close.diff()
         gain = delta.clip(lower=0)
         loss = -1 * delta.clip(upper=0)
         ema_gain = gain.ewm(com=13, adjust=False).mean()
@@ -175,13 +181,13 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price, ti
     elif 50 < real_rsi < 65: tech_base += 5 
 
     try:
-        volume = safe_float(hist['Volume'].iloc[-1])
-        avg_volume = safe_float(hist['Volume'].rolling(20).mean().iloc[-1])
+        volume = safe_float(valid_hist['Volume'].iloc[-1])
+        avg_volume = safe_float(valid_hist['Volume'].rolling(20).mean().iloc[-1])
         if avg_volume > 0 and volume > (avg_volume * 1.2): tech_base += 10 
         else: tech_base -= 5
         
-        typical_price = (hist['High'] + hist['Low'] + hist['Close']) / 3
-        vwap_proxy = round(safe_float((typical_price * hist['Volume']).sum() / hist['Volume'].sum(), current_price), 2)
+        typical_price = (valid_hist['High'] + valid_hist['Low'] + valid_hist['Close']) / 3
+        vwap_proxy = round(safe_float((typical_price * valid_hist['Volume']).sum() / valid_hist['Volume'].sum(), current_price), 2)
         if current_price > vwap_proxy: tech_base += 10
         else: tech_base -= 10
     except Exception:
@@ -275,7 +281,6 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price, ti
     total_score = max(10, min(99, math.ceil((tech_score + fund_score) / 2) + alpha_bonus))
 
     return total_score, tech_score, fund_score, extra_ledger, real_rsi, volume, avg_volume, vwap_proxy, upper_band, lower_band, sector, pe, margins, rev_growth, fcf, dte, target_price
-
 
 # ==========================================
 # --- THE STEALTH DATA WORKER ---
@@ -870,19 +875,30 @@ async def translate_ai(req: TranslationRequest, user_id: str = Query(...)):
 
         quant_score = req.data_context.get('score', 0)
         
-        # 🛡️ SAFETY FALLBACKS FOR MISSING DATA
-        support_raw = req.data_context.get('support_level')
-        res_raw = req.data_context.get('resistance_level')
+        # 🛡️ SAFETY & DYNAMIC PRICING FIX
+        price = safe_float(req.data_context.get('price', 0))
+        support_raw = safe_float(req.data_context.get('support_level', 0))
+        res_raw = safe_float(req.data_context.get('resistance_level', 0))
         
-        support_str = f"${support_raw}" if support_raw and support_raw > 0 else "Calculating Base..."
-        res_str = f"${res_raw}" if res_raw and res_raw > 0 else "Price Discovery Mode"
+        support_str = f"${support_raw}" if support_raw > 0 else "Calculating Base..."
+        
+        # DYNAMIC PRICE DISCOVERY LOGIC
+        if res_raw == 0 or price >= res_raw:
+            low_t = round(price * 1.05, 2)
+            high_t = round(price * 1.15, 2)
+            res_str = f"Price Discovery (${low_t} - ${high_t})"
+            price_instruction = f"CRITICAL: {req.ticker} is in PRICE DISCOVERY (above resistance). Project asymmetrical upside targets between ${low_t} and ${high_t} based on momentum, ignoring historical ceilings."
+        else:
+            res_str = f"${res_raw}"
+            price_instruction = "Calculate the target price range realistically using the provided structural zones."
 
         prompt = f"Act as an elite quantitative analyst. Provide a definitive briefing on {req.ticker}.\n\n"
         prompt += f"CURRENT MARKET CONTEXT:\n"
-        prompt += f"- Current Price: ${req.data_context.get('price', 'N/A')}\n"
+        prompt += f"- Current Price: ${price}\n"
         prompt += f"- Quant Score: {quant_score}\n"
         prompt += f"- Major Support (Floor): {support_str}\n"
         prompt += f"- Major Resistance (Ceiling): {res_str}\n\n"
+        prompt += f"TARGET DIRECTIVE:\n{price_instruction}\n\n"
         
         funds = req.data_context.get("fundamentals", {})
         if funds:
@@ -902,35 +918,25 @@ async def translate_ai(req: TranslationRequest, user_id: str = Query(...)):
             for item in news[:3]:
                 prompt += f"- {item.get('title')} ({item.get('date')})\n"
 
-        from datetime import datetime
         today_str = datetime.now().strftime('%Y-%m-%d')
-
-        # 🛑 ANTI-HALLUCINATION LEASH 
         next_earnings = funds.get("next_earnings", "N/A")
         if next_earnings != "N/A" and next_earnings != "Unknown":
             prompt += f"\nEARNINGS RISK:\n- Today's Date: {today_str}\n- Next Earnings Date: {next_earnings}\n"
-            prompt += "CRITICAL MANDATE: You must accurately calculate the relative time between Today's Date and the Next Earnings Date. Do not state it is years away if it is happening this year.\n"
         else:
             prompt += "\nEARNINGS RISK:\n- Next Earnings Date: UNKNOWN\n"
-            prompt += "CRITICAL MANDATE: The earnings date is currently unavailable. You MUST explicitly state that the catalyst timeline is pending. DO NOT invent, estimate, or assume a future date under any circumstances.\n"
             
         if quant_score >= 90:
             verdict_block = (
                 "### ⚡ CONVICTION RATING: STRONG BUY\n"
-                "[Do not write a standard summary. Forcefully list exactly which premium parameters (e.g., Compression Squeezes, Smart Money Flows, "
-                "Insider Accumulation, or Hyper-Growth catalysts) have aligned simultaneously to create an asymmetrical upside opportunity. Keep the tone aggressive, quantitative, and undeniable.]"
+                "[Forcefully list exactly which premium parameters have aligned to create an asymmetrical upside opportunity. Keep the tone aggressive and undeniable.]"
             )
         else:
-            verdict_block = (
-                "### 3. The Verdict\n"
-                "[A final, punchy 2-sentence conclusion summarizing the Quant Score and justifying your AI Signal]"
-            )
-
+            verdict_block = "### 3. The Verdict\n[A punchy 2-sentence conclusion justifying your AI Signal]"
+            
         prompt += (
             "\n🚨 CRITICAL FORMATTING MANDATE:\n"
-            "OUTPUT STRICTLY IN CLEAN MARKDOWN. DO NOT use HTML tags. You must use markdown headings (###), bold text (**), and bullet points (*) to make the briefing highly scannable and user-friendly.\n\n"
-            "Follow this exact structure:\n"
-            "### 🎯 TARGET PRICE RANGE: $[low] - $[high]\n"
+            "OUTPUT STRICTLY IN CLEAN MARKDOWN. DO NOT use HTML tags.\n\n"
+            "### 🎯 TARGET PRICE RANGE: ${low_target_val} - ${high_target_val}\n"
             "### ⚖️ AI SIGNAL: [BUY/HOLD/TRIM/SELL]\n"
             f"**📊 STRUCTURAL ZONES:** Support: {support_str} | Resistance: {res_str}\n\n"
             "---\n\n"
@@ -939,24 +945,16 @@ async def translate_ai(req: TranslationRequest, user_id: str = Query(...)):
             "* **Balance Sheet & Sentiment:** [1 sentence on Debt-to-Equity and Wall St Target Sentiment]\n"
             "* **Catalyst Risk:** [1 sentence on the Earnings Date or News context]\n\n"
             "### 2. Market Mechanics & Technicals\n"
-            "* **Price Action & Consolidation:** [Analyze current price relative to structural zones and mention if a BB squeeze/consolidation pattern is forming]\n"
+            "* **Price Action & Consolidation:** [Analyze current price vs structural zones. If in Price Discovery, explain the 5-15% projected upside]\n"
             "* **Smart Money & Options Flow:** [Synthesize Insider holdings, Institutional Volume, and Put/Call options flow signals]\n"
-            "* **Squeeze & Catalyst Risk:** [Evaluate Short Interest / Short Squeeze potential alongside upcoming Earnings/News]\n"
+            "* **Squeeze & Catalyst Risk:** [Evaluate Short Interest / Short Squeeze potential]\n"
             "* **Momentum (RSI & MACD):** [Synthesize the RSI and MACD ledger signals]\n\n"
             f"{verdict_block}"
         )
         
         response = model.generate_content(prompt)
 
-        disclaimer_md = (
-            "\n\n---\n"
-            "*LEGAL DISCLAIMER: The analysis and quantitative targets provided by TradeBotics AI are for "
-            "informational and educational purposes only and do not constitute financial, investment, or trading advice. "
-            "This output is generated by an artificial intelligence model relying on historical data, mathematical probabilities, "
-            "and technical indicators, which cannot guarantee future performance. Trading equities involves significant risk of capital loss. "
-            "You are solely responsible for your own trading decisions. Always conduct your own due diligence or consult "
-            "with a licensed financial professional before executing any trades.*"
-        )
+        disclaimer_md = "\n\n---\n*LEGAL DISCLAIMER: The analysis provided by TradeBotics AI is for informational purposes only. Trading equities involves significant risk of capital loss.*"
 
         try:
             ai_text = response.text.strip() + disclaimer_md
@@ -966,109 +964,10 @@ async def translate_ai(req: TranslationRequest, user_id: str = Query(...)):
         new_token_balance = current_tokens - 3
         supabase.table('profiles').update({'ai_token_balance': new_token_balance}).eq('id', user_id).execute()
 
-        final_response = {
+        final_response = sanitize_nans({
             "analysis": ai_text,
             "remaining_tokens": new_token_balance
-        }
-        
-        update_ai_cache(cache_key, final_response)
-        return final_response
-        
-    except HTTPException as he:
-        raise he
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    
-@app.post("/exit-strategy")
-async def generate_exit_strategy(req: TranslationRequest, user_id: str = Query(...)): 
-    if not model: return {"analysis": "AI Node Offline."}
-    try:
-        cache_key = f"EXIT_STRAT_{req.ticker.upper()}"
-        cached_data = check_ai_cache(cache_key)
-        
-        profile_res = supabase.table('profiles').select('ai_token_balance').eq('id', user_id).execute()
-        if not profile_res.data: raise HTTPException(status_code=404, detail="Operative profile not found.")
-        current_tokens = int(profile_res.data[0]['ai_token_balance'])
-
-        if cached_data:
-            cached_data["remaining_tokens"] = current_tokens
-            return cached_data
-
-        if current_tokens < 2:
-            raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 2 Tokens required.")
-
-        current_price = safe_float(req.data_context.get('price', 0))
-        support_level = safe_float(req.data_context.get('support_level', 0))
-        resistance_level = safe_float(req.data_context.get('resistance_level', 0))
-
-        if current_price >= resistance_level:
-            implied_volatility_range = current_price - support_level if support_level < current_price else current_price * 0.05
-            support_level = current_price * 0.95  
-            resistance_level = current_price + implied_volatility_range  
-            
-        distance_to_support = round(current_price - support_level, 2)
-        distance_to_resistance = round(resistance_level - current_price, 2)
-
-        prompt = f"Act as a quantitative risk manager. Define a strict, scaled risk-management exit protocol for {req.ticker}.\n\n"
-        prompt += f"CURRENT MARKET CONTEXT:\n"
-        prompt += f"- Current Price: ${current_price}\n"
-        prompt += f"- Major Support (Floor): ${round(support_level, 2)}\n"
-        prompt += f"- Major Resistance (Ceiling): ${round(resistance_level, 2)}\n"
-        prompt += f"- Distance to Support: ${distance_to_support}\n"
-        prompt += f"- Distance to Resistance: ${distance_to_resistance}\n\n"
-        prompt += "MANDATORY: You must base your Strike Zones and Exit Strategy strictly on these mathematical Support and Resistance levels. Take Profit levels MUST be higher than the Current Price.\n"
-        prompt += "CRITICAL: If 'Short Squeeze Risk' is in the signals, you MUST suggest wider Take Profit zones to account for explosive upside volatility.\n\n"
-
-        ledger = req.data_context.get("ledger", [])
-        if ledger:
-            prompt += f"TECHNICAL LEDGER (SIGNALS):\n"
-            for item in ledger: 
-                prompt += f"- {item.get('factor')}: {item.get('val')} ({item.get('status')})\n"
-
-        prompt += (
-            "\n🚨 CRITICAL MANDATE - SCALED EXIT STRATEGY REQUIRED:\n"
-            "DO NOT provide a general summary. OUTPUT STRICTLY IN HTML FORMAT using this exact structure.\n"
-            "CRITICAL: Before suggesting an exit, evaluate the 'Thesis Health'.\n"
-            "1. If the current price is within 5% of the Hard Stop Loss, explicitly label the thesis as 'Under Stress' and suggest a 'Hold for Support Test' rather than a profit-taking level.\n"
-            "2. Do not suggest a Take Profit level if the price is significantly closer to the Stop Loss than the Resistance Ceiling.\n"
-            "3. Always explain: 'Current price is testing structural support; wait for a bounce before planning exit strategies' if applicable.\n\n"
-            "<h3>Scaled Execution Protocol</h3>\n"
-            "<ul>\n"
-            f"<li><strong>📏 DISTANCE TO TARGETS:</strong> Support is ${distance_to_support} away. Resistance is ${distance_to_resistance} away.</li>\n"
-            "<li><strong>🟢 TAKE PROFIT 1 (Conservative):</strong> $[Price]. (Explain this as a safe place to take partial profits, typically right before or at the main resistance ceiling).</li>\n"
-            "<li><strong>🟢 TAKE PROFIT 2 (Aggressive):</strong> $[Price]. (Explain this as the ultimate runner target if the stock breaks through the ceiling, based on current momentum).</li>\n"
-            "<li><strong>🔴 HARD STOP LOSS (SL):</strong> $[Price]. (Explain why dropping below the mathematical support floor invalidates the trade).</li>\n"
-            "<li><strong>⚖️ THESIS HEALTH:</strong> [Calculate the Risk/Reward Ratio using TP1 and the Stop Loss]. (Label as 'Under Stress', 'Aggressive', 'Balanced', or 'High-Probability').</li>\n"
-            "<li><strong>⏱️ TIME HORIZON:</strong> [State the estimated time in days/weeks for this thesis to play out].</li>\n"
-            "</ul>"
-        )
-
-        response = model.generate_content(prompt)
-
-        disclaimer_html = (
-            "<br><br><hr style='border-color: #1e293b; margin-top: 15px; margin-bottom: 15px;'/>"
-            "<p style='font-size: 10px; color: #64748b; font-style: italic; line-height: 1.4; text-align: justify;'>"
-            "<strong>LEGAL DISCLAIMER:</strong> The execution protocol and risk models provided by TradeBotics AI are for "
-            "informational and educational purposes only and do not constitute financial, investment, or trading advice. "
-            "This output is generated by an artificial intelligence model relying on historical data, mathematical probabilities, "
-            "and technical indicators, which cannot guarantee future performance. Trading equities involves significant risk of capital loss. "
-            "You are solely responsible for your own trading decisions. Always conduct your own due diligence or consult "
-            "with a licensed financial professional before executing any trades."
-            "</p>"
-        )
-
-        try:
-            ai_text = response.text.strip() + disclaimer_html
-        except ValueError:
-            ai_text = "<h3>Execution Blocked</h3><ul><li>AI Node rejected synthesis due to strict safety protocols.</li></ul>"
-
-        new_token_balance = current_tokens - 2
-        supabase.table('profiles').update({'ai_token_balance': new_token_balance}).eq('id', user_id).execute()
-
-        final_response = {
-            "analysis": ai_text,
-            "remaining_tokens": new_token_balance
-        }
+        })
         
         update_ai_cache(cache_key, final_response)
         return final_response
