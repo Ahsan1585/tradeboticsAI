@@ -25,6 +25,38 @@ import cloudscraper
 load_dotenv()
 
 # ==========================================
+# --- SAFETY & SANITIZATION UTILITIES ---
+# ==========================================
+def safe_float(val, default=0.0):
+    """Safely converts potential NaNs, None, or strings into a clean Python float."""
+    try:
+        if val is None:
+            return default
+        f_val = float(val)
+        if math.isnan(f_val) or math.isinf(f_val):
+            return default
+        return f_val
+    except Exception:
+        return default
+
+def sanitize_nans(obj):
+    """Recursively strips out any remaining NaNs or Infinities before JSON serialization."""
+    if isinstance(obj, float) or type(obj).__module__ == 'numpy':
+        try:
+            val = float(obj)
+            if math.isnan(val) or math.isinf(val):
+                return 0.0
+            return val
+        except Exception:
+            return 0.0
+    elif isinstance(obj, dict):
+        return {k: sanitize_nans(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [sanitize_nans(i) for i in obj]
+    return obj
+
+
+# ==========================================
 # --- THE BROWSER SPOOFER (CLOUDFLARE BYPASS) ---
 # ==========================================
 def get_yf_session():
@@ -52,10 +84,10 @@ def get_yf_session():
     })
     return scraper
 
+
 # ==========================================
 # --- KEEP ALIVE CONFIGURATION ---
 # ==========================================
-# ⚠️ REPLACE WITH YOUR ACTUAL LIVE RENDER APP URL
 RENDER_APP_URL = "https://tradebotics-api.onrender.com/market-briefing" 
 
 async def keep_alive_loop():
@@ -73,6 +105,7 @@ async def keep_alive_loop():
             
             await asyncio.sleep(600)
 
+
 # ==========================================
 # --- 12-CYLINDER QUANT ENGINE (ONE SOURCE OF TRUTH) ---
 # ==========================================
@@ -83,20 +116,20 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price):
     extra_ledger = []
     
     sector = info.get("sector", "Macro Profile")
-    pe = info.get("trailingPE", 0)
-    margins = info.get("profitMargins", 0)
-    rev_growth = info.get("revenueGrowth", 0)
-    fcf = info.get("freeCashflow", 0)
-    dte = info.get("debtToEquity", 0)
-    target_price = info.get("targetMeanPrice", 0)
-    short_interest = info.get("shortPercentOfFloat", 0)
-    insider_hold = info.get("heldPercentInsiders", 0)
+    pe = safe_float(info.get("trailingPE", 0))
+    margins = safe_float(info.get("profitMargins", 0))
+    rev_growth = safe_float(info.get("revenueGrowth", 0))
+    fcf = safe_float(info.get("freeCashflow", 0))
+    dte = safe_float(info.get("debtToEquity", 0))
+    target_price = safe_float(info.get("targetMeanPrice", 0))
+    short_interest = safe_float(info.get("shortPercentOfFloat", 0))
+    insider_hold = safe_float(info.get("heldPercentInsiders", 0))
 
     # --- TECHNICAL ENGINE (6 Cylinders) ---
     if len(hist) >= 40:
-        sma_20 = hist['Close'].rolling(window=20).mean().iloc[-1]
-        sma_40 = hist['Close'].rolling(window=40).mean().iloc[-1] 
-        std_dev = hist['Close'].rolling(window=20).std().iloc[-1]
+        sma_20 = safe_float(hist['Close'].rolling(window=20).mean().iloc[-1])
+        sma_40 = safe_float(hist['Close'].rolling(window=40).mean().iloc[-1])
+        std_dev = safe_float(hist['Close'].rolling(window=20).std().iloc[-1])
         upper_band = sma_20 + (2 * std_dev)
         lower_band = sma_20 - (2 * std_dev)
 
@@ -128,8 +161,7 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price):
         ema_loss = loss.ewm(com=13, adjust=False).mean()
         rs = ema_gain / ema_loss
         rsi_series = 100 - (100 / (1 + rs))
-        real_rsi = round(rsi_series.iloc[-1], 1)
-        if pd.isna(real_rsi): real_rsi = 50.0
+        real_rsi = safe_float(rsi_series.iloc[-1], 50.0)
     except Exception:
         real_rsi = 50.0
 
@@ -138,17 +170,17 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price):
     elif 50 < real_rsi < 65: tech_base += 5 
 
     try:
-        volume = int(hist['Volume'].iloc[-1])
-        avg_volume = int(hist['Volume'].rolling(20).mean().iloc[-1])
-        if volume > (avg_volume * 1.2): tech_base += 10 
+        volume = safe_float(hist['Volume'].iloc[-1])
+        avg_volume = safe_float(hist['Volume'].rolling(20).mean().iloc[-1])
+        if avg_volume > 0 and volume > (avg_volume * 1.2): tech_base += 10 
         else: tech_base -= 5
         
         typical_price = (hist['High'] + hist['Low'] + hist['Close']) / 3
-        vwap_proxy = round((typical_price * hist['Volume']).sum() / hist['Volume'].sum(), 2)
+        vwap_proxy = safe_float((typical_price * hist['Volume']).sum() / hist['Volume'].sum(), current_price)
         if current_price > vwap_proxy: tech_base += 10
         else: tech_base -= 10
     except Exception:
-        volume, avg_volume, vwap_proxy = 0, 0, current_price
+        volume, avg_volume, vwap_proxy = 0.0, 0.0, current_price
 
     tech_score = max(10, min(95, tech_base))
 
@@ -156,45 +188,45 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price):
     is_tech = "Technology" in sector or "Communication" in sector
     is_financial = "Financial" in sector
     
-    if pe and 0 < pe < 25: 
+    if pe > 0 and pe < 25: 
         fund_base += 10 
-    elif pe and 25 <= pe <= 60 and is_tech: 
+    elif pe >= 25 and pe <= 60 and is_tech: 
         fund_base += 10 
-    elif pe and pe > 60:
-        if rev_growth and rev_growth < 0.20:
+    elif pe > 60:
+        if rev_growth < 0.20:
             fund_base -= 10
     
-    if margins and margins > 0.20: 
+    if margins > 0.20: 
         if is_financial:
             fund_base += 5
         else:
             fund_base += 10
-    elif margins and margins > 0.10: 
+    elif margins > 0.10: 
         fund_base += 5
-    elif margins and margins < 0: 
+    elif margins < 0: 
         fund_base -= 10
     
-    if rev_growth and rev_growth > 0.20: fund_base += 15 
-    elif rev_growth and rev_growth > 0.10: fund_base += 5
-    elif rev_growth and rev_growth < 0: fund_base -= 15 
+    if rev_growth > 0.20: fund_base += 15 
+    elif rev_growth > 0.10: fund_base += 5
+    elif rev_growth < 0: fund_base -= 15 
 
-    if fcf and fcf > 0: fund_base += 5
-    elif fcf and fcf < 0: fund_base -= 5
+    if fcf > 0: fund_base += 5
+    elif fcf < 0: fund_base -= 5
     
-    if dte and dte < 100: fund_base += 5
-    elif dte and dte > 200 and not is_financial: fund_base -= 10
+    if 0 < dte < 100: fund_base += 5
+    elif dte > 200 and not is_financial: fund_base -= 10
     
-    if target_price and current_price < target_price: fund_base += 5
-    elif target_price and current_price > (target_price * 1.05): fund_base -= 5
+    if target_price > 0 and current_price < target_price: fund_base += 5
+    elif target_price > 0 and current_price > (target_price * 1.05): fund_base -= 5
 
     fund_score = max(10, min(95, fund_base))
 
     # --- ALPHA MULTIPLIERS ---
-    if short_interest and short_interest > 0.15:
+    if short_interest > 0.15:
         alpha_bonus += 5
         extra_ledger.append({"factor": "Short Squeeze Risk", "val": f"{round(short_interest * 100, 1)}%", "status": "VOLATILE", "reasoning": "High short interest creates explosive potential for a short-covering rally."})
 
-    if insider_hold and insider_hold > 0.05:
+    if insider_hold > 0.05:
         alpha_bonus += 3
         extra_ledger.append({"factor": "Insider Conviction", "val": f"{round(insider_hold * 100, 1)}%", "status": "BULLISH", "reasoning": "Corporate insiders hold a structurally significant portion of the floating supply."})
 
@@ -218,6 +250,7 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price):
     total_score = max(10, min(99, math.ceil((tech_score + fund_score) / 2) + alpha_bonus))
 
     return total_score, tech_score, fund_score, extra_ledger, real_rsi, volume, avg_volume, vwap_proxy, upper_band, lower_band, sector, pe, margins, rev_growth, fcf, dte, target_price
+
 
 # ==========================================
 # --- THE STEALTH DATA WORKER ---
@@ -261,7 +294,7 @@ async def staleness_worker_loop():
                 # 🛡️ Create one heavily disguised master session
                 master_session = get_yf_session()
                 
-                # # 4. Gather Data
+                # 4. Gather Data
                 for t in stale_tickers:
                     current_time = datetime.now(timezone.utc).isoformat()
                     
@@ -279,9 +312,9 @@ async def staleness_worker_loop():
                             supabase.table('market_universe').update({'last_scanned': current_time}).eq('ticker', t).execute()
                             continue
                         
-                        price = float(hist['Close'].iloc[-1])
-                        prev_price = float(hist['Close'].iloc[-2])
-                        daily_change = ((price - prev_price) / prev_price) * 100
+                        price = safe_float(hist['Close'].iloc[-1])
+                        prev_price = safe_float(hist['Close'].iloc[-2])
+                        daily_change = ((price - prev_price) / prev_price) * 100 if prev_price > 0 else 0.0
 
                         try:
                             info = stock.info
@@ -291,17 +324,18 @@ async def staleness_worker_loop():
                         # === INJECTING ONE SOURCE OF TRUTH ===
                         total_score, tech_score, fund_score, _, _, _, _, _, _, _, sector, pe, _, _, _, _, _ = calculate_quant_metrics(hist, info, stock, price, prev_price)
                         
-                        # Save successful data to Supabase
-                        supabase.table('market_universe').upsert({
+                        # Save successful data to Supabase (wrapped in sanitize_nans)
+                        clean_payload = sanitize_nans({
                             'ticker': t,
                             'price': round(price, 2),
                             'daily_change': round(daily_change, 2),
                             'tech_score': tech_score,
                             'fund_score': fund_score,
                             'sector': sector,
-                            'pe': round(pe, 2) if pe else 0,
+                            'pe': round(pe, 2),
                             'last_scanned': current_time
-                        }).execute()
+                        })
+                        supabase.table('market_universe').upsert(clean_payload).execute()
                         
                     except Exception as e:
                         error_msg = str(e)
@@ -315,7 +349,7 @@ async def staleness_worker_loop():
                         else:
                             supabase.table('market_universe').update({'last_scanned': current_time}).eq('ticker', t).execute()
 
-                    # 🚦 ANTI-BOT THROTTLE (Maintained for safety)
+                    # 🚦 ANTI-BOT THROTTLE
                     await asyncio.sleep(random.uniform(1.0, 2.5))
                         
                 # 🚀 5. SMART CYCLE SLEEP
@@ -422,20 +456,20 @@ def check_ai_cache(cache_key: str) -> dict | None:
 def update_ai_cache(cache_key: str, payload: dict):
     if not supabase: return
     try:
-        supabase.table('ai_scan_cache').upsert({
+        supabase.table('ai_scan_cache').upsert(sanitize_nans({
             'cache_key': cache_key,
             'last_scanned': datetime.now(timezone.utc).isoformat(),
             'cached_response': payload
-        }).execute()
+        })).execute()
     except Exception:
         pass
 
 # ==========================================
-# --- MATH ENGINE ---
+# --- MATH ENGINE UTILS ---
 # ==========================================
 def get_support_resistance(hist):
     if len(hist) < 30:
-        return float(hist['Low'].min()), float(hist['High'].max())
+        return safe_float(hist['Low'].min()), safe_float(hist['High'].max())
         
     prices = hist['Close'].values
     order = 5
@@ -448,38 +482,34 @@ def get_support_resistance(hist):
     if len(res_levels) == 0: res_levels = [prices[-1]]
     if len(sup_levels) == 0: sup_levels = [prices[-1]]
     
-    return float(np.mean(sup_levels)), float(np.mean(res_levels))
+    return safe_float(np.mean(sup_levels)), safe_float(np.mean(res_levels))
 
 def get_market_universe():
     """Fetches the elite S&P 500, Nasdaq 100, and Dow Jones universes from Wikipedia."""
     print(f"[{datetime.now()}] 📡 Fetching Elite S&P 500, Nasdaq 100, & Dow...", file=sys.stderr)
     try:
-        # 1. Get S&P 500
         sp_url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
         sp_html = requests.get(sp_url, headers={'User-Agent': 'Mozilla/5.0'}).text
         sp_df = pd.read_html(io.StringIO(sp_html))[0]
         sp_tickers = sp_df['Symbol'].tolist()
         
-        # 2. Get Nasdaq 100
         ndx_url = 'https://en.wikipedia.org/wiki/Nasdaq-100'
         ndx_html = requests.get(ndx_url, headers={'User-Agent': 'Mozilla/5.0'}).text
         ndx_df = pd.read_html(io.StringIO(ndx_html), match='Ticker')[0]
         ndx_tickers = ndx_df['Ticker'].tolist()
 
-        # 3. Get Dow Jones Industrial Average
         dow_url = 'https://en.wikipedia.org/wiki/Dow_Jones_Industrial_Average'
         dow_html = requests.get(dow_url, headers={'User-Agent': 'Mozilla/5.0'}).text
         dow_df = pd.read_html(io.StringIO(dow_html))[1]
         dow_tickers = dow_df['Symbol'].tolist()
         
-        # Combine all lists, remove duplicates, and fix dot notation (BRK.B -> BRK-B)
         combined = list(set(sp_tickers + ndx_tickers + dow_tickers))
         clean_tickers = [str(t).replace('.', '-') for t in combined]
         
         print(f"✅ UNIVERSE UPDATED: {len(clean_tickers)} elite symbols loaded.", file=sys.stderr)
         return clean_tickers
     except Exception as e:
-        print(f"❌ WIKIPEDIA FETCH ERROR: {e} | Activating Top 100 Emergency Fallback Universe...", file=sys.stderr)
+        print(f"❌ WIKIPEDIA FETCH ERROR: {e} | Activating Fallback...", file=sys.stderr)
         return [
             "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "BRK-B", "LLY", "TSLA", "V",
             "UNH", "JPM", "XOM", "MA", "WMT", "JNJ", "AVGO", "PG", "ORCL", "COST",
@@ -507,7 +537,7 @@ async def execute_screener(req: ScreenerRequest):
     if cache_key in SCREENER_CACHE:
         cached_results, timestamp = SCREENER_CACHE[cache_key]
         if current_time - timestamp < timedelta(minutes=5):
-            return {"results": cached_results}
+            return sanitize_nans({"results": cached_results})
 
     try:
         response = supabase.table('market_universe').select('*').not_.is_('tech_score', 'null').execute()
@@ -519,11 +549,11 @@ async def execute_screener(req: ScreenerRequest):
         scored_candidates = []
         for row in db_universe:
             t = row['ticker']
-            tech_score = row['tech_score']
-            fund_score = row['fund_score']
+            tech_score = safe_float(row['tech_score'])
+            fund_score = safe_float(row['fund_score'])
             sector = row['sector']
-            daily_change = row['daily_change']
-            db_price = row['price']
+            daily_change = safe_float(row['daily_change'])
+            db_price = safe_float(row['price'])
 
             if req.risk_level == "High":
                 total_score = (tech_score * 0.8) + (fund_score * 0.2)
@@ -549,7 +579,7 @@ async def execute_screener(req: ScreenerRequest):
                 "sort_weight": sort_weight,
                 "sector": sector,
                 "db_price": db_price, 
-                "metrics": f"P/E: {row['pe']} | Sector: {sector}"
+                "metrics": f"P/E: {safe_float(row['pe'])} | Sector: {sector}"
             })
 
         scored_candidates.sort(key=lambda x: x['sort_weight'], reverse=True)
@@ -561,7 +591,7 @@ async def execute_screener(req: ScreenerRequest):
                 stock = yf.Ticker(candidate['ticker'], session=get_yf_session())
                 hist = stock.history(period="1d")
                 if not hist.empty:
-                    candidate['price'] = round(float(hist['Close'].iloc[-1]), 2)
+                    candidate['price'] = round(safe_float(hist['Close'].iloc[-1], candidate['db_price']), 2)
                 else:
                     candidate['price'] = candidate['db_price']
             except Exception:
@@ -571,7 +601,7 @@ async def execute_screener(req: ScreenerRequest):
             final_results.append(candidate)
 
         SCREENER_CACHE[cache_key] = (final_results, current_time)
-        return {"results": final_results}
+        return sanitize_nans({"results": final_results})
 
     except Exception:
         return {"results": []}
@@ -587,7 +617,7 @@ async def analyze_ticker(ticker: str):
     if ticker_upper in market_cache:
         cached_time, cached_data = market_cache[ticker_upper]
         if now - cached_time < MARKET_CACHE_TTL:
-            return cached_data
+            return sanitize_nans(cached_data)
 
     try:
         stock = yf.Ticker(ticker_upper, session=get_yf_session())
@@ -596,8 +626,8 @@ async def analyze_ticker(ticker: str):
 
         support, resistance = get_support_resistance(hist)
 
-        current_price = round(hist['Close'].iloc[-1], 2)
-        prev_price = round(hist['Close'].iloc[-2], 2)
+        current_price = safe_float(hist['Close'].iloc[-1])
+        prev_price = safe_float(hist['Close'].iloc[-2])
         
         try:
             info = stock.info
@@ -607,9 +637,9 @@ async def analyze_ticker(ticker: str):
         # === INJECTING ONE SOURCE OF TRUTH ===
         total_score, tech_score, fund_score, extra_ledger, real_rsi, volume, avg_volume, vwap_proxy, upper_band, lower_band, sector, pe, margins, rev_growth, fcf, dte, target_price = calculate_quant_metrics(hist, info, stock, current_price, prev_price)
 
-        raw_mcap = info.get("marketCap")
+        raw_mcap = safe_float(info.get("marketCap", 0))
         formatted_mcap = "N/A"
-        if raw_mcap:
+        if raw_mcap > 0:
             if raw_mcap >= 1e12: formatted_mcap = f"${raw_mcap / 1e12:.2f} Trillion"
             else: formatted_mcap = f"${raw_mcap / 1e9:.2f} Billion"
 
@@ -619,15 +649,12 @@ async def analyze_ticker(ticker: str):
         
         if calendar is not None:
             try:
-                # yfinance format 1: Dictionary
                 if isinstance(calendar, dict) and 'Earnings Date' in calendar:
                     dates = calendar['Earnings Date']
                     if isinstance(dates, list) and len(dates) > 0:
                         next_earnings = str(dates[0]).split(' ')[0]
                     elif dates:
                         next_earnings = str(dates).split(' ')[0]
-                
-                # yfinance format 2: Pandas DataFrame
                 elif hasattr(calendar, 'empty') and not calendar.empty and 'Earnings Date' in calendar:
                     val = calendar['Earnings Date'].iloc[0]
                     if hasattr(val, 'date'):
@@ -678,7 +705,7 @@ async def analyze_ticker(ticker: str):
 
         ledger = [
             {"factor": "Momentum (RSI)", "val": str(real_rsi), "status": rsi_status, "reasoning": f"Asset momentum velocity registering true algorithmic score at {real_rsi}."},
-            {"factor": "Institutional Flow", "val": "High" if volume > avg_volume else "Low", "status": "BULLISH" if volume > avg_volume else "NEUTRAL", "reasoning": f"Current transaction volume sits at {volume:,} vs historical norm of {avg_volume:,}."},
+            {"factor": "Institutional Flow", "val": "High" if volume > avg_volume else "Low", "status": "BULLISH" if volume > avg_volume else "NEUTRAL", "reasoning": f"Current transaction volume sits at {int(volume):,} vs historical norm of {int(avg_volume):,}."},
             {"factor": "MACD Divergence", "val": "Positive" if current_price > prev_price else "Negative", "status": "BULLISH" if current_price > prev_price else "BEARISH", "reasoning": f"Short-term directional EMA vectors signaling positive continuation mechanics." if current_price > prev_price else f"Short-term baseline trajectories confirming downward tracking slope."},
             {"factor": "VWAP Deviation", "val": f"${vwap_proxy}", "status": "BULLISH" if current_price > vwap_proxy else "BEARISH", "reasoning": f"Trading premium above volume-weighted structural average, implying buyer dominance." if current_price > vwap_proxy else f"Trading below volume-weighted pricing anchor, suggesting structural distribution lines."},
             {"factor": "Bollinger Band Width", "val": f"${lower_band} - ${upper_band}", "status": "NEUTRAL" if lower_band < current_price < upper_band else "VOLATILE", "reasoning": f"Price containment models tracking inside standardized volatility brackets." if lower_band < current_price < upper_band else f"Asset values piercing outer boundary models, projecting an overextended structure."},
@@ -698,7 +725,7 @@ async def analyze_ticker(ticker: str):
             "score": total_score,
             "tech_score": int(tech_score),
             "fund_score": int(fund_score),
-            "volume": f"{volume:,}",
+            "volume": f"{int(volume):,}",
             "vol_surge": vol_surge,
             "ledger": ledger,
             "news": news_list,  
@@ -707,17 +734,17 @@ async def analyze_ticker(ticker: str):
             "resistance_level": round(resistance, 2),
             "fundamentals": {
                 "market_cap": formatted_mcap, 
-                "pe_ratio": str(round(pe, 2)) if pe else "N/A",
-                "debt_equity": str(dte) if dte else "N/A",
-                "margin": f"{round(margins * 100, 2)}%" if margins else "N/A",
-                "sentiment": "BULLISH" if target_price and current_price < target_price else "BEARISH" if target_price else "NEUTRAL",
+                "pe_ratio": str(round(pe, 2)) if pe > 0 else "N/A",
+                "debt_equity": str(round(dte, 2)) if dte > 0 else "N/A",
+                "margin": f"{round(margins * 100, 2)}%" if margins != 0 else "N/A",
+                "sentiment": "BULLISH" if target_price > 0 and current_price < target_price else "BEARISH" if target_price > 0 else "NEUTRAL",
                 "cash_flow": "POSITIVE" if fcf > 0 else "NEGATIVE",
                 "next_earnings": next_earnings 
             }
         }
         
         market_cache[ticker_upper] = (now, final_response)
-        return final_response
+        return sanitize_nans(final_response)
         
     except HTTPException as he:
         raise he
@@ -726,14 +753,14 @@ async def analyze_ticker(ticker: str):
             fallback_res = supabase.table('market_universe').select('*').eq('ticker', ticker_upper).execute()
             if fallback_res.data:
                 db_data = fallback_res.data[0]
-                total_score = math.ceil((db_data['tech_score'] + db_data['fund_score']) / 2)
+                total_score = math.ceil((safe_float(db_data['tech_score']) + safe_float(db_data['fund_score'])) / 2)
                 fallback_response = {
                     "ticker": ticker_upper,
                     "company_name": f"{ticker_upper} (Cached Data)",
-                    "price": db_data['price'],
+                    "price": safe_float(db_data['price']),
                     "score": total_score,
-                    "tech_score": db_data['tech_score'],
-                    "fund_score": db_data['fund_score'],
+                    "tech_score": safe_float(db_data['tech_score']),
+                    "fund_score": safe_float(db_data['fund_score']),
                     "volume": "N/A",
                     "vol_surge": "N/A",
                     "ledger": [
@@ -741,11 +768,11 @@ async def analyze_ticker(ticker: str):
                     ],
                     "news": [],
                     "ai_tactical": "Live execution feeds are temporarily throttling. Technical scores reflect end-of-day baseline structure.",
-                    "support_level": 0,
-                    "resistance_level": 0,
+                    "support_level": 0.0,
+                    "resistance_level": 0.0,
                     "fundamentals": {
                         "market_cap": "N/A", 
-                        "pe_ratio": str(db_data['pe']),
+                        "pe_ratio": str(safe_float(db_data['pe'])),
                         "debt_equity": "N/A",
                         "margin": "N/A",
                         "sentiment": "NEUTRAL",
@@ -754,7 +781,7 @@ async def analyze_ticker(ticker: str):
                     }
                 }
                 market_cache[ticker_upper] = (now, fallback_response)
-                return fallback_response
+                return sanitize_nans(fallback_response)
             else:
                 raise HTTPException(status_code=429, detail="Live market data offline and no cached database metrics available.")
                 
@@ -907,9 +934,9 @@ async def generate_exit_strategy(req: TranslationRequest, user_id: str = Query(.
         if current_tokens < 2:
             raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 2 Tokens required.")
 
-        current_price = float(req.data_context.get('price', 0))
-        support_level = float(req.data_context.get('support_level', 0))
-        resistance_level = float(req.data_context.get('resistance_level', 0))
+        current_price = safe_float(req.data_context.get('price', 0))
+        support_level = safe_float(req.data_context.get('support_level', 0))
+        resistance_level = safe_float(req.data_context.get('resistance_level', 0))
 
         if current_price >= resistance_level:
             implied_volatility_range = current_price - support_level if support_level < current_price else current_price * 0.05
@@ -1066,8 +1093,8 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
         for h in req.holdings:
             try:
                 ticker = str(h.get('ticker', '')).strip().upper()
-                shares = float(h.get('shares', 0))
-                cost = float(h.get('cost_basis', 0))
+                shares = safe_float(h.get('shares', 0))
+                cost = safe_float(h.get('cost_basis', 0))
                 if not ticker: continue
                 if ticker == "ETHU": ticker = "ETH-USD"
                 
@@ -1075,10 +1102,10 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
                 hist = stock.history(period="1d", prepost=True)
                 if hist.empty: continue 
                 
-                price = round(hist['Close'].iloc[-1], 2)
+                price = safe_float(hist['Close'].iloc[-1])
 
                 db_match = next((item for item in db_universe if item["ticker"] == ticker), None)
-                score = math.ceil((db_match['tech_score'] + db_match['fund_score']) / 2) if db_match else 75
+                score = math.ceil((safe_float(db_match['tech_score']) + safe_float(db_match['fund_score'])) / 2) if db_match else 75
                 sector = db_match['sector'] if db_match else stock.info.get("sector", "Unknown")
 
                 portfolio_summary.append({
@@ -1101,8 +1128,8 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
                 t = row['ticker']
                 if any(h['ticker'] == t for h in portfolio_summary): continue
                     
-                tech_score = row['tech_score']
-                fund_score = row['fund_score']
+                tech_score = safe_float(row['tech_score'])
+                fund_score = safe_float(row['fund_score'])
                 sector = row['sector']
                 
                 if req.trade_style == "Day Trade": total_score = (tech_score * 0.8) + (fund_score * 0.2)
@@ -1111,7 +1138,7 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
                 
                 scored_candidates.append({
                     "ticker": t,
-                    "price": row['price'],
+                    "price": safe_float(row['price']),
                     "score": math.ceil(total_score),
                     "sort_weight": math.ceil(total_score),
                     "sector": sector
@@ -1126,7 +1153,7 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
                     if hist.empty: continue
                     scored_candidates.append({
                         "ticker": t,
-                        "price": round(hist['Close'].iloc[-1], 2),
+                        "price": safe_float(hist['Close'].iloc[-1]),
                         "score": 50,
                         "sort_weight": 50,
                         "sector": "Fallback Mode"
@@ -1176,11 +1203,12 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
         new_token_balance = current_tokens - 5
         supabase.table('profiles').update({'ai_token_balance': new_token_balance}).eq('id', user_id).execute()
 
-        return {
+        final_response = {
             "analysis": ai_text,
             "holdings": portfolio_summary,
             "remaining_tokens": new_token_balance
         }
+        return sanitize_nans(final_response)
         
     except HTTPException as he:
         raise he
@@ -1201,28 +1229,29 @@ async def generate_swap_thesis(req: SwapRequest):
             try:
                 res = supabase.table('market_universe').select('*').eq('sector', sector).not_.is_('tech_score', 'null').execute()
                 if res.data:
-                    sorted_sector = sorted(res.data, key=lambda x: (x['tech_score'] + x['fund_score'])/2, reverse=True)
+                    sorted_sector = sorted(res.data, key=lambda x: (safe_float(x['tech_score']) + safe_float(x['fund_score']))/2, reverse=True)
                     for candidate in sorted_sector:
                         if candidate['ticker'] != req.ticker.upper():
                             target_ticker = candidate['ticker']
-                            target_score = math.ceil((candidate['tech_score'] + candidate['fund_score'])/2)
-                            target_price = candidate['price']
+                            target_score = math.ceil((safe_float(candidate['tech_score']) + safe_float(candidate['fund_score']))/2)
+                            target_price = safe_float(candidate['price'])
                             break
             except Exception:
                 pass
 
-        freed_capital = req.shares * req.price
+        req_price = safe_float(req.price)
+        freed_capital = req.shares * req_price
         target_shares = math.floor(freed_capital / target_price) if target_price > 0 else 0
         thesis = f"Liquidating your {req.shares} shares of {req.ticker.upper()} frees up ${freed_capital:,.2f} in capital. Reallocating into {target_shares} shares of {target_ticker} (Quant Score {target_score}) upgrades asset quality and increases Alpha potential within the {sector} sector."
         
-        return {
+        return sanitize_nans({
             "target_ticker": target_ticker, 
             "target_price": target_price, 
             "target_score": target_score, 
             "target_shares": target_shares, 
             "freed_capital": freed_capital, 
             "thesis": thesis
-        }
+        })
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1252,23 +1281,23 @@ async def execute_trade(req: TradeRequest, request: Request):
         stock = yf.Ticker(ticker, session=get_yf_session())
         hist = stock.history(period="1d", prepost=True)
         if hist.empty: raise HTTPException(status_code=404, detail="Asset pricing unavailable.")
-        live_price = float(hist['Close'].iloc[-1])
+        live_price = safe_float(hist['Close'].iloc[-1])
 
-        request_amount = float(req.amount)
+        request_amount = safe_float(req.amount)
         if req.mode == "DOLLARS":
             trade_cost = round(request_amount, 2)
-            trade_shares = request_amount / live_price
+            trade_shares = request_amount / live_price if live_price > 0 else 0
         else:
             trade_shares = request_amount
             trade_cost = round(trade_shares * live_price, 2)
 
         profile_res = supabase.table('profiles').select('virtual_cash_balance').eq('id', req.user_id).execute()
         if not profile_res.data: raise HTTPException(status_code=404, detail="Operative profile not found.")
-        current_cash = float(profile_res.data[0]['virtual_cash_balance'])
+        current_cash = safe_float(profile_res.data[0]['virtual_cash_balance'])
 
         portfolio_res = supabase.table('portfolio').select('*').eq('user_id', req.user_id).eq('ticker', ticker).execute()
         current_position = portfolio_res.data[0] if portfolio_res.data else None
-        current_shares_held = float(current_position['shares']) if current_position else 0.0
+        current_shares_held = safe_float(current_position['shares']) if current_position else 0.0
 
         if req.trade_type == "BUY":
             if trade_cost > current_cash: 
@@ -1277,9 +1306,9 @@ async def execute_trade(req: TradeRequest, request: Request):
             new_cash = round(current_cash - trade_cost, 2)
             
             if current_position:
-                old_total_cost = current_shares_held * float(current_position['cost_basis'])
+                old_total_cost = current_shares_held * safe_float(current_position['cost_basis'])
                 new_total_shares = current_shares_held + trade_shares
-                new_avg_cost = round((old_total_cost + trade_cost) / new_total_shares, 2)
+                new_avg_cost = round((old_total_cost + trade_cost) / new_total_shares, 2) if new_total_shares > 0 else 0
                 
                 supabase.table('portfolio').update({
                     'shares': new_total_shares,
@@ -1318,12 +1347,12 @@ async def execute_trade(req: TradeRequest, request: Request):
             'total_amount': trade_cost
         }).execute()
 
-        return {
+        return sanitize_nans({
             "status": "success",
             "message": f"Order Executed: {req.trade_type} {round(trade_shares, 4)} {ticker}",
             "execution_price": live_price,
             "total_cost": trade_cost,
             "remaining_cash": new_cash
-        }
+        })
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
