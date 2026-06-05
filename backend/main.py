@@ -109,7 +109,7 @@ async def keep_alive_loop():
 # ==========================================
 # --- 12-CYLINDER QUANT ENGINE (ONE SOURCE OF TRUTH) ---
 # ==========================================
-def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price):
+def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price, ticker="Asset"):
     tech_base = 50
     fund_base = 50
     alpha_bonus = 0
@@ -130,8 +130,8 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price):
         sma_20 = safe_float(hist['Close'].rolling(window=20).mean().iloc[-1])
         sma_40 = safe_float(hist['Close'].rolling(window=40).mean().iloc[-1])
         std_dev = safe_float(hist['Close'].rolling(window=20).std().iloc[-1])
-        upper_band = sma_20 + (2 * std_dev)
-        lower_band = sma_20 - (2 * std_dev)
+        upper_band = round(sma_20 + (2 * std_dev), 2)
+        lower_band = round(sma_20 - (2 * std_dev), 2)
 
         if current_price > sma_20: tech_base += 10
         else: tech_base -= 10
@@ -144,11 +144,16 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price):
         bb_width = (upper_band - lower_band) / sma_20 if sma_20 > 0 else 1
         if bb_width < 0.05:
             alpha_bonus += 5
-            extra_ledger.append({"factor": "Consolidation Phase", "val": "Tight Squeeze", "status": "BULLISH", "reasoning": "Volatility has compressed to extreme lows, signaling an imminent directional breakout."})
+            extra_ledger.append({
+                "factor": "Consolidation Phase", 
+                "val": "Tight Squeeze", 
+                "status": "BULLISH", 
+                "reasoning": f"Volatility on {ticker} has compressed to extreme lows (Bollinger Bands squeezed). This pent-up energy typically results in an imminent, explosive directional breakout."
+            })
     else:
         sma_20 = current_price
-        upper_band = current_price * 1.05
-        lower_band = current_price * 0.95
+        upper_band = round(current_price * 1.05, 2)
+        lower_band = round(current_price * 0.95, 2)
 
     if current_price > prev_price: tech_base += 5
     else: tech_base -= 5
@@ -161,7 +166,7 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price):
         ema_loss = loss.ewm(com=13, adjust=False).mean()
         rs = ema_gain / ema_loss
         rsi_series = 100 - (100 / (1 + rs))
-        real_rsi = safe_float(rsi_series.iloc[-1], 50.0)
+        real_rsi = round(safe_float(rsi_series.iloc[-1], 50.0), 2)
     except Exception:
         real_rsi = 50.0
 
@@ -176,7 +181,7 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price):
         else: tech_base -= 5
         
         typical_price = (hist['High'] + hist['Low'] + hist['Close']) / 3
-        vwap_proxy = safe_float((typical_price * hist['Volume']).sum() / hist['Volume'].sum(), current_price)
+        vwap_proxy = round(safe_float((typical_price * hist['Volume']).sum() / hist['Volume'].sum(), current_price), 2)
         if current_price > vwap_proxy: tech_base += 10
         else: tech_base -= 10
     except Exception:
@@ -224,11 +229,21 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price):
     # --- ALPHA MULTIPLIERS ---
     if short_interest > 0.15:
         alpha_bonus += 5
-        extra_ledger.append({"factor": "Short Squeeze Risk", "val": f"{round(short_interest * 100, 1)}%", "status": "VOLATILE", "reasoning": "High short interest creates explosive potential for a short-covering rally."})
+        extra_ledger.append({
+            "factor": "Short Squeeze Risk", 
+            "val": f"{round(short_interest * 100, 1)}%", 
+            "status": "VOLATILE", 
+            "reasoning": f"With {round(short_interest * 100, 1)}% of the floating supply sold short, any positive catalyst could force short-sellers to aggressively buy back shares, triggering a massive price spike on {ticker}."
+        })
 
     if insider_hold > 0.05:
         alpha_bonus += 3
-        extra_ledger.append({"factor": "Insider Conviction", "val": f"{round(insider_hold * 100, 1)}%", "status": "BULLISH", "reasoning": "Corporate insiders hold a structurally significant portion of the floating supply."})
+        extra_ledger.append({
+            "factor": "Insider Conviction", 
+            "val": f"{round(insider_hold * 100, 1)}%", 
+            "status": "BULLISH", 
+            "reasoning": f"Corporate insiders currently hold {round(insider_hold * 100, 1)}% of all {ticker} shares. This high concentration signals massive internal confidence in the company's long-term trajectory."
+        })
 
     try:
         options_dates = stock_obj.options
@@ -240,10 +255,20 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price):
                 put_call_ratio = puts_vol / calls_vol
                 if put_call_ratio < 0.6: 
                     alpha_bonus += 5
-                    extra_ledger.append({"factor": "Options Flow", "val": "Call Heavy", "status": "BULLISH", "reasoning": f"Derivatives market exhibiting extreme bullish conviction (P/C Ratio: {round(put_call_ratio, 2)})."})
+                    extra_ledger.append({
+                        "factor": "Options Flow", 
+                        "val": "Call Heavy", 
+                        "status": "BULLISH", 
+                        "reasoning": f"The derivatives market for {ticker} is heavily skewed toward the upside. With a Put/Call ratio of {round(put_call_ratio, 2)}, smart money is aggressively betting on a near-term price surge."
+                    })
                 elif put_call_ratio > 1.5: 
                     alpha_bonus -= 5
-                    extra_ledger.append({"factor": "Options Flow", "val": "Put Heavy", "status": "BEARISH", "reasoning": f"Derivatives market exhibiting significant downside hedging (P/C Ratio: {round(put_call_ratio, 2)})."})
+                    extra_ledger.append({
+                        "factor": "Options Flow", 
+                        "val": "Put Heavy", 
+                        "status": "BEARISH", 
+                        "reasoning": f"The derivatives market for {ticker} is loaded with downside protection. With a Put/Call ratio of {round(put_call_ratio, 2)}, institutions are actively hedging against a potential crash."
+                    })
     except Exception:
         pass
 
@@ -304,17 +329,16 @@ async def staleness_worker_loop():
                         # 1. UPGRADED MEMORY: Fetch 3 months of data to calculate multi-horizon metrics
                         hist = stock.history(period="3mo")
                         
-                        if hist.empty:
-                            supabase.table('market_universe').delete().eq('ticker', t).execute()
-                            continue
-                            
-                        if len(hist) < 40: # We need at least 40 trading days to construct the 1-month trend proxy
+                        # Fix: Drop NaNs to prevent picking up unclosed pre-market ticks
+                        clean_close = hist['Close'].dropna()
+
+                        if clean_close.empty or len(clean_close) < 40:
                             supabase.table('market_universe').update({'last_scanned': current_time}).eq('ticker', t).execute()
                             continue
                         
-                        price = safe_float(hist['Close'].iloc[-1])
-                        prev_price = safe_float(hist['Close'].iloc[-2])
-                        daily_change = ((price - prev_price) / prev_price) * 100 if prev_price > 0 else 0.0
+                        price = round(safe_float(clean_close.iloc[-1]), 2)
+                        prev_price = round(safe_float(clean_close.iloc[-2]), 2) if len(clean_close) > 1 else price
+                        daily_change = round(((price - prev_price) / prev_price) * 100, 2) if prev_price > 0 else 0.0
 
                         try:
                             info = stock.info
@@ -322,13 +346,13 @@ async def staleness_worker_loop():
                             info = {}
                             
                         # === INJECTING ONE SOURCE OF TRUTH ===
-                        total_score, tech_score, fund_score, _, _, _, _, _, _, _, sector, pe, _, _, _, _, _ = calculate_quant_metrics(hist, info, stock, price, prev_price)
+                        total_score, tech_score, fund_score, _, _, _, _, _, _, _, sector, pe, _, _, _, _, _ = calculate_quant_metrics(hist, info, stock, price, prev_price, t)
                         
                         # Save successful data to Supabase (wrapped in sanitize_nans)
                         clean_payload = sanitize_nans({
                             'ticker': t,
-                            'price': round(price, 2),
-                            'daily_change': round(daily_change, 2),
+                            'price': price,
+                            'daily_change': daily_change,
                             'tech_score': tech_score,
                             'fund_score': fund_score,
                             'sector': sector,
@@ -590,8 +614,9 @@ async def execute_screener(req: ScreenerRequest):
             try:
                 stock = yf.Ticker(candidate['ticker'], session=get_yf_session())
                 hist = stock.history(period="1d")
-                if not hist.empty:
-                    candidate['price'] = round(safe_float(hist['Close'].iloc[-1], candidate['db_price']), 2)
+                clean_close = hist['Close'].dropna()
+                if not clean_close.empty:
+                    candidate['price'] = round(safe_float(clean_close.iloc[-1], candidate['db_price']), 2)
                 else:
                     candidate['price'] = candidate['db_price']
             except Exception:
@@ -622,12 +647,14 @@ async def analyze_ticker(ticker: str):
     try:
         stock = yf.Ticker(ticker_upper, session=get_yf_session())
         hist = stock.history(period="3mo", prepost=True)
-        if hist.empty: raise HTTPException(status_code=404, detail="Ticker data not found.")
+        
+        clean_close = hist['Close'].dropna()
+        if clean_close.empty: raise HTTPException(status_code=404, detail="Ticker data not found.")
 
         support, resistance = get_support_resistance(hist)
 
-        current_price = safe_float(hist['Close'].iloc[-1])
-        prev_price = safe_float(hist['Close'].iloc[-2])
+        current_price = round(safe_float(clean_close.iloc[-1]), 2)
+        prev_price = round(safe_float(clean_close.iloc[-2]), 2) if len(clean_close) > 1 else current_price
         
         try:
             info = stock.info
@@ -635,7 +662,7 @@ async def analyze_ticker(ticker: str):
             info = {}
 
         # === INJECTING ONE SOURCE OF TRUTH ===
-        total_score, tech_score, fund_score, extra_ledger, real_rsi, volume, avg_volume, vwap_proxy, upper_band, lower_band, sector, pe, margins, rev_growth, fcf, dte, target_price = calculate_quant_metrics(hist, info, stock, current_price, prev_price)
+        total_score, tech_score, fund_score, extra_ledger, real_rsi, volume, avg_volume, vwap_proxy, upper_band, lower_band, sector, pe, margins, rev_growth, fcf, dte, target_price = calculate_quant_metrics(hist, info, stock, current_price, prev_price, ticker_upper)
 
         raw_mcap = safe_float(info.get("marketCap", 0))
         formatted_mcap = "N/A"
@@ -703,14 +730,50 @@ async def analyze_ticker(ticker: str):
 
         rsi_status = "OVERBOUGHT" if real_rsi >= 70 else "OVERSOLD" if real_rsi <= 30 else "BULLISH" if real_rsi > 50 else "BEARISH"
 
+        # Upgraded Ledger with Contextual Stories
         ledger = [
-            {"factor": "Momentum (RSI)", "val": str(real_rsi), "status": rsi_status, "reasoning": f"Asset momentum velocity registering true algorithmic score at {real_rsi}."},
-            {"factor": "Institutional Flow", "val": "High" if volume > avg_volume else "Low", "status": "BULLISH" if volume > avg_volume else "NEUTRAL", "reasoning": f"Current transaction volume sits at {int(volume):,} vs historical norm of {int(avg_volume):,}."},
-            {"factor": "MACD Divergence", "val": "Positive" if current_price > prev_price else "Negative", "status": "BULLISH" if current_price > prev_price else "BEARISH", "reasoning": f"Short-term directional EMA vectors signaling positive continuation mechanics." if current_price > prev_price else f"Short-term baseline trajectories confirming downward tracking slope."},
-            {"factor": "VWAP Deviation", "val": f"${vwap_proxy}", "status": "BULLISH" if current_price > vwap_proxy else "BEARISH", "reasoning": f"Trading premium above volume-weighted structural average, implying buyer dominance." if current_price > vwap_proxy else f"Trading below volume-weighted pricing anchor, suggesting structural distribution lines."},
-            {"factor": "Bollinger Band Width", "val": f"${lower_band} - ${upper_band}", "status": "NEUTRAL" if lower_band < current_price < upper_band else "VOLATILE", "reasoning": f"Price containment models tracking inside standardized volatility brackets." if lower_band < current_price < upper_band else f"Asset values piercing outer boundary models, projecting an overextended structure."},
-            {"factor": "Mathematical Floor", "val": f"${round(support, 2)}", "status": "NEUTRAL", "reasoning": "Calculated structural base support derived via local minima optimization metrics."},
-            {"factor": "Mathematical Ceiling", "val": f"${round(resistance, 2)}", "status": "NEUTRAL", "reasoning": "Calculated structural macro resistance ceiling derived via local maxima optimization metrics."}
+            {
+                "factor": "Momentum (RSI)", 
+                "val": str(real_rsi), 
+                "status": rsi_status, 
+                "reasoning": f"With an RSI of {real_rsi}, {ticker_upper} is currently trading in {rsi_status.lower()} territory. {'This suggests the asset is heavily overbought and prone to a pullback.' if real_rsi >= 70 else 'This indicates deep exhaustion, potentially setting up a reversal.' if real_rsi <= 30 else 'This reflects neutral momentum with room to run in either direction.'}"
+            },
+            {
+                "factor": "Institutional Flow", 
+                "val": "High" if volume > avg_volume else "Low", 
+                "status": "BULLISH" if volume > avg_volume else "NEUTRAL", 
+                "reasoning": f"Daily volume of {int(volume):,} shares is tracking {'above' if volume > avg_volume else 'below'} the 20-day average of {int(avg_volume):,}. {'Institutions are actively accumulating or distributing this asset today.' if volume > avg_volume else 'Retail and algorithmic volume is driving price action without major institutional participation.'}"
+            },
+            {
+                "factor": "MACD Divergence", 
+                "val": "Positive" if current_price > prev_price else "Negative", 
+                "status": "BULLISH" if current_price > prev_price else "BEARISH", 
+                "reasoning": f"The short-term trend is {'bullish' if current_price > prev_price else 'bearish'}, with today's price action (${current_price}) trading {'higher' if current_price > prev_price else 'lower'} than yesterday's close. {'This confirms buyers are currently in control of the tape.' if current_price > prev_price else 'This confirms sellers are currently dominating the tape.'}"
+            },
+            {
+                "factor": "VWAP Deviation", 
+                "val": f"${vwap_proxy}", 
+                "status": "BULLISH" if current_price > vwap_proxy else "BEARISH", 
+                "reasoning": f"The true average price paid by all traders today is ${vwap_proxy}. Because {ticker_upper} is trading at ${current_price}, it is sitting {'above' if current_price > vwap_proxy else 'below'} the VWAP, meaning {'bulls' if current_price > vwap_proxy else 'bears'} are in full control of intraday momentum."
+            },
+            {
+                "factor": "Bollinger Band Width", 
+                "val": f"${lower_band} - ${upper_band}", 
+                "status": "NEUTRAL" if lower_band <= current_price <= upper_band else "VOLATILE", 
+                "reasoning": f"The volatility bands range from a floor of ${lower_band} to a ceiling of ${upper_band}. At ${current_price}, the asset is {'pushing extreme upper limits, signaling overextension' if current_price > upper_band else 'crashing into the lower band, signaling extreme fear' if current_price < lower_band else 'trading safely within its expected volatility range'}."
+            },
+            {
+                "factor": "Mathematical Floor", 
+                "val": f"${round(support, 2)}", 
+                "status": "NEUTRAL", 
+                "reasoning": f"Quantitative algorithms have identified a hard structural floor at ${round(support, 2)}. If the price drops below this level, the current bullish thesis is completely invalidated."
+            },
+            {
+                "factor": "Mathematical Ceiling", 
+                "val": f"${round(resistance, 2)}", 
+                "status": "NEUTRAL", 
+                "reasoning": f"Heavy historical selling pressure exists at ${round(resistance, 2)}. {ticker_upper} will need massive institutional volume to successfully break through this ceiling."
+            }
         ]
 
         # Inject Alpha Multipliers into Ledger
@@ -1203,12 +1266,11 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
         new_token_balance = current_tokens - 5
         supabase.table('profiles').update({'ai_token_balance': new_token_balance}).eq('id', user_id).execute()
 
-        final_response = {
+        return {
             "analysis": ai_text,
             "holdings": portfolio_summary,
             "remaining_tokens": new_token_balance
         }
-        return sanitize_nans(final_response)
         
     except HTTPException as he:
         raise he
@@ -1280,8 +1342,10 @@ async def execute_trade(req: TradeRequest, request: Request):
         
         stock = yf.Ticker(ticker, session=get_yf_session())
         hist = stock.history(period="1d", prepost=True)
-        if hist.empty: raise HTTPException(status_code=404, detail="Asset pricing unavailable.")
-        live_price = safe_float(hist['Close'].iloc[-1])
+        
+        clean_close = hist['Close'].dropna()
+        if clean_close.empty: raise HTTPException(status_code=404, detail="Asset pricing unavailable.")
+        live_price = safe_float(clean_close.iloc[-1])
 
         request_amount = safe_float(req.amount)
         if req.mode == "DOLLARS":
