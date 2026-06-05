@@ -737,36 +737,40 @@ function TerminalContent() {
                                     <div className="col-span-3 lg:col-span-2 text-right text-blue-400">Total</div>
                                 </div>
                                 <div className="overflow-y-auto custom-scrollbar flex-1 pb-4">
-                                    {filteredScreenerResults.map((stock, idx) => (
-                                        <div 
-                                            key={stock.ticker}
-                                            onClick={() => { setTicker(stock.ticker); runAnalysis(stock.ticker); }}
-                                            className="grid grid-cols-12 gap-2 lg:gap-4 px-4 lg:px-6 py-3 lg:py-4 items-center border-b border-slate-800/30 hover:bg-slate-900/80 cursor-pointer group transition-colors"
-                                        >
-                                            <div className="col-span-5 lg:col-span-5 flex items-center gap-2 lg:gap-3">
-                                                <span className="hidden sm:inline-block text-[10px] text-slate-600 font-mono w-4">{idx + 1}</span>
-                                                <div>
-                                                    <div className="flex items-center gap-2">
-                                                        <span className="font-black text-white text-xs lg:text-sm">{stock.ticker}</span>
+                                    {filteredScreenerResults.map((stock, idx) => {
+                                        const isOverdrive = stock.score >= 90;
+                                        return (
+                                            <div 
+                                                key={stock.ticker}
+                                                onClick={() => { setTicker(stock.ticker); runAnalysis(stock.ticker); }}
+                                                className={`grid grid-cols-12 gap-2 lg:gap-4 px-4 lg:px-6 py-3 lg:py-4 items-center border-b border-slate-800/30 cursor-pointer group transition-all duration-200 ${isOverdrive ? 'bg-blue-950/10 hover:bg-blue-950/20 border-l-4 border-l-blue-500' : 'hover:bg-slate-900/80'}`}
+                                            >
+                                                <div className="col-span-5 lg:col-span-5 flex items-center gap-2 lg:gap-3">
+                                                    <span className="hidden sm:inline-block text-[10px] text-slate-600 font-mono w-4">{idx + 1}</span>
+                                                    <div>
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="font-black text-white text-xs lg:text-sm">{stock.ticker}</span>
+                                                            {isOverdrive && <span className="bg-blue-500/10 text-blue-400 text-[8px] font-black tracking-widest uppercase px-1.5 py-0.5 rounded border border-blue-500/20 animate-pulse hidden md:block">OVERDRIVE</span>}
+                                                        </div>
+                                                        <span className="text-[8px] font-bold text-slate-500 uppercase tracking-widest hidden lg:block mt-0.5">{stock.sector || "Equities"}</span>
                                                     </div>
-                                                    <span className="text-[8px] font-bold text-slate-500 uppercase tracking-widest hidden lg:block mt-0.5">{stock.sector || "Equities"}</span>
+                                                </div>
+                                                <div className="col-span-4 lg:col-span-3 text-right">
+                                                    <p className="text-xs lg:text-sm font-mono font-bold text-slate-200">${stock.price?.toFixed(2)}</p>
+                                                </div>
+                                                <div className="hidden lg:block lg:col-span-2 text-right">
+                                                    <p className={`text-[10px] font-mono font-bold ${horizon === "Long Term" ? "text-emerald-400" : "text-purple-400"}`}>
+                                                        {horizon === "Long Term" ? stock.fund_score || '--' : stock.tech_score || '--'}
+                                                    </p>
+                                                </div>
+                                                <div className="col-span-3 lg:col-span-2 flex justify-end">
+                                                    <div className={`px-2 lg:px-3 py-1 rounded-md text-center border transition-all ${isOverdrive ? 'bg-blue-600 border-blue-400 text-white shadow-[0_0_10px_rgba(59,130,246,0.3)]' : 'bg-blue-600/20 border-blue-500/30'}`}>
+                                                        <span className={`text-xs lg:text-sm font-black font-mono ${isOverdrive ? 'text-white' : 'text-blue-400'}`}>{stock.score}</span>
+                                                    </div>
                                                 </div>
                                             </div>
-                                            <div className="col-span-4 lg:col-span-3 text-right">
-                                                <p className="text-xs lg:text-sm font-mono font-bold text-slate-200">${stock.price?.toFixed(2)}</p>
-                                            </div>
-                                            <div className="hidden lg:block lg:col-span-2 text-right">
-                                                <p className={`text-[10px] font-mono font-bold ${horizon === "Long Term" ? "text-emerald-400" : "text-purple-400"}`}>
-                                                    {horizon === "Long Term" ? stock.fund_score || '--' : stock.tech_score || '--'}
-                                                </p>
-                                            </div>
-                                            <div className="col-span-3 lg:col-span-2 flex justify-end">
-                                                <div className="bg-blue-600/20 border border-blue-500/30 px-2 lg:px-3 py-1 rounded-md text-center">
-                                                    <span className="text-xs lg:text-sm font-black font-mono text-blue-400">{stock.score}</span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    ))}
+                                        );
+                                    })}
                                     {filteredScreenerResults.length === 0 && (
                                         <div className="p-8 text-center text-slate-500 text-[10px] font-bold uppercase tracking-widest">No assets found in this sector.</div>
                                     )}
@@ -812,10 +816,26 @@ function TerminalContent() {
                     >
                         TRADE {data.ticker}
                     </button>
+                    
                     <div className="mb-6 lg:mb-8">
                        <p className="text-[9px] lg:text-[10px] font-black text-slate-400 uppercase mb-2">Current Price</p>
                        <p className="text-5xl lg:text-7xl font-mono font-black text-white tracking-tighter mb-3 lg:mb-4">${data.price}</p>
                        <p className="text-[9px] lg:text-[10px] font-black text-blue-400 uppercase tracking-widest bg-blue-500/10 px-3 py-1.5 lg:py-2 rounded-lg inline-block">{data.company_name}</p>
+                    </div>
+
+                    {/* HIGH CONVICTION BOOSTER BADGES */}
+                    <div className="flex flex-wrap gap-1.5 mt-4 mb-6 border-b border-slate-800 pb-5">
+                        <div className="bg-slate-950 border border-slate-800 px-2 py-1 rounded text-[9px] font-bold text-slate-400 uppercase">
+                            ⚙️ Tech: {data.tech_score}
+                        </div>
+                        <div className="bg-slate-950 border border-slate-800 px-2 py-1 rounded text-[9px] font-bold text-slate-400 uppercase">
+                            📊 Fund: {data.fund_score}
+                        </div>
+                        {data.ledger?.filter((item: any) => ["Consolidation Phase", "Short Squeeze Risk", "Options Flow", "Insider Conviction"].includes(item.factor) && item.status !== "BEARISH").map((booster: any, i: number) => (
+                            <div key={i} className="bg-blue-500/10 border border-blue-500/30 text-blue-400 px-2 py-1 rounded text-[9px] font-black tracking-wide uppercase flex items-center gap-1 shadow-[0_0_10px_rgba(59,130,246,0.05)]">
+                                🔥 {booster.factor}: {booster.val}
+                            </div>
+                        ))}
                     </div>
 
                     <div className="grid grid-cols-2 gap-4 lg:gap-8 border-t border-slate-800 pt-6 lg:pt-8 mb-6 lg:mb-8">

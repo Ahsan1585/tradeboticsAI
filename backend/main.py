@@ -73,6 +73,151 @@ async def keep_alive_loop():
             
             await asyncio.sleep(600)
 
+# ==========================================
+# --- 12-CYLINDER QUANT ENGINE (ONE SOURCE OF TRUTH) ---
+# ==========================================
+def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price):
+    tech_base = 50
+    fund_base = 50
+    alpha_bonus = 0
+    extra_ledger = []
+    
+    sector = info.get("sector", "Macro Profile")
+    pe = info.get("trailingPE", 0)
+    margins = info.get("profitMargins", 0)
+    rev_growth = info.get("revenueGrowth", 0)
+    fcf = info.get("freeCashflow", 0)
+    dte = info.get("debtToEquity", 0)
+    target_price = info.get("targetMeanPrice", 0)
+    short_interest = info.get("shortPercentOfFloat", 0)
+    insider_hold = info.get("heldPercentInsiders", 0)
+
+    # --- TECHNICAL ENGINE (6 Cylinders) ---
+    if len(hist) >= 40:
+        sma_20 = hist['Close'].rolling(window=20).mean().iloc[-1]
+        sma_40 = hist['Close'].rolling(window=40).mean().iloc[-1] 
+        std_dev = hist['Close'].rolling(window=20).std().iloc[-1]
+        upper_band = sma_20 + (2 * std_dev)
+        lower_band = sma_20 - (2 * std_dev)
+
+        if current_price > sma_20: tech_base += 10
+        else: tech_base -= 10
+        if sma_20 > sma_40: tech_base += 10 
+        else: tech_base -= 5
+        if current_price > upper_band: tech_base -= 15 
+        elif current_price < lower_band: tech_base += 15 
+
+        # Alpha Multiplier: Consolidation Squeeze
+        bb_width = (upper_band - lower_band) / sma_20 if sma_20 > 0 else 1
+        if bb_width < 0.05:
+            alpha_bonus += 5
+            extra_ledger.append({"factor": "Consolidation Phase", "val": "Tight Squeeze", "status": "BULLISH", "reasoning": "Volatility has compressed to extreme lows, signaling an imminent directional breakout."})
+    else:
+        sma_20 = current_price
+        upper_band = current_price * 1.05
+        lower_band = current_price * 0.95
+
+    if current_price > prev_price: tech_base += 5
+    else: tech_base -= 5
+
+    try:
+        delta = hist['Close'].diff()
+        gain = delta.clip(lower=0)
+        loss = -1 * delta.clip(upper=0)
+        ema_gain = gain.ewm(com=13, adjust=False).mean()
+        ema_loss = loss.ewm(com=13, adjust=False).mean()
+        rs = ema_gain / ema_loss
+        rsi_series = 100 - (100 / (1 + rs))
+        real_rsi = round(rsi_series.iloc[-1], 1)
+        if pd.isna(real_rsi): real_rsi = 50.0
+    except Exception:
+        real_rsi = 50.0
+
+    if real_rsi >= 70: tech_base -= 15 
+    elif real_rsi <= 30: tech_base += 15 
+    elif 50 < real_rsi < 65: tech_base += 5 
+
+    try:
+        volume = int(hist['Volume'].iloc[-1])
+        avg_volume = int(hist['Volume'].rolling(20).mean().iloc[-1])
+        if volume > (avg_volume * 1.2): tech_base += 10 
+        else: tech_base -= 5
+        
+        typical_price = (hist['High'] + hist['Low'] + hist['Close']) / 3
+        vwap_proxy = round((typical_price * hist['Volume']).sum() / hist['Volume'].sum(), 2)
+        if current_price > vwap_proxy: tech_base += 10
+        else: tech_base -= 10
+    except Exception:
+        volume, avg_volume, vwap_proxy = 0, 0, current_price
+
+    tech_score = max(10, min(95, tech_base))
+
+    # --- FUNDAMENTAL ENGINE (6 Cylinders) ---
+    is_tech = "Technology" in sector or "Communication" in sector
+    is_financial = "Financial" in sector
+    
+    if pe and 0 < pe < 25: 
+        fund_base += 10 
+    elif pe and 25 <= pe <= 60 and is_tech: 
+        fund_base += 10 
+    elif pe and pe > 60:
+        if rev_growth and rev_growth < 0.20:
+            fund_base -= 10
+    
+    if margins and margins > 0.20: 
+        if is_financial:
+            fund_base += 5
+        else:
+            fund_base += 10
+    elif margins and margins > 0.10: 
+        fund_base += 5
+    elif margins and margins < 0: 
+        fund_base -= 10
+    
+    if rev_growth and rev_growth > 0.20: fund_base += 15 
+    elif rev_growth and rev_growth > 0.10: fund_base += 5
+    elif rev_growth and rev_growth < 0: fund_base -= 15 
+
+    if fcf and fcf > 0: fund_base += 5
+    elif fcf and fcf < 0: fund_base -= 5
+    
+    if dte and dte < 100: fund_base += 5
+    elif dte and dte > 200 and not is_financial: fund_base -= 10
+    
+    if target_price and current_price < target_price: fund_base += 5
+    elif target_price and current_price > (target_price * 1.05): fund_base -= 5
+
+    fund_score = max(10, min(95, fund_base))
+
+    # --- ALPHA MULTIPLIERS ---
+    if short_interest and short_interest > 0.15:
+        alpha_bonus += 5
+        extra_ledger.append({"factor": "Short Squeeze Risk", "val": f"{round(short_interest * 100, 1)}%", "status": "VOLATILE", "reasoning": "High short interest creates explosive potential for a short-covering rally."})
+
+    if insider_hold and insider_hold > 0.05:
+        alpha_bonus += 3
+        extra_ledger.append({"factor": "Insider Conviction", "val": f"{round(insider_hold * 100, 1)}%", "status": "BULLISH", "reasoning": "Corporate insiders hold a structurally significant portion of the floating supply."})
+
+    try:
+        options_dates = stock_obj.options
+        if options_dates:
+            chain = stock_obj.option_chain(options_dates[0])
+            calls_vol = chain.calls['volume'].sum()
+            puts_vol = chain.puts['volume'].sum()
+            if calls_vol > 0:
+                put_call_ratio = puts_vol / calls_vol
+                if put_call_ratio < 0.6: 
+                    alpha_bonus += 5
+                    extra_ledger.append({"factor": "Options Flow", "val": "Call Heavy", "status": "BULLISH", "reasoning": f"Derivatives market exhibiting extreme bullish conviction (P/C Ratio: {round(put_call_ratio, 2)})."})
+                elif put_call_ratio > 1.5: 
+                    alpha_bonus -= 5
+                    extra_ledger.append({"factor": "Options Flow", "val": "Put Heavy", "status": "BEARISH", "reasoning": f"Derivatives market exhibiting significant downside hedging (P/C Ratio: {round(put_call_ratio, 2)})."})
+    except Exception:
+        pass
+
+    total_score = max(10, min(99, math.ceil((tech_score + fund_score) / 2) + alpha_bonus))
+
+    return total_score, tech_score, fund_score, extra_ledger, real_rsi, volume, avg_volume, vwap_proxy, upper_band, lower_band, sector, pe, margins, rev_growth, fcf, dte, target_price
 
 # ==========================================
 # --- THE STEALTH DATA WORKER ---
@@ -138,120 +283,13 @@ async def staleness_worker_loop():
                         prev_price = float(hist['Close'].iloc[-2])
                         daily_change = ((price - prev_price) / prev_price) * 100
 
-                        # 2. Fetch Fundamentals (Added Revenue Growth to eliminate Bank/Value Bias)
-                        pe, margins, rev_growth, sector = 0, 0, 0, "S&P 500"
                         try:
                             info = stock.info
-                            pe = info.get("trailingPE", 0)
-                            margins = info.get("profitMargins", 0)
-                            rev_growth = info.get("revenueGrowth", 0) 
-                            sector = info.get("sector", "Macro Profile")
                         except Exception:
-                            # If info endpoint is throttled, safely proceed with baseline data
-                            pass
-
-                        # =======================================================
-                        # --- MULTI-FACTOR QUANT ENGINE 2.0 (DUAL-HORIZON) ---
-                        # =======================================================
-                        
-                        # --- 1. TECHNICAL ENGINE (1-Week Velocity & 1-Month Trend) ---
-                        tech_base = 50
-                        
-                        sma_20 = hist['Close'].rolling(window=20).mean().iloc[-1]
-                        sma_40 = hist['Close'].rolling(window=40).mean().iloc[-1] # 1-Month Trend Proxy
-                        std_dev = hist['Close'].rolling(window=20).std().iloc[-1]
-                        upper_band = sma_20 + (2 * std_dev)
-                        lower_band = sma_20 - (2 * std_dev)
-
-                        # Trend Alignment (1-Month Horizon Support)
-                        if price > sma_20: tech_base += 10
-                        else: tech_base -= 10
-                        
-                        if sma_20 > sma_40: tech_base += 10 # Strong medium-term structural layout
-                        else: tech_base -= 5
-
-                        # Mean Reversion & Extreme Volatility (1-Week Swing Target)
-                        if price > upper_band: tech_base -= 15 # Overextended this week, high pullback risk
-                        elif price < lower_band: tech_base += 15 # Drastically oversold, primed for a technical bounce
-
-                        # MACD Momentum Proxy
-                        if price > prev_price: tech_base += 5
-                        else: tech_base -= 5
-
-                        # RSI Execution Momentum
-                        try:
-                            delta = hist['Close'].diff()
-                            gain = delta.clip(lower=0)
-                            loss = -1 * delta.clip(upper=0)
-                            ema_gain = gain.ewm(com=13, adjust=False).mean()
-                            ema_loss = loss.ewm(com=13, adjust=False).mean()
-                            rs = ema_gain / ema_loss
-                            rsi_series = 100 - (100 / (1 + rs))
-                            real_rsi = round(rsi_series.iloc[-1], 1)
-                            if pd.isna(real_rsi): real_rsi = 50.0
-                        except Exception:
-                            real_rsi = 50.0
-
-                        if real_rsi >= 70: tech_base -= 15 # Overbought ceiling reached
-                        elif real_rsi <= 30: tech_base += 15 # Deep exhaustion floor reached
-                        elif 50 < real_rsi < 65: tech_base += 5 # Healthy accumulation track
-
-                        # Institutional Volume Profile
-                        try:
-                            volume = int(hist['Volume'].iloc[-1])
-                            avg_volume = int(hist['Volume'].rolling(20).mean().iloc[-1])
-                            if volume > (avg_volume * 1.2): tech_base += 10 # Heavy institutional conviction
-                            else: tech_base -= 5
-                        except Exception:
-                            pass
+                            info = {}
                             
-                        # Volume Weighted Average Price (VWAP Proxy)
-                        try:
-                            typical_price = (hist['High'] + hist['Low'] + hist['Close']) / 3
-                            vwap_proxy = round((typical_price * hist['Volume']).sum() / hist['Volume'].sum(), 2)
-                            if price > vwap_proxy: tech_base += 10
-                            else: tech_base -= 10
-                        except Exception:
-                            pass
-
-                        tech_score = max(10, min(95, tech_base))
-                        
-                        # --- 2. FUNDAMENTAL ENGINE (Sector-Aware Balancer) ---
-                        fund_base = 50
-                        
-                        is_tech = "Technology" in sector or "Communication" in sector
-                        is_financial = "Financial" in sector
-                        
-                        # Valuation (Sector-Aware Multiples)
-                        if pe and 0 < pe < 25: 
-                            fund_base += 10 # Value reward for traditional companies
-                        elif pe and 25 <= pe <= 60 and is_tech:
-                            fund_base += 10 # Tech gets a pass for higher scaling multiples
-                        elif pe and pe > 60:
-                            # Only penalize extreme multiples if they aren't hyper-growing
-                            if rev_growth and rev_growth < 0.20:
-                                fund_base -= 15
-                        
-                        # Operational Efficiency (Nerfing the Bank Margin Exploit)
-                        if margins and margins > 0.20:
-                            if is_financial:
-                                fund_base += 5  # Nerfed reward (Banks naturally have 30%+ margins)
-                            else:
-                                fund_base += 15 # Massive reward (Software/Consumer hitting 20% is elite)
-                        elif margins and margins > 0.10: 
-                            fund_base += 5
-                        elif margins and margins < 0: 
-                            fund_base -= 20
-                        
-                        # Explosive Growth (The Ultimate Tech Catalyst)
-                        if rev_growth and rev_growth > 0.20: 
-                            fund_base += 20 # Hyper-growth reward
-                        elif rev_growth and rev_growth > 0.10: 
-                            fund_base += 10
-                        elif rev_growth and rev_growth < 0: 
-                            fund_base -= 15 # Decelerating companies heavily penalized
-
-                        fund_score = max(10, min(95, fund_base))
+                        # === INJECTING ONE SOURCE OF TRUTH ===
+                        total_score, tech_score, fund_score, _, _, _, _, _, _, _, sector, pe, _, _, _, _, _ = calculate_quant_metrics(hist, info, stock, price, prev_price)
                         
                         # Save successful data to Supabase
                         supabase.table('market_universe').upsert({
@@ -487,9 +525,9 @@ async def execute_screener(req: ScreenerRequest):
             daily_change = row['daily_change']
             db_price = row['price']
 
-            if req.risk_level == "Aggressive":
+            if req.risk_level == "High":
                 total_score = (tech_score * 0.8) + (fund_score * 0.2)
-            elif req.risk_level == "Conservative":
+            elif req.risk_level == "Low":
                 total_score = (tech_score * 0.2) + (fund_score * 0.8)
             else:
                 total_score = (tech_score * 0.5) + (fund_score * 0.5)
@@ -506,6 +544,8 @@ async def execute_screener(req: ScreenerRequest):
             scored_candidates.append({
                 "ticker": t,
                 "score": final_display_score,
+                "tech_score": tech_score,
+                "fund_score": fund_score,
                 "sort_weight": sort_weight,
                 "sector": sector,
                 "db_price": db_price, 
@@ -558,13 +598,16 @@ async def analyze_ticker(ticker: str):
 
         current_price = round(hist['Close'].iloc[-1], 2)
         prev_price = round(hist['Close'].iloc[-2], 2)
-        volume = int(hist['Volume'].iloc[-1])
-        avg_volume = int(hist['Volume'].mean())
-
-        pe = stock.info.get("trailingPE")
-        margins = stock.info.get("profitMargins")
         
-        raw_mcap = stock.info.get("marketCap")
+        try:
+            info = stock.info
+        except Exception:
+            info = {}
+
+        # === INJECTING ONE SOURCE OF TRUTH ===
+        total_score, tech_score, fund_score, extra_ledger, real_rsi, volume, avg_volume, vwap_proxy, upper_band, lower_band, sector, pe, margins, rev_growth, fcf, dte, target_price = calculate_quant_metrics(hist, info, stock, current_price, prev_price)
+
+        raw_mcap = info.get("marketCap")
         formatted_mcap = "N/A"
         if raw_mcap:
             if raw_mcap >= 1e12: formatted_mcap = f"${raw_mcap / 1e12:.2f} Trillion"
@@ -580,7 +623,6 @@ async def analyze_ticker(ticker: str):
                 if isinstance(calendar, dict) and 'Earnings Date' in calendar:
                     dates = calendar['Earnings Date']
                     if isinstance(dates, list) and len(dates) > 0:
-                        # Extract the first date from the list and strip any time data
                         next_earnings = str(dates[0]).split(' ')[0]
                     elif dates:
                         next_earnings = str(dates).split(' ')[0]
@@ -593,69 +635,7 @@ async def analyze_ticker(ticker: str):
                     else:
                         next_earnings = str(val).split(' ')[0]
             except Exception:
-                # If Yahoo changes their format again, safely fail and pass "Unknown"
                 next_earnings = "Unknown"
-
-        # --- MULTI-FACTOR QUANT ENGINE (LIVE) ---
-        tech_base = 50
-        
-        std_dev = hist['Close'].rolling(window=20).std().iloc[-1] if len(hist) >= 20 else current_price * 0.02
-        sma_20 = hist['Close'].rolling(window=20).mean().iloc[-1] if len(hist) >= 20 else current_price
-        upper_band = round(sma_20 + (2 * std_dev), 2)
-        lower_band = round(sma_20 - (2 * std_dev), 2)
-        
-        if len(hist) >= 20:
-            if current_price > sma_20: tech_base += 10
-            else: tech_base -= 10
-            
-            if current_price > upper_band: tech_base -= 10
-            elif current_price < lower_band: tech_base += 10
-
-        if current_price > prev_price: tech_base += 10
-        else: tech_base -= 10
-
-        try:
-            delta = hist['Close'].diff()
-            gain = delta.clip(lower=0)
-            loss = -1 * delta.clip(upper=0)
-            ema_gain = gain.ewm(com=13, adjust=False).mean()
-            ema_loss = loss.ewm(com=13, adjust=False).mean()
-            rs = ema_gain / ema_loss
-            rsi_series = 100 - (100 / (1 + rs))
-            real_rsi = round(rsi_series.iloc[-1], 1)
-            if pd.isna(real_rsi): real_rsi = 50.0
-        except Exception:
-            real_rsi = 50.0
-            
-        rsi_status = "OVERBOUGHT" if real_rsi >= 70 else "OVERSOLD" if real_rsi <= 30 else "BULLISH" if real_rsi > 50 else "BEARISH"
-        
-        if real_rsi >= 70: tech_base -= 15
-        elif real_rsi <= 30: tech_base += 15
-        elif real_rsi > 50: tech_base += 5
-
-        try:
-            typical_price = (hist['High'] + hist['Low'] + hist['Close']) / 3
-            vwap_proxy = round((typical_price * hist['Volume']).sum() / hist['Volume'].sum(), 2)
-        except Exception:
-            vwap_proxy = current_price
-            
-        if volume > avg_volume: tech_base += 10
-        else: tech_base -= 5
-        
-        if current_price > vwap_proxy: tech_base += 10
-        else: tech_base -= 10
-
-        tech_score = max(10, min(95, tech_base))
-        
-        fund_base = 50
-        if pe and 0 < pe < 25: fund_base += 20
-        elif pe and pe > 50: fund_base -= 20
-        if margins and margins > 0.15: fund_base += 20
-        elif margins and margins < 0: fund_base -= 25
-        fund_score = max(10, min(95, fund_base))
-        
-        total_score = math.ceil((tech_score + fund_score) / 2)
-        vol_surge = f"{round((volume / avg_volume) * 100, 1)}%" if avg_volume > 0 else "N/A"
 
         news_list = []
         try:
@@ -694,6 +674,8 @@ async def analyze_ticker(ticker: str):
         except Exception:
             pass
 
+        rsi_status = "OVERBOUGHT" if real_rsi >= 70 else "OVERSOLD" if real_rsi <= 30 else "BULLISH" if real_rsi > 50 else "BEARISH"
+
         ledger = [
             {"factor": "Momentum (RSI)", "val": str(real_rsi), "status": rsi_status, "reasoning": f"Asset momentum velocity registering true algorithmic score at {real_rsi}."},
             {"factor": "Institutional Flow", "val": "High" if volume > avg_volume else "Low", "status": "BULLISH" if volume > avg_volume else "NEUTRAL", "reasoning": f"Current transaction volume sits at {volume:,} vs historical norm of {avg_volume:,}."},
@@ -704,9 +686,14 @@ async def analyze_ticker(ticker: str):
             {"factor": "Mathematical Ceiling", "val": f"${round(resistance, 2)}", "status": "NEUTRAL", "reasoning": "Calculated structural macro resistance ceiling derived via local maxima optimization metrics."}
         ]
 
+        # Inject Alpha Multipliers into Ledger
+        ledger.extend(extra_ledger)
+
+        vol_surge = f"{round((volume / avg_volume) * 100, 1)}%" if avg_volume > 0 else "N/A"
+
         final_response = {
             "ticker": ticker_upper,
-            "company_name": stock.info.get("shortName", ticker_upper),
+            "company_name": info.get("shortName", ticker_upper),
             "price": current_price,
             "score": total_score,
             "tech_score": int(tech_score),
@@ -721,10 +708,10 @@ async def analyze_ticker(ticker: str):
             "fundamentals": {
                 "market_cap": formatted_mcap, 
                 "pe_ratio": str(round(pe, 2)) if pe else "N/A",
-                "debt_equity": str(stock.info.get("debtToEquity", "N/A")),
+                "debt_equity": str(dte) if dte else "N/A",
                 "margin": f"{round(margins * 100, 2)}%" if margins else "N/A",
-                "sentiment": "BULLISH" if total_score > 65 else "BEARISH" if total_score < 40 else "NEUTRAL",
-                "cash_flow": "POSITIVE" if margins and margins > 0 else "NEGATIVE",
+                "sentiment": "BULLISH" if target_price and current_price < target_price else "BEARISH" if target_price else "NEUTRAL",
+                "cash_flow": "POSITIVE" if fcf > 0 else "NEGATIVE",
                 "next_earnings": next_earnings 
             }
         }
@@ -791,6 +778,8 @@ async def translate_ai(req: TranslationRequest, user_id: str = Query(...)):
         if current_tokens < 3:
             raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 3 Tokens required.")
 
+        quant_score = req.data_context.get('score', 0)
+        
         # 🛡️ SAFETY FALLBACKS FOR MISSING DATA
         support_raw = req.data_context.get('support_level')
         res_raw = req.data_context.get('resistance_level')
@@ -801,17 +790,19 @@ async def translate_ai(req: TranslationRequest, user_id: str = Query(...)):
         prompt = f"Act as an elite quantitative analyst. Provide a definitive briefing on {req.ticker}.\n\n"
         prompt += f"CURRENT MARKET CONTEXT:\n"
         prompt += f"- Current Price: ${req.data_context.get('price', 'N/A')}\n"
-        prompt += f"- Quant Score: {req.data_context.get('score', 'N/A')}\n"
+        prompt += f"- Quant Score: {quant_score}\n"
         prompt += f"- Major Support (Floor): {support_str}\n"
         prompt += f"- Major Resistance (Ceiling): {res_str}\n\n"
         
         funds = req.data_context.get("fundamentals", {})
         if funds:
-            prompt += f"FUNDAMENTAL DNA:\n- Market Cap: {funds.get('market_cap', 'N/A')}\n- P/E Ratio: {funds.get('pe_ratio', 'N/A')}\n- Margin: {funds.get('margin', 'N/A')}\n\n"
+            prompt += f"FUNDAMENTAL DNA:\n- Market Cap: {funds.get('market_cap', 'N/A')}\n- P/E Ratio: {funds.get('pe_ratio', 'N/A')}\n"
+            prompt += f"- Margin: {funds.get('margin', 'N/A')}\n- Debt-to-Equity: {funds.get('debt_equity', 'N/A')}\n"
+            prompt += f"- Free Cash Flow: {funds.get('cash_flow', 'N/A')}\n- Wall St Sentiment: {funds.get('sentiment', 'N/A')}\n\n"
 
         ledger = req.data_context.get("ledger", [])
         if ledger:
-            prompt += f"TECHNICAL LEDGER:\n"
+            prompt += f"TECHNICAL & ALPHA LEDGER:\n"
             for item in ledger: 
                 prompt += f"- {item.get('factor')}: {item.get('val')} ({item.get('status')})\n"
 
@@ -824,7 +815,7 @@ async def translate_ai(req: TranslationRequest, user_id: str = Query(...)):
         from datetime import datetime
         today_str = datetime.now().strftime('%Y-%m-%d')
 
-        # 🛑 ANTI-HALLUCINATION LEASH (Upgraded with Temporal Anchor)
+        # 🛑 ANTI-HALLUCINATION LEASH 
         next_earnings = funds.get("next_earnings", "N/A")
         if next_earnings != "N/A" and next_earnings != "Unknown":
             prompt += f"\nEARNINGS RISK:\n- Today's Date: {today_str}\n- Next Earnings Date: {next_earnings}\n"
@@ -833,6 +824,18 @@ async def translate_ai(req: TranslationRequest, user_id: str = Query(...)):
             prompt += "\nEARNINGS RISK:\n- Next Earnings Date: UNKNOWN\n"
             prompt += "CRITICAL MANDATE: The earnings date is currently unavailable. You MUST explicitly state that the catalyst timeline is pending. DO NOT invent, estimate, or assume a future date under any circumstances.\n"
             
+        if quant_score >= 90:
+            verdict_block = (
+                "### ⚡ CONVICTION RATING: STRONG BUY\n"
+                "[Do not write a standard summary. Forcefully list exactly which premium parameters (e.g., Compression Squeezes, Smart Money Flows, "
+                "Insider Accumulation, or Hyper-Growth catalysts) have aligned simultaneously to create an asymmetrical upside opportunity. Keep the tone aggressive, quantitative, and undeniable.]"
+            )
+        else:
+            verdict_block = (
+                "### 3. The Verdict\n"
+                "[A final, punchy 2-sentence conclusion summarizing the Quant Score and justifying your AI Signal]"
+            )
+
         prompt += (
             "\n🚨 CRITICAL FORMATTING MANDATE:\n"
             "OUTPUT STRICTLY IN CLEAN MARKDOWN. DO NOT use HTML tags. You must use markdown headings (###), bold text (**), and bullet points (*) to make the briefing highly scannable and user-friendly.\n\n"
@@ -842,21 +845,19 @@ async def translate_ai(req: TranslationRequest, user_id: str = Query(...)):
             f"**📊 STRUCTURAL ZONES:** Support: {support_str} | Resistance: {res_str}\n\n"
             "---\n\n"
             "### 1. Macro & Fundamentals\n"
-            "* **Valuation:** [1 concise sentence evaluating P/E and Market Cap]\n"
-            "* **Efficiency:** [1 concise sentence evaluating Profit Margin]\n"
-            "* **Catalyst Risk:** [1 concise sentence on the Earnings Date or News context]\n\n"
-            "### 2. Technical Analysis\n"
-            "* **Price Action:** [Analyze current price relative to the structural zones]\n"
-            "* **Momentum (RSI & MACD):** [Synthesize the RSI and MACD ledger signals]\n"
-            "* **Institutional Flow & VWAP:** [Synthesize Volume and VWAP ledger signals]\n"
-            "* **Volatility:** [Synthesize Bollinger Bands ledger signal]\n\n"
-            "### 3. The Verdict\n"
-            "[A final, punchy 2-sentence conclusion summarizing the Quant Score and justifying your AI Signal]"
+            "* **Valuation & Efficiency:** [1 sentence evaluating P/E, Margin, and Cash Flow]\n"
+            "* **Balance Sheet & Sentiment:** [1 sentence on Debt-to-Equity and Wall St Target Sentiment]\n"
+            "* **Catalyst Risk:** [1 sentence on the Earnings Date or News context]\n\n"
+            "### 2. Market Mechanics & Technicals\n"
+            "* **Price Action & Consolidation:** [Analyze current price relative to structural zones and mention if a BB squeeze/consolidation pattern is forming]\n"
+            "* **Smart Money & Options Flow:** [Synthesize Insider holdings, Institutional Volume, and Put/Call options flow signals]\n"
+            "* **Squeeze & Catalyst Risk:** [Evaluate Short Interest / Short Squeeze potential alongside upcoming Earnings/News]\n"
+            "* **Momentum (RSI & MACD):** [Synthesize the RSI and MACD ledger signals]\n\n"
+            f"{verdict_block}"
         )
         
         response = model.generate_content(prompt)
 
-        # Swapped to pure markdown so it renders beautifully in standard text/markdown widgets
         disclaimer_md = (
             "\n\n---\n"
             "*LEGAL DISCLAIMER: The analysis and quantitative targets provided by TradeBotics AI are for "
@@ -925,7 +926,8 @@ async def generate_exit_strategy(req: TranslationRequest, user_id: str = Query(.
         prompt += f"- Major Resistance (Ceiling): ${round(resistance_level, 2)}\n"
         prompt += f"- Distance to Support: ${distance_to_support}\n"
         prompt += f"- Distance to Resistance: ${distance_to_resistance}\n\n"
-        prompt += "MANDATORY: You must base your Strike Zones and Exit Strategy strictly on these mathematical Support and Resistance levels. Take Profit levels MUST be higher than the Current Price.\n\n"
+        prompt += "MANDATORY: You must base your Strike Zones and Exit Strategy strictly on these mathematical Support and Resistance levels. Take Profit levels MUST be higher than the Current Price.\n"
+        prompt += "CRITICAL: If 'Short Squeeze Risk' is in the signals, you MUST suggest wider Take Profit zones to account for explosive upside volatility.\n\n"
 
         ledger = req.data_context.get("ledger", [])
         if ledger:
