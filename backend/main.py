@@ -167,8 +167,6 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price, ti
         tech_base -= 10  # Increased penalty for downward intraday velocity
 
     # 🚨 FIX 1: MACD/TREND BEARISH DIVERGENCE PENALTY
-    # If the daily action is negative but the underlying base momentum is highly inflated,
-    # it flags institutional distribution (selling into retail strength). Knock the score down.
     if current_price < prev_price and tech_base > 75:
         tech_base -= 20
 
@@ -290,6 +288,7 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price, ti
     total_score = max(10, min(99, math.ceil((tech_score + fund_score) / 2) + alpha_bonus))
 
     return total_score, tech_score, fund_score, extra_ledger, real_rsi, volume, avg_volume, vwap_proxy, upper_band, lower_band, sector, pe, margins, rev_growth, fcf, dte, target_price
+
 
 # ==========================================
 # --- THE STEALTH DATA WORKER ---
@@ -442,7 +441,7 @@ else:
 GOOGLE_API_KEY = os.getenv("GEMINI_API_KEY")
 if GOOGLE_API_KEY:
     genai.configure(api_key=GOOGLE_API_KEY)
-    # FIX: Updated to gemini-2.0-flash to resolve 404 Model Not Found
+    # FIX: Explicitly updated to gemini-2.0-flash to resolve 500/404 errors
     model = genai.GenerativeModel('gemini-2.0-flash')
 else:
     model = None
@@ -883,7 +882,7 @@ async def translate_ai(req: TranslationRequest, user_id: str = Query(...)):
         if current_tokens < 3:
             raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 3 Tokens required.")
 
-        quant_score = req.data_context.get('score', 0)
+        quant_score = safe_float(req.data_context.get('score', 0))
         
         # 🛡️ SAFETY & DYNAMIC PRICING FIX
         price = safe_float(req.data_context.get('price', 0))
@@ -932,16 +931,20 @@ async def translate_ai(req: TranslationRequest, user_id: str = Query(...)):
         next_earnings = funds.get("next_earnings", "N/A")
         if next_earnings != "N/A" and next_earnings != "Unknown":
             prompt += f"\nEARNINGS RISK:\n- Today's Date: {today_str}\n- Next Earnings Date: {next_earnings}\n"
+            prompt += "CRITICAL MANDATE: You must accurately calculate the relative time between Today's Date and the Next Earnings Date. Do not state it is years away if it is happening this year.\n"
         else:
             prompt += "\nEARNINGS RISK:\n- Next Earnings Date: UNKNOWN\n"
-            
+            prompt += "CRITICAL MANDATE: The earnings date is currently unavailable. You MUST explicitly state that the catalyst timeline is pending. DO NOT invent, estimate, or assume a future date under any circumstances.\n"
+
         # 🚨 PYTHON OVERRIDE LOGIC
         is_overextended = False
         if ledger:
             for item in ledger:
-                if item.get("factor") == "MACD Divergence" and "Negative" in str(item.get("val")):
+                factor = str(item.get("factor", ""))
+                val = str(item.get("val", ""))
+                if "MACD Divergence" in factor and "Negative" in val:
                     is_overextended = True
-                if item.get("factor") == "Options Flow" and "Put Heavy" in str(item.get("val")):
+                if "Options Flow" in factor and "Put Heavy" in val:
                     is_overextended = True
 
         if is_overextended:
@@ -963,7 +966,7 @@ async def translate_ai(req: TranslationRequest, user_id: str = Query(...)):
         prompt += (
             "\n🚨 CRITICAL FORMATTING MANDATE:\n"
             "OUTPUT STRICTLY IN CLEAN MARKDOWN. DO NOT use HTML tags.\n\n"
-            "### 🎯 TARGET PRICE RANGE: ${low_target_val} - ${high_target_val}\n"
+            "### 🎯 TARGET PRICE RANGE: $[low] - $[high]\n"
             f"### ⚖️ AI SIGNAL: {allowed_signals}\n"
             f"**📊 STRUCTURAL ZONES:** Support: {support_str} | Resistance: {res_str}\n\n"
             "---\n\n"
@@ -1002,6 +1005,107 @@ async def translate_ai(req: TranslationRequest, user_id: str = Query(...)):
     except HTTPException as he:
         raise he
     except Exception as e:
+        print(f"API Error in /translate: {str(e)}", file=sys.stderr)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/exit-strategy")
+async def generate_exit_strategy(req: TranslationRequest, user_id: str = Query(...)): 
+    if not model: return {"analysis": "AI Node Offline."}
+    try:
+        cache_key = f"EXIT_STRAT_{req.ticker.upper()}"
+        cached_data = check_ai_cache(cache_key)
+        
+        profile_res = supabase.table('profiles').select('ai_token_balance').eq('id', user_id).execute()
+        if not profile_res.data: raise HTTPException(status_code=404, detail="Operative profile not found.")
+        current_tokens = int(profile_res.data[0]['ai_token_balance'])
+
+        if cached_data:
+            cached_data["remaining_tokens"] = current_tokens
+            return cached_data
+
+        if current_tokens < 2:
+            raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 2 Tokens required.")
+
+        current_price = safe_float(req.data_context.get('price', 0))
+        support_level = safe_float(req.data_context.get('support_level', 0))
+        resistance_level = safe_float(req.data_context.get('resistance_level', 0))
+
+        if current_price >= resistance_level:
+            implied_volatility_range = current_price - support_level if support_level < current_price else current_price * 0.05
+            support_level = current_price * 0.95  
+            resistance_level = current_price + implied_volatility_range  
+            
+        distance_to_support = round(current_price - support_level, 2)
+        distance_to_resistance = round(resistance_level - current_price, 2)
+
+        prompt = f"Act as a quantitative risk manager. Define a strict, scaled risk-management exit protocol for {req.ticker}.\n\n"
+        prompt += f"CURRENT MARKET CONTEXT:\n"
+        prompt += f"- Current Price: ${current_price}\n"
+        prompt += f"- Major Support (Floor): ${round(support_level, 2)}\n"
+        prompt += f"- Major Resistance (Ceiling): ${round(resistance_level, 2)}\n"
+        prompt += f"- Distance to Support: ${distance_to_support}\n"
+        prompt += f"- Distance to Resistance: ${distance_to_resistance}\n\n"
+        prompt += "MANDATORY: You must base your Strike Zones and Exit Strategy strictly on these mathematical Support and Resistance levels. Take Profit levels MUST be higher than the Current Price.\n"
+        prompt += "CRITICAL: If 'Short Squeeze Risk' is in the signals, you MUST suggest wider Take Profit zones to account for explosive upside volatility.\n\n"
+
+        ledger = req.data_context.get("ledger", [])
+        if ledger:
+            prompt += f"TECHNICAL LEDGER (SIGNALS):\n"
+            for item in ledger: 
+                prompt += f"- {item.get('factor')}: {item.get('val')} ({item.get('status')})\n"
+
+        prompt += (
+            "\n🚨 CRITICAL MANDATE - SCALED EXIT STRATEGY REQUIRED:\n"
+            "DO NOT provide a general summary. OUTPUT STRICTLY IN HTML FORMAT using this exact structure.\n"
+            "CRITICAL: Before suggesting an exit, evaluate the 'Thesis Health'.\n"
+            "1. If the current price is within 5% of the Hard Stop Loss, explicitly label the thesis as 'Under Stress' and suggest a 'Hold for Support Test' rather than a profit-taking level.\n"
+            "2. Do not suggest a Take Profit level if the price is significantly closer to the Stop Loss than the Resistance Ceiling.\n"
+            "3. Always explain: 'Current price is testing structural support; wait for a bounce before planning exit strategies' if applicable.\n\n"
+            "<h3>Scaled Execution Protocol</h3>\n"
+            "<ul>\n"
+            f"<li><strong>📏 DISTANCE TO TARGETS:</strong> Support is ${distance_to_support} away. Resistance is ${distance_to_resistance} away.</li>\n"
+            "<li><strong>🟢 TAKE PROFIT 1 (Conservative):</strong> $[Price]. (Explain this as a safe place to take partial profits, typically right before or at the main resistance ceiling).</li>\n"
+            "<li><strong>🟢 TAKE PROFIT 2 (Aggressive):</strong> $[Price]. (Explain this as the ultimate runner target if the stock breaks through the ceiling, based on current momentum).</li>\n"
+            "<li><strong>🔴 HARD STOP LOSS (SL):</strong> $[Price]. (Explain why dropping below the mathematical support floor invalidates the trade).</li>\n"
+            "<li><strong>⚖️ THESIS HEALTH:</strong> [Calculate the Risk/Reward Ratio using TP1 and the Stop Loss]. (Label as 'Under Stress', 'Aggressive', 'Balanced', or 'High-Probability').</li>\n"
+            "<li><strong>⏱️ TIME HORIZON:</strong> [State the estimated time in days/weeks for this thesis to play out].</li>\n"
+            "</ul>"
+        )
+
+        response = model.generate_content(prompt)
+
+        disclaimer_html = (
+            "<br><br><hr style='border-color: #1e293b; margin-top: 15px; margin-bottom: 15px;'/>"
+            "<p style='font-size: 10px; color: #64748b; font-style: italic; line-height: 1.4; text-align: justify;'>"
+            "<strong>LEGAL DISCLAIMER:</strong> The execution protocol and risk models provided by TradeBotics AI are for "
+            "informational and educational purposes only and do not constitute financial, investment, or trading advice. "
+            "This output is generated by an artificial intelligence model relying on historical data, mathematical probabilities, "
+            "and technical indicators, which cannot guarantee future performance. Trading equities involves significant risk of capital loss. "
+            "You are solely responsible for your own trading decisions. Always conduct your own due diligence or consult "
+            "with a licensed financial professional before executing any trades."
+            "</p>"
+        )
+
+        try:
+            ai_text = response.text.strip() + disclaimer_html
+        except ValueError:
+            ai_text = "<h3>Execution Blocked</h3><ul><li>AI Node rejected synthesis due to strict safety protocols.</li></ul>"
+
+        new_token_balance = current_tokens - 2
+        supabase.table('profiles').update({'ai_token_balance': new_token_balance}).eq('id', user_id).execute()
+
+        final_response = sanitize_nans({
+            "analysis": ai_text,
+            "remaining_tokens": new_token_balance
+        })
+        
+        update_ai_cache(cache_key, final_response)
+        return final_response
+        
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        print(f"API Error in /exit-strategy: {str(e)}", file=sys.stderr)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/summarize")
@@ -1052,7 +1156,7 @@ async def summarize_article(req: SummaryRequest, user_id: str = Query(...)):
         }
         
         update_ai_cache(cache_key, final_response)
-        return final_response
+        return sanitize_nans(final_response)
         
     except HTTPException as he:
         raise he
