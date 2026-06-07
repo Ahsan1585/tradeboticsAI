@@ -161,8 +161,16 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price, ti
         upper_band = round(current_price * 1.05, 2)
         lower_band = round(current_price * 0.95, 2)
 
-    if current_price > prev_price: tech_base += 5
-    else: tech_base -= 5
+    if current_price > prev_price: 
+        tech_base += 5
+    else: 
+        tech_base -= 10  # Increased penalty for downward intraday velocity
+
+    # 🚨 FIX 1: MACD/TREND BEARISH DIVERGENCE PENALTY
+    # If the daily action is negative but the underlying base momentum is highly inflated,
+    # it flags institutional distribution (selling into retail strength). Knock the score down.
+    if current_price < prev_price and tech_base > 75:
+        tech_base -= 20
 
     try:
         delta = clean_close.diff()
@@ -267,13 +275,16 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price, ti
                         "status": "BULLISH", 
                         "reasoning": f"The derivatives market for {ticker} is heavily skewed toward the upside. With a Put/Call ratio of {round(put_call_ratio, 2)}, smart money is aggressively betting on a near-term price surge."
                     })
+                # 🚨 FIX 2: UPGRADED INSTITUTIONAL RISK MALUS
+                # Dropping only 5 points was letting overextended stocks stay at the top. 
+                # Slashing 20 points explicitly forces hyper-hedged positions out of your top screener rankings.
                 elif put_call_ratio > 1.5: 
-                    alpha_bonus -= 5
+                    alpha_bonus -= 20
                     extra_ledger.append({
                         "factor": "Options Flow", 
-                        "val": "Put Heavy", 
+                        "val": f"Put Heavy ({round(put_call_ratio, 2)})", 
                         "status": "BEARISH", 
-                        "reasoning": f"The derivatives market for {ticker} is loaded with downside protection. With a Put/Call ratio of {round(put_call_ratio, 2)}, institutions are actively hedging against a potential crash."
+                        "reasoning": f"Smart money is aggressively buying protective puts at an extreme ratio of {round(put_call_ratio, 2)}. This aggressive institutional hedging signals a massive threat of a near-term correction."
                     })
     except Exception:
         pass
