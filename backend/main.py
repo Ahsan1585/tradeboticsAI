@@ -452,7 +452,7 @@ if GOOGLE_API_KEY:
     genai.configure(api_key=GOOGLE_API_KEY)
     model = genai.GenerativeModel('gemini-3.5-flash')
 else:
-    model = None
+    model = genai.GenerativeModel('gemini-3.1-flash-lite')
 
 # --- REQUEST MODELS ---
 class TradeRequest(BaseModel):
