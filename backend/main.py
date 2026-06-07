@@ -276,8 +276,6 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price, ti
                         "reasoning": f"The derivatives market for {ticker} is heavily skewed toward the upside. With a Put/Call ratio of {round(put_call_ratio, 2)}, smart money is aggressively betting on a near-term price surge."
                     })
                 # 🚨 FIX 2: UPGRADED INSTITUTIONAL RISK MALUS
-                # Dropping only 5 points was letting overextended stocks stay at the top. 
-                # Slashing 20 points explicitly forces hyper-hedged positions out of your top screener rankings.
                 elif put_call_ratio > 1.5: 
                     alpha_bonus -= 20
                     extra_ledger.append({
@@ -444,7 +442,8 @@ else:
 GOOGLE_API_KEY = os.getenv("GEMINI_API_KEY")
 if GOOGLE_API_KEY:
     genai.configure(api_key=GOOGLE_API_KEY)
-    model = genai.GenerativeModel('gemini-2.5-flash')
+    # FIX: Updated to gemini-2.0-flash to resolve 404 Model Not Found
+    model = genai.GenerativeModel('gemini-2.0-flash')
 else:
     model = None
 
@@ -936,19 +935,36 @@ async def translate_ai(req: TranslationRequest, user_id: str = Query(...)):
         else:
             prompt += "\nEARNINGS RISK:\n- Next Earnings Date: UNKNOWN\n"
             
-        if quant_score >= 90:
+        # 🚨 PYTHON OVERRIDE LOGIC
+        is_overextended = False
+        if ledger:
+            for item in ledger:
+                if item.get("factor") == "MACD Divergence" and "Negative" in str(item.get("val")):
+                    is_overextended = True
+                if item.get("factor") == "Options Flow" and "Put Heavy" in str(item.get("val")):
+                    is_overextended = True
+
+        if is_overextended:
+            verdict_block = (
+                "### 3. The Verdict\n"
+                "[You MUST issue a 'WAIT FOR MEAN REVERSION' or 'SELL' signal. Explain that despite strong fundamentals, momentum is breaking down and smart money is hedging (buying puts), making the current price a high-risk bull trap. Anchor your target entry to the Mathematical Floor.]"
+            )
+            allowed_signals = "[SELL/TRIM/WAIT FOR MEAN REVERSION]"
+        elif quant_score >= 90:
             verdict_block = (
                 "### ⚡ CONVICTION RATING: STRONG BUY\n"
                 "[Forcefully list exactly which premium parameters have aligned to create an asymmetrical upside opportunity. Keep the tone aggressive and undeniable.]"
             )
+            allowed_signals = "[STRONG BUY/BUY]"
         else:
             verdict_block = "### 3. The Verdict\n[A punchy 2-sentence conclusion justifying your AI Signal]"
+            allowed_signals = "[BUY/HOLD/TRIM/SELL]"
             
         prompt += (
             "\n🚨 CRITICAL FORMATTING MANDATE:\n"
             "OUTPUT STRICTLY IN CLEAN MARKDOWN. DO NOT use HTML tags.\n\n"
             "### 🎯 TARGET PRICE RANGE: ${low_target_val} - ${high_target_val}\n"
-            "### ⚖️ AI SIGNAL: [BUY/HOLD/TRIM/SELL]\n"
+            f"### ⚖️ AI SIGNAL: {allowed_signals}\n"
             f"**📊 STRUCTURAL ZONES:** Support: {support_str} | Resistance: {res_str}\n\n"
             "---\n\n"
             "### 1. Macro & Fundamentals\n"
@@ -1073,9 +1089,10 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
                 
                 stock = yf.Ticker(ticker, session=get_yf_session())
                 hist = stock.history(period="1d", prepost=True)
-                if hist.empty: continue 
+                clean_close = hist['Close'].dropna()
+                if clean_close.empty: continue 
                 
-                price = safe_float(hist['Close'].iloc[-1])
+                price = round(safe_float(clean_close.iloc[-1]), 2)
 
                 db_match = next((item for item in db_universe if item["ticker"] == ticker), None)
                 score = math.ceil((safe_float(db_match['tech_score']) + safe_float(db_match['fund_score'])) / 2) if db_match else 75
@@ -1123,10 +1140,11 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
                     if any(h['ticker'] == t for h in portfolio_summary): continue
                     stock = yf.Ticker(t, session=get_yf_session())
                     hist = stock.history(period="1d")
-                    if hist.empty: continue
+                    clean_close = hist['Close'].dropna()
+                    if clean_close.empty: continue
                     scored_candidates.append({
                         "ticker": t,
-                        "price": safe_float(hist['Close'].iloc[-1]),
+                        "price": round(safe_float(clean_close.iloc[-1]), 2),
                         "score": 50,
                         "sort_weight": 50,
                         "sector": "Fallback Mode"
@@ -1176,11 +1194,11 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
         new_token_balance = current_tokens - 5
         supabase.table('profiles').update({'ai_token_balance': new_token_balance}).eq('id', user_id).execute()
 
-        return {
+        return sanitize_nans({
             "analysis": ai_text,
             "holdings": portfolio_summary,
             "remaining_tokens": new_token_balance
-        }
+        })
         
     except HTTPException as he:
         raise he
