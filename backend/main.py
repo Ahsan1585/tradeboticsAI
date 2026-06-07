@@ -296,6 +296,19 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price, ti
 # ==========================================
 # --- THE STEALTH DATA WORKER ---
 # ==========================================
+# ==========================================
+# --- THE STEALTH DATA WORKER ---
+# ==========================================
+def fetch_ticker_data_sync(t, session):
+    """Runs in a separate thread so it doesn't freeze the FastAPI server."""
+    stock = yf.Ticker(t, session=session)
+    hist = stock.history(period="3mo")
+    try:
+        info = stock.info
+    except Exception:
+        info = {}
+    return stock, hist, info
+
 async def staleness_worker_loop():
     """Runs continuously every 3 minutes. Sweeps 15 stale tickers using Cloudscraper."""
     await asyncio.sleep(60)
@@ -317,7 +330,8 @@ async def staleness_worker_loop():
                 # 3. Database Seeding 
                 if not stale_tickers:
                     print(f"[{datetime.now()}] ⚠️ EMPTY QUEUE: Seeding database from Wikipedia S&P 500...", file=sys.stderr)
-                    universe = get_market_universe()
+                    # Offload the Wikipedia blocking request to a thread as well
+                    universe = await asyncio.to_thread(get_market_universe)
                     for i in range(0, len(universe), 200):
                         chunk = universe[i:i + 200]
                         seed_data = [{'ticker': t} for t in chunk]
@@ -340,12 +354,9 @@ async def staleness_worker_loop():
                     current_time = datetime.now(timezone.utc).isoformat()
                     
                     try:
-                        stock = yf.Ticker(t, session=master_session)
+                        # 🚨 FIX: AWAIT IN A SEPARATE THREAD SO THE SERVER DOESN'T FREEZE 🚨
+                        stock, hist, info = await asyncio.to_thread(fetch_ticker_data_sync, t, master_session)
                         
-                        # 1. UPGRADED MEMORY: Fetch 3 months of data to calculate multi-horizon metrics
-                        hist = stock.history(period="3mo")
-                        
-                        # Fix: Drop NaNs to prevent picking up unclosed pre-market ticks
                         clean_close = hist['Close'].dropna()
 
                         if clean_close.empty or len(clean_close) < 40:
@@ -356,11 +367,6 @@ async def staleness_worker_loop():
                         prev_price = round(safe_float(clean_close.iloc[-2]), 2) if len(clean_close) > 1 else price
                         daily_change = round(((price - prev_price) / prev_price) * 100, 2) if prev_price > 0 else 0.0
 
-                        try:
-                            info = stock.info
-                        except Exception:
-                            info = {}
-                            
                         # === INJECTING ONE SOURCE OF TRUTH ===
                         total_score, tech_score, fund_score, _, _, _, _, _, _, _, sector, pe, _, _, _, _, _ = calculate_quant_metrics(hist, info, stock, price, prev_price, t)
                         
