@@ -672,37 +672,36 @@ async def analyze_ticker(ticker: str):
         ledger.extend(extra_ledger)
 
         # 🚨 RESTORED DASHBOARD STATS: Extract directly for the terminal UI
-        raw_insider = info.get("heldPercentInsiders")
-        insider_str = f"{round(raw_insider * 100, 2)}%" if raw_insider else "N/A"
+        raw_insider = safe_float(info.get("heldPercentInsiders", 0))
+        insider_str = f"{round(raw_insider * 100, 2)}%" if raw_insider > 0 else "N/A"
         
-        raw_short = info.get("shortPercentOfFloat")
-        short_str = f"{round(raw_short * 100, 2)}%" if raw_short else "N/A"
+        raw_short = safe_float(info.get("shortPercentOfFloat", 0))
+        short_str = f"{round(raw_short * 100, 2)}%" if raw_short > 0 else "N/A"
 
-        final_response = sanitize_nans({
+        final_response = {
             "ticker": ticker_upper,
             "company_name": info.get("shortName", ticker_upper),
             "price": current_price,
             "score": total_score,
             "tech_score": int(tech_score),
             "fund_score": int(fund_score),
-            "volume": f"{volume:,}",
+            "volume": f"{int(volume):,}",
             "vol_surge": vol_surge,
             "ledger": ledger,
             "news": news_list,  
             "ai_tactical": f"Market conditions evaluated for {ticker_upper}. Execution guidance dynamically adjusting to real-time volatility.",
             "support_level": round(support, 2),
             "resistance_level": round(resistance, 2),
-
             "fundamentals": {
                 "market_cap": formatted_mcap, 
-                "pe_ratio": str(round(pe, 2)) if pe else "N/A",
-                "debt_equity": str(info.get("debtToEquity", "N/A")),
-                "margin": f"{round(margins * 100, 2)}%" if margins else "N/A",
-                "insider_ownership": insider_str,  # <-- ADDED BACK TO TERMINAL
-                "short_interest": short_str,       # <-- ADDED BACK TO TERMINAL
-                "sentiment": "BULLISH" if total_score > 65 else "BEARISH" if total_score < 40 else "NEUTRAL",
-                "cash_flow": "POSITIVE" if margins and margins > 0 else "NEGATIVE",
-                "next_earnings": next_earnings 
+                "pe_ratio": str(round(pe, 2)) if pe > 0 else "N/A",
+                "debt_equity": str(round(dte, 2)) if dte > 0 else "N/A",
+                "margin": f"{round(margins * 100, 2)}%" if margins != 0 else "N/A",
+                "insider_ownership": insider_str, # <-- ADDED THIS
+                "short_interest": short_str,      # <-- ADDED THIS
+                "sentiment": "BULLISH" if target_price > 0 and current_price < target_price else "BEARISH" if target_price > 0 else "NEUTRAL",
+                "cash_flow": "POSITIVE" if fcf > 0 else "NEGATIVE",
+                "next_earnings": next_earnings
             }
         })
         

@@ -562,6 +562,11 @@ function TerminalContent() {
                       <Stat label="P/E Ratio" val={data.fundamentals.pe_ratio} />
                       <Stat label="Debt/Equity" val={data.fundamentals.debt_equity} />
                       <Stat label="Profit Margin" val={data.fundamentals.margin} />
+                      
+                      {/* ADD THE TWO NEW STATS HERE */}
+                      <Stat label="Insider Ownership" val={data.fundamentals.insider_ownership} />
+                      <Stat label="Short Interest" val={data.fundamentals.short_interest} />
+                      
                       <Stat label="Sentiment" val={data.fundamentals.sentiment} color="text-blue-500" />
                       <Stat label="Cash Flow" val={data.fundamentals.cash_flow} />
                   </div>
