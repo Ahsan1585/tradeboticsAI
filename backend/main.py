@@ -707,7 +707,7 @@ async def analyze_ticker(ticker: str):
                 "cash_flow": "POSITIVE" if fcf > 0 else "NEGATIVE",
                 "next_earnings": next_earnings
             }
-        })
+        }
         
         # 🚀 3. SAVE TO CACHE BEFORE RETURNING
         market_cache[ticker_upper] = (now, final_response)
