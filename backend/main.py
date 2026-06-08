@@ -916,44 +916,72 @@ async def generate_exit_strategy(req: TranslationRequest, user_id: str = Query(.
         if current_tokens < 2:
             raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 2 Tokens required.")
 
-        # 🚨 ENHANCEMENT: FETCH ATR FOR DYNAMIC STOP LOSS
-        stock = yf.Ticker(req.ticker)
-        hist = stock.history(period="3mo")
-        atr = calculate_atr(hist)
-        
-        current_price = safe_float(req.data_context.get('price', 0))
-        # Use 2x ATR for a standard, robust stop loss
-        stop_loss = round(current_price - (2 * atr), 2)
-        risk_per_share = round(current_price - stop_loss, 2)
-        
-        # Define Targets based on a 1:2 Risk/Reward Ratio
-        take_profit_1 = round(current_price + (risk_per_share * 1.5), 2)
-        take_profit_2 = round(current_price + (risk_per_share * 3), 2)
+        prompt = f"Act as a quantitative risk manager. Define a strict, scaled risk-management exit protocol for {req.ticker}.\n\n"
+        prompt += f"CURRENT MARKET CONTEXT:\n"
+        prompt += f"- Current Price: ${req.data_context.get('price', 'N/A')}\n"
+        prompt += f"- Major Support (Floor): ${req.data_context.get('support_level', 'N/A')}\n"
+        prompt += f"- Major Resistance (Ceiling): ${req.data_context.get('resistance_level', 'N/A')}\n\n"
+        prompt += "MANDATORY: You must base your Strike Zones and Exit Strategy strictly on these mathematical Support and Resistance levels.\n\n"
 
-        prompt = (
-            f"Act as a quantitative risk manager. Define a strict, volatility-adjusted exit protocol for {req.ticker}.\n"
-            f"Current Price: ${current_price}. ATR (Volatility): ${round(atr, 2)}.\n"
-            f"Mathematical Stop Loss (2x ATR): ${stop_loss}.\n\n"
-            "MANDATORY: You must use the provided ATR-based Stop Loss. If the Risk/Reward ratio (TP1/Risk) is less than 1.5, "
-            "explicitly warn that the trade is 'Under Stress' due to poor risk profile.\n\n"
+        ledger = req.data_context.get("ledger", [])
+        if ledger:
+            prompt += f"TECHNICAL LEDGER (SIGNALS):\n"
+            for item in ledger: 
+                prompt += f"- {item.get('factor')}: {item.get('val')} ({item.get('status')})\n"
+
+        prompt += (
+            "\n🚨 CRITICAL MANDATE - SCALED EXIT STRATEGY REQUIRED:\n"
+            "DO NOT provide a general summary. OUTPUT STRICTLY IN HTML FORMAT using this exact structure.\n"
+            "CRITICAL: Explain your reasoning using simple, everyday language. Do NOT use dense institutional jargon.\n"
+            "You must create a 'scaled' exit plan featuring two distinct profit-taking levels.\n\n"
             "<h3>Scaled Execution Protocol</h3>\n"
             "<ul>\n"
-            f"<li><strong>🟢 TAKE PROFIT 1 (Target):</strong> ${take_profit_1}. (Initial profit-taking zone at 1.5x risk).</li>\n"
-            f"<li><strong>🟢 TAKE PROFIT 2 (Runner):</strong> ${take_profit_2}. (Full extension target at 3x risk).</li>\n"
-            f"<li><strong>🔴 VOLATILITY STOP LOSS (SL):</strong> ${stop_loss}. (Calculated using 2x ATR to filter out market noise).</li>\n"
-            f"<li><strong>⚖️ THESIS HEALTH:</strong> {'High-Probability' if (take_profit_1 - current_price) / risk_per_share > 1.5 else 'Under Stress (Poor R/R)'}.</li>\n"
+            "<li><strong>🟢 TAKE PROFIT 1 (Conservative):</strong> $[Price]. (Explain this as a safe place to take partial profits, typically right before or at the main resistance ceiling).</li>\n"
+            "<li><strong>🟢 TAKE PROFIT 2 (Aggressive):</strong> $[Price]. (Explain this as the ultimate runner target if the stock breaks through the ceiling, based on current momentum).</li>\n"
+            "<li><strong>🔴 HARD STOP LOSS (SL):</strong> $[Price]. (Explain why dropping below the mathematical support floor invalidates the trade).</li>\n"
+            "<li><strong>⚖️ THESIS HEALTH:</strong> [Calculate the Risk/Reward Ratio using TP1 and the Stop Loss]. (Label as 'Aggressive' if R/R is < 1:1, 'Balanced' if 1:1 to 2:1, or 'High-Probability' if > 2:1).</li>\n"
+            "<li><strong>⏱️ TIME HORIZON:</strong> [State the estimated time in days/weeks for this thesis to play out].</li>\n"
             "</ul>"
         )
 
-        response = model.generate_content(prompt)
-        
-        # ... [Rest of your existing disclaimer and return logic] ...
-        ai_text = response.text.strip()
+        response = model.generate_content(
+            prompt,
+            safety_settings=[
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+            ]
+        )
+
+        # 🚨 LEGAL DISCLAIMER INJECTION 🚨
+        disclaimer_html = (
+            "<br><br><hr style='border-color: #1e293b; margin-top: 15px; margin-bottom: 15px;'/>"
+            "<p style='font-size: 10px; color: #64748b; font-style: italic; line-height: 1.4; text-align: justify;'>"
+            "<strong>LEGAL DISCLAIMER:</strong> The execution protocol and risk models provided by TradeBotics AI are for "
+            "informational and educational purposes only and do not constitute financial, investment, or trading advice. "
+            "This output is generated by an artificial intelligence model relying on historical data, mathematical probabilities, "
+            "and technical indicators, which cannot guarantee future performance. Trading equities involves significant risk of capital loss. "
+            "You are solely responsible for your own trading decisions. Always conduct your own due diligence or consult "
+            "with a licensed financial professional before executing any trades."
+            "</p>"
+        )
+
+        try:
+            ai_text = response.text.strip() + disclaimer_html
+        except ValueError:
+            ai_text = "<h3>Execution Blocked</h3><ul><li>AI Node rejected synthesis due to strict safety protocols.</li></ul>"
+
         new_token_balance = current_tokens - 2
         supabase.table('profiles').update({'ai_token_balance': new_token_balance}).eq('id', user_id).execute()
 
-        return {"analysis": ai_text, "remaining_tokens": new_token_balance}
+        return {
+            "analysis": ai_text,
+            "remaining_tokens": new_token_balance
+        }
         
+    except HTTPException as he:
+        raise he
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
