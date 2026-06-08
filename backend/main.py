@@ -451,57 +451,6 @@ def get_support_resistance(hist):
     
     return float(np.mean(sup_levels)), float(np.mean(res_levels))
 
-# ==========================================
-# --- 12-CYLINDER QUANT ENGINE ---
-# ==========================================
-def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price, ticker="Asset"):
-    tech_base = 50
-    fund_base = 50
-    alpha_bonus = 0
-    extra_ledger = []
-    
-    # 🧹 CLEAN DATA
-    clean_close = hist['Close'].dropna()
-    valid_hist = hist.dropna(subset=['High', 'Low', 'Close', 'Volume'])
-    
-    sector = info.get("sector", "Macro Profile")
-    pe = safe_float(info.get("trailingPE", 0))
-    margins = safe_float(info.get("profitMargins", 0))
-    rev_growth = safe_float(info.get("revenueGrowth", 0))
-    fcf = safe_float(info.get("freeCashflow", 0))
-    dte = safe_float(info.get("debtToEquity", 0))
-    target_price = safe_float(info.get("targetMeanPrice", 0))
-    short_interest = safe_float(info.get("shortPercentOfFloat", 0))
-    insider_hold = safe_float(info.get("heldPercentInsiders", 0))
-
-    # --- TECHNICAL ENGINE ---
-    if len(clean_close) >= 20:
-        sma_20 = safe_float(clean_close.rolling(window=20).mean().iloc[-1])
-        if current_price > sma_20: tech_base += 15
-        else: tech_base -= 15
-    
-    if current_price > prev_price: tech_base += 15
-    else: tech_base -= 15
-    
-    tech_score = max(10, min(95, tech_base))
-    
-    # --- FUNDAMENTAL ENGINE ---
-    if pe and 0 < pe < 25: fund_base += 20
-    elif pe and pe > 50: fund_base -= 20
-    
-    if margins and margins > 0.15: fund_base += 20
-    elif margins and margins < 0: fund_base -= 25
-    
-    fund_score = max(10, min(95, fund_base))
-    
-    # --- ALPHA MULTIPLIERS ---
-    if short_interest > 0.15: alpha_bonus += 5
-    if insider_hold > 0.05: alpha_bonus += 3
-    
-    total_score = max(10, min(99, math.ceil((tech_score + fund_score) / 2) + alpha_bonus))
-    
-    return total_score, tech_score, fund_score, extra_ledger, sector, pe
-
 def get_market_universe():
     """Fetches unique tickers from S&P 500, Nasdaq-100, and DJIA from Wikipedia."""
     all_tickers = set()
