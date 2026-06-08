@@ -13,19 +13,81 @@ from supabase import create_client, Client
 import sys
 import pandas as pd
 import asyncio
+import random
 import httpx
 from contextlib import asynccontextmanager
 import requests
 import io
 import numpy as np
 from scipy.signal import argrelextrema
+import cloudscraper
 
 load_dotenv()
 
 # ==========================================
+# --- SAFETY & SANITIZATION UTILITIES ---
+# ==========================================
+def safe_float(val, default=0.0):
+    """Safely converts potential NaNs, None, or strings into a clean Python float."""
+    try:
+        if val is None:
+            return default
+        f_val = float(val)
+        if math.isnan(f_val) or math.isinf(f_val):
+            return default
+        return f_val
+    except Exception:
+        return default
+
+def sanitize_nans(obj):
+    """Recursively strips out any remaining NaNs or Infinities before JSON serialization."""
+    if isinstance(obj, float) or type(obj).__module__ == 'numpy':
+        try:
+            val = float(obj)
+            if math.isnan(val) or math.isinf(val):
+                return 0.0
+            return val
+        except Exception:
+            return 0.0
+    elif isinstance(obj, dict):
+        return {k: sanitize_nans(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [sanitize_nans(i) for i in obj]
+    return obj
+
+
+# ==========================================
+# --- THE BROWSER SPOOFER (CLOUDFLARE BYPASS) ---
+# ==========================================
+def get_yf_session():
+    """Uses Cloudscraper with randomized headers to bypass Render IP bans."""
+    scraper = cloudscraper.create_scraper(
+        browser={
+            'browser': 'chrome',
+            'platform': 'windows',
+            'desktop': True
+        }
+    )
+    
+    # Randomize the User-Agent to slip past WAF fingerprinting
+    user_agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0"
+    ]
+    scraper.headers.update({
+        "User-Agent": random.choice(user_agents),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1"
+    })
+    return scraper
+
+
+# ==========================================
 # --- KEEP ALIVE CONFIGURATION ---
 # ==========================================
-# ⚠️ REPLACE WITH YOUR ACTUAL LIVE RENDER APP URL
 RENDER_APP_URL = "https://tradebotics-api.onrender.com/market-briefing" 
 
 async def keep_alive_loop():
@@ -42,6 +104,7 @@ async def keep_alive_loop():
                 print(f"[{datetime.now()}] ⚠️ KEEP-ALIVE PING FAILED: {e}", file=sys.stderr)
             
             await asyncio.sleep(600)
+
 
 # ==========================================
 # --- 12-CYLINDER QUANT ENGINE (ONE SOURCE OF TRUTH) ---
@@ -103,9 +166,7 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price, ti
     else: 
         tech_base -= 10  # Increased penalty for downward intraday velocity
 
-    # 🚨 FIX 1: MACD/TREND BEARISH DIVERGENCE PENALTY
-    # If the daily action is negative but the underlying base momentum is highly inflated,
-    # it flags institutional distribution (selling into retail strength). Knock the score down.
+    # 🚨 MACD/TREND BEARISH DIVERGENCE PENALTY
     if current_price < prev_price and tech_base > 75:
         tech_base -= 20
 
@@ -212,9 +273,7 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price, ti
                         "status": "BULLISH", 
                         "reasoning": f"The derivatives market for {ticker} is heavily skewed toward the upside. With a Put/Call ratio of {round(put_call_ratio, 2)}, smart money is aggressively betting on a near-term price surge."
                     })
-                # 🚨 FIX 2: UPGRADED INSTITUTIONAL RISK MALUS
-                # Dropping only 5 points was letting overextended stocks stay at the top. 
-                # Slashing 20 points explicitly forces hyper-hedged positions out of your top screener rankings.
+                # 🚨 UPGRADED INSTITUTIONAL RISK MALUS
                 elif put_call_ratio > 1.5: 
                     alpha_bonus -= 20
                     extra_ledger.append({
@@ -230,108 +289,119 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price, ti
 
     return total_score, tech_score, fund_score, extra_ledger, real_rsi, volume, avg_volume, vwap_proxy, upper_band, lower_band, sector, pe, margins, rev_growth, fcf, dte, target_price
 
+
+# ==========================================
+# --- THE STEALTH DATA WORKER ---
+# ==========================================
+def fetch_ticker_data_sync(t, session):
+    """Runs in a separate thread so it doesn't freeze the FastAPI server."""
+    stock = yf.Ticker(t, session=session)
+    hist = stock.history(period="3mo")
+    try:
+        info = stock.info
+    except Exception:
+        info = {}
+    return stock, hist, info
+
 async def staleness_worker_loop():
-    """Runs every 60 minutes. Sweeps the oldest 50 tickers, scores them, and upserts to Supabase."""
+    """Runs continuously every 3 minutes. Sweeps 15 stale tickers using Cloudscraper."""
     await asyncio.sleep(60)
     
     while True:
         if supabase:
             try:
-                print(f"[{datetime.now()}] 🤖 WORKER WAKING UP: Initiating Staleness Sweep...", file=sys.stderr)
-                
-                response = supabase.table('market_universe').select('ticker').order('last_scanned', desc=False, nullsfirst=True).limit(50).execute()
+                # 🧹 1. DATABASE CLEANUP
+                try:
+                    expiration_cutoff = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+                    supabase.table('ai_scan_cache').delete().lt('last_scanned', expiration_cutoff).execute()
+                except Exception:
+                    pass
+
+                # 🚀 2. MICRO-BATCHING
+                response = supabase.table('market_universe').select('ticker').order('last_scanned', desc=False, nullsfirst=True).limit(15).execute()
                 stale_tickers = [row['ticker'] for row in response.data]
                 
+                # 3. Database Seeding 
                 if not stale_tickers:
-                    print(f"[{datetime.now()}] ⚠️ EMPTY QUEUE: Seeding database from Wikipedia...", file=sys.stderr)
-                    universe = get_market_universe()
-                    print(f"[{datetime.now()}] 📦 Scraped {len(universe)} tickers. Breaking into safe batches of 50...", file=sys.stderr)
-                    
-                    for i in range(0, len(universe), 50):
-                        chunk = universe[i:i + 50]
+                    print(f"[{datetime.now()}] ⚠️ EMPTY QUEUE: Seeding database from Wikipedia S&P 500...", file=sys.stderr)
+                    # Offload the Wikipedia blocking request to a thread as well
+                    universe = await asyncio.to_thread(get_market_universe)
+                    for i in range(0, len(universe), 200):
+                        chunk = universe[i:i + 200]
                         seed_data = [{'ticker': t} for t in chunk]
                         try:
                             supabase.table('market_universe').upsert(seed_data).execute()
-                            print(f"✅ Batch {i} to {i+len(chunk)} inserted successfully.", file=sys.stderr)
-                        except Exception as e:
-                            print(f"❌ Failed to insert batch {i}: {e}", file=sys.stderr)
+                        except Exception:
+                            pass
                         
-                    response = supabase.table('market_universe').select('ticker').order('last_scanned', desc=False, nullsfirst=True).limit(50).execute()
+                    response = supabase.table('market_universe').select('ticker').order('last_scanned', desc=False, nullsfirst=True).limit(15).execute()
                     stale_tickers = [row['ticker'] for row in response.data]
 
-                print(f"[{datetime.now()}] 🔍 WORKER SCANNING: Processing {len(stale_tickers)} tickers...", file=sys.stderr)
+                print(f"[{datetime.now()}] 🔍 STEALTH BATCH: Processing {len(stale_tickers)} tickers...", file=sys.stderr)
+                rate_limit_hit = False
                 
+                # 🛡️ Create one heavily disguised master session
+                master_session = get_yf_session()
+                
+                # 4. Gather Data
                 for t in stale_tickers:
                     current_time = datetime.now(timezone.utc).isoformat()
                     
                     try:
-                        stock = yf.Ticker(t)
-                        hist = stock.history(period="1mo")
+                        # 🚨 FIX: AWAIT IN A SEPARATE THREAD SO THE SERVER DOESN'T FREEZE 🚨
+                        stock, hist, info = await asyncio.to_thread(fetch_ticker_data_sync, t, master_session)
                         
-                        if hist.empty:
-                            print(f"⚠️ {t} is empty or delisted. Deleting from DB...", file=sys.stderr)
-                            supabase.table('market_universe').delete().eq('ticker', t).execute()
-                            continue
-                            
-                        if len(hist) < 2: 
+                        clean_close = hist['Close'].dropna()
+
+                        if clean_close.empty or len(clean_close) < 40:
                             supabase.table('market_universe').update({'last_scanned': current_time}).eq('ticker', t).execute()
                             continue
                         
-                        price = float(hist['Close'].iloc[-1])
-                        prev_price = float(hist['Close'].iloc[-2])
-                        daily_change = ((price - prev_price) / prev_price) * 100
+                        price = round(safe_float(clean_close.iloc[-1]), 2)
+                        prev_price = round(safe_float(clean_close.iloc[-2]), 2) if len(clean_close) > 1 else price
+                        daily_change = round(((price - prev_price) / prev_price) * 100, 2) if prev_price > 0 else 0.0
+
+                        # === INJECTING ONE SOURCE OF TRUTH ===
+                        total_score, tech_score, fund_score, _, _, _, _, _, _, _, sector, pe, _, _, _, _, _ = calculate_quant_metrics(hist, info, stock, price, prev_price, t)
                         
-                        info = stock.info
-                        pe = info.get("trailingPE", 0)
-                        margins = info.get("profitMargins", 0)
-                        sector = info.get("sector", "Macro Profile")
-                        
-                        tech_base = 50
-                        if len(hist) >= 20:
-                            sma_20 = hist['Close'].rolling(window=20).mean().iloc[-1]
-                            if price > sma_20: tech_base += 25
-                            else: tech_base -= 25
-                        if price > prev_price: tech_base += 15
-                        else: tech_base -= 15
-                        tech_score = max(10, min(95, tech_base))
-                        
-                        fund_base = 50
-                        if pe and 0 < pe < 25: fund_base += 20
-                        elif pe and pe > 50: fund_base -= 20
-                        if margins and margins > 0.15: fund_base += 20
-                        elif margins and margins < 0: fund_base -= 25
-                        fund_score = max(10, min(95, fund_base))
-                        
-                        supabase.table('market_universe').upsert({
+                        # Save successful data to Supabase (wrapped in sanitize_nans)
+                        clean_payload = sanitize_nans({
                             'ticker': t,
-                            'price': round(price, 2),
-                            'daily_change': round(daily_change, 2),
+                            'price': price,
+                            'daily_change': daily_change,
                             'tech_score': tech_score,
                             'fund_score': fund_score,
                             'sector': sector,
-                            'pe': round(pe, 2) if pe else 0,
+                            'pe': round(pe, 2),
                             'last_scanned': current_time
-                        }).execute()
-                        
-                        print(f"✅ Successfully updated {t}", file=sys.stderr)
+                        })
+                        supabase.table('market_universe').upsert(clean_payload).execute()
                         
                     except Exception as e:
-                        print(f"❌ Error processing {t}: {e}. Advancing queue...", file=sys.stderr)
-                        if "Not Found" in str(e) or "delisted" in str(e).lower():
+                        error_msg = str(e)
+                        if "Too Many Requests" in error_msg or "429" in error_msg or "Rate limited" in error_msg:
+                            print(f"[{datetime.now()}] 🛑 RATE LIMIT CAUGHT: Aborting micro-batch to cool down...", file=sys.stderr)
+                            rate_limit_hit = True 
+                            break 
+                            
+                        if "Not Found" in error_msg or "delisted" in error_msg.lower():
                             supabase.table('market_universe').delete().eq('ticker', t).execute()
                         else:
-                            supabase.table('market_universe').update({
-                                'last_scanned': current_time
-                            }).eq('ticker', t).execute()
-                            
-                        continue
+                            supabase.table('market_universe').update({'last_scanned': current_time}).eq('ticker', t).execute()
+
+                    # 🚦 ANTI-BOT THROTTLE
+                    await asyncio.sleep(random.uniform(1.0, 2.5))
                         
-                print(f"[{datetime.now()}] ✅ WORKER FINISHED: Queue updated. Sleeping for 60 minutes.", file=sys.stderr)
-                await asyncio.sleep(3600)
+                # 🚀 5. SMART CYCLE SLEEP
+                if rate_limit_hit:
+                    print(f"[{datetime.now()}] 💤 ENTERING PENALTY BOX: Sleeping for 15 minutes to clear ban.", file=sys.stderr)
+                    await asyncio.sleep(900)
+                else:
+                    print(f"[{datetime.now()}] ✅ Stealth Batch complete. Sleeping for 3 minutes.", file=sys.stderr)
+                    await asyncio.sleep(180) 
                 
             except Exception as e:
                 print(f"❌ CRITICAL WORKER ERROR: {e}", file=sys.stderr)
-                print("Worker crashed. Reviving in 60 seconds...", file=sys.stderr)
                 await asyncio.sleep(60) 
         else:
             await asyncio.sleep(60)
@@ -637,19 +707,24 @@ async def analyze_ticker(ticker: str):
     try:
         stock = yf.Ticker(ticker_upper)
         hist = stock.history(period="3mo", prepost=True)
-        if hist.empty: raise HTTPException(status_code=404, detail="Ticker data not found.")
+        
+        clean_close = hist['Close'].dropna()
+        if clean_close.empty: raise HTTPException(status_code=404, detail="Ticker data not found.")
 
         # 🚀 2. CALCULATE ROBUST SUPPORT & RESISTANCE
         support, resistance = get_support_resistance(hist)
 
-        current_price = round(hist['Close'].iloc[-1], 2)
-        prev_price = round(hist['Close'].iloc[-2], 2)
-        volume = int(hist['Volume'].iloc[-1])
-        avg_volume = int(hist['Volume'].mean())
-
-        pe = stock.info.get("trailingPE")
-        margins = stock.info.get("profitMargins")
+        current_price = round(safe_float(clean_close.iloc[-1]), 2)
+        prev_price = round(safe_float(clean_close.iloc[-2]), 2) if len(clean_close) > 1 else current_price
         
+        try:
+            info = stock.info
+        except Exception:
+            info = {}
+
+        # === INJECTING ONE SOURCE OF TRUTH ===
+        total_score, tech_score, fund_score, extra_ledger, real_rsi, volume, avg_volume, vwap_proxy, upper_band, lower_band, sector, pe, margins, rev_growth, fcf, dte, target_price = calculate_quant_metrics(hist, info, stock, current_price, prev_price, ticker_upper)
+
         raw_mcap = stock.info.get("marketCap")
         formatted_mcap = "N/A"
         if raw_mcap:
@@ -668,24 +743,6 @@ async def analyze_ticker(ticker: str):
                     next_earnings = str(calendar['Earnings Date'].iloc[0].date())
             except Exception:
                 pass
-
-        tech_base = 50
-        if len(hist) >= 20:
-            sma_20 = hist['Close'].rolling(window=20).mean().iloc[-1]
-            if current_price > sma_20: tech_base += 25
-            else: tech_base -= 25
-            
-        if current_price > prev_price: tech_base += 15
-        else: tech_base -= 15
-        tech_score = max(10, min(95, tech_base))
-
-        fund_base = 50
-        if pe and 0 < pe < 25: fund_base += 20
-        elif pe and pe > 50: fund_base -= 20
-        if margins and margins > 0.15: fund_base += 20
-        elif margins and margins < 0: fund_base -= 25
-        fund_score = max(10, min(95, fund_base))
-        total_score = math.ceil((tech_score + fund_score) / 2)
         
         vol_surge = f"{round((volume / avg_volume) * 100, 1)}%" if avg_volume > 0 else "N/A"
 
@@ -739,13 +796,19 @@ async def analyze_ticker(ticker: str):
         except Exception as e:
             print(f"News fetch error for {ticker_upper}: {e}", file=sys.stderr)
 
+        rsi_status = "OVERBOUGHT" if real_rsi >= 70 else "OVERSOLD" if real_rsi <= 30 else "BULLISH" if real_rsi > 50 else "BEARISH"
+
         ledger = [
-            {"factor": "Momentum (RSI)", "val": "62.5" if tech_score > 50 else "38.2", "status": "BULLISH" if tech_score > 50 else "BEARISH", "reasoning": f"{ticker_upper} is showing upward momentum. Current RSI proxy suggests buying pressure." if tech_score > 50 else f"{ticker_upper} is losing momentum. RSI proxy suggests selling pressure."},
+            {"factor": "Momentum (RSI)", "val": str(real_rsi), "status": rsi_status, "reasoning": f"{ticker_upper} is showing upward momentum. Current RSI proxy suggests buying pressure." if tech_score > 50 else f"{ticker_upper} is losing momentum. RSI proxy suggests selling pressure."},
             {"factor": "Institutional Flow", "val": "High" if volume > avg_volume else "Low", "status": "BULLISH" if volume > avg_volume else "NEUTRAL", "reasoning": f"Current volume of {volume:,} exceeds the historical average of {avg_volume:,}, indicating strong institutional accumulation." if volume > avg_volume else f"Current volume of {volume:,} is below the historical average of {avg_volume:,}, indicating retail-driven consolidation."},
             {"factor": "MACD Divergence", "val": "Positive" if current_price > prev_price else "Negative", "status": "BULLISH" if current_price > prev_price else "BEARISH", "reasoning": f"Price action at ${current_price} confirms a positive bullish crossover against the previous close." if current_price > prev_price else f"Price action at ${current_price} indicates a bearish crossover trajectory."},
+            {"factor": "VWAP Deviation", "val": f"${vwap_proxy}", "status": "BULLISH" if current_price > vwap_proxy else "BEARISH", "reasoning": f"The true average price paid by all traders today is ${vwap_proxy}. Because {ticker_upper} is trading at ${current_price}, it is sitting {'above' if current_price > vwap_proxy else 'below'} the VWAP."},
+            {"factor": "Bollinger Band Width", "val": f"${lower_band} - ${upper_band}", "status": "NEUTRAL" if lower_band <= current_price <= upper_band else "VOLATILE", "reasoning": f"The volatility bands range from a floor of ${lower_band} to a ceiling of ${upper_band}."},
             {"factor": "Mathematical Floor", "val": f"${round(support, 2)}", "status": "NEUTRAL", "reasoning": f"Calculated base support level derived from recent local minima."},
             {"factor": "Mathematical Ceiling", "val": f"${round(resistance, 2)}", "status": "NEUTRAL", "reasoning": f"Calculated major resistance derived from recent local maxima."}
         ]
+        
+        ledger.extend(extra_ledger)
 
         final_response = {
             "ticker": ticker_upper,
