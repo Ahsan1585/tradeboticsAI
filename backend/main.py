@@ -677,6 +677,10 @@ async def analyze_ticker(ticker: str):
         
         raw_short = safe_float(info.get("shortPercentOfFloat", 0))
         short_str = f"{round(raw_short * 100, 2)}%" if raw_short > 0 else "N/A"
+        target_price = safe_float(info.get("targetMeanPrice", 0))
+        dte = safe_float(info.get("debtToEquity", 0))
+        # Add this line near where you define pe, margins, and dte
+        fcf = safe_float(info.get("freeCashflow", 0))
 
         final_response = {
             "ticker": ticker_upper,
