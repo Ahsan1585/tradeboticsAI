@@ -43,6 +43,193 @@ async def keep_alive_loop():
             
             await asyncio.sleep(600)
 
+# ==========================================
+# --- 12-CYLINDER QUANT ENGINE (ONE SOURCE OF TRUTH) ---
+# ==========================================
+def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price, ticker="Asset"):
+    tech_base = 50
+    fund_base = 50
+    alpha_bonus = 0
+    extra_ledger = []
+    
+    # 🧹 CLEAN THE DATA: Drop trailing NaNs that poison the rolling math
+    clean_close = hist['Close'].dropna()
+    valid_hist = hist.dropna(subset=['High', 'Low', 'Close', 'Volume'])
+    
+    sector = info.get("sector", "Macro Profile")
+    pe = safe_float(info.get("trailingPE", 0))
+    margins = safe_float(info.get("profitMargins", 0))
+    rev_growth = safe_float(info.get("revenueGrowth", 0))
+    fcf = safe_float(info.get("freeCashflow", 0))
+    dte = safe_float(info.get("debtToEquity", 0))
+    target_price = safe_float(info.get("targetMeanPrice", 0))
+    short_interest = safe_float(info.get("shortPercentOfFloat", 0))
+    insider_hold = safe_float(info.get("heldPercentInsiders", 0))
+
+    # --- TECHNICAL ENGINE (6 Cylinders) ---
+    if len(clean_close) >= 40:
+        sma_20 = safe_float(clean_close.rolling(window=20).mean().iloc[-1])
+        sma_40 = safe_float(clean_close.rolling(window=40).mean().iloc[-1])
+        std_dev = safe_float(clean_close.rolling(window=20).std().iloc[-1])
+        
+        # Safely round to prevent massive decimals
+        upper_band = round(sma_20 + (2 * std_dev), 2)
+        lower_band = round(sma_20 - (2 * std_dev), 2)
+
+        if current_price > sma_20: tech_base += 10
+        else: tech_base -= 10
+        if sma_20 > sma_40: tech_base += 10 
+        else: tech_base -= 5
+        if current_price > upper_band: tech_base -= 15 
+        elif current_price < lower_band: tech_base += 15 
+
+        # Alpha Multiplier: Consolidation Squeeze
+        bb_width = (upper_band - lower_band) / sma_20 if sma_20 > 0 else 1
+        if bb_width < 0.05:
+            alpha_bonus += 5
+            extra_ledger.append({
+                "factor": "Consolidation Phase", 
+                "val": "Tight Squeeze", 
+                "status": "BULLISH", 
+                "reasoning": f"Volatility on {ticker} has compressed to extreme lows (Bollinger Bands squeezed). This pent-up energy typically results in an imminent, explosive directional breakout."
+            })
+    else:
+        sma_20 = current_price
+        upper_band = round(current_price * 1.05, 2)
+        lower_band = round(current_price * 0.95, 2)
+
+    if current_price > prev_price: 
+        tech_base += 5
+    else: 
+        tech_base -= 10  # Increased penalty for downward intraday velocity
+
+    # 🚨 FIX 1: MACD/TREND BEARISH DIVERGENCE PENALTY
+    # If the daily action is negative but the underlying base momentum is highly inflated,
+    # it flags institutional distribution (selling into retail strength). Knock the score down.
+    if current_price < prev_price and tech_base > 75:
+        tech_base -= 20
+
+    try:
+        delta = clean_close.diff()
+        gain = delta.clip(lower=0)
+        loss = -1 * delta.clip(upper=0)
+        ema_gain = gain.ewm(com=13, adjust=False).mean()
+        ema_loss = loss.ewm(com=13, adjust=False).mean()
+        rs = ema_gain / ema_loss
+        rsi_series = 100 - (100 / (1 + rs))
+        real_rsi = round(safe_float(rsi_series.iloc[-1], 50.0), 2)
+    except Exception:
+        real_rsi = 50.0
+
+    if real_rsi >= 70: tech_base -= 15 
+    elif real_rsi <= 30: tech_base += 15 
+    elif 50 < real_rsi < 65: tech_base += 5 
+
+    try:
+        volume = safe_float(valid_hist['Volume'].iloc[-1])
+        avg_volume = safe_float(valid_hist['Volume'].rolling(20).mean().iloc[-1])
+        if avg_volume > 0 and volume > (avg_volume * 1.2): tech_base += 10 
+        else: tech_base -= 5
+        
+        typical_price = (valid_hist['High'] + valid_hist['Low'] + valid_hist['Close']) / 3
+        vwap_proxy = round(safe_float((typical_price * valid_hist['Volume']).sum() / valid_hist['Volume'].sum(), current_price), 2)
+        if current_price > vwap_proxy: tech_base += 10
+        else: tech_base -= 10
+    except Exception:
+        volume, avg_volume, vwap_proxy = 0.0, 0.0, current_price
+
+    tech_score = max(10, min(95, tech_base))
+
+    # --- FUNDAMENTAL ENGINE (6 Cylinders) ---
+    is_tech = "Technology" in sector or "Communication" in sector
+    is_financial = "Financial" in sector
+    
+    if pe > 0 and pe < 25: 
+        fund_base += 10 
+    elif pe >= 25 and pe <= 60 and is_tech: 
+        fund_base += 10 
+    elif pe > 60:
+        if rev_growth < 0.20:
+            fund_base -= 10
+    
+    if margins > 0.20: 
+        if is_financial:
+            fund_base += 5
+        else:
+            fund_base += 10
+    elif margins > 0.10: 
+        fund_base += 5
+    elif margins < 0: 
+        fund_base -= 10
+    
+    if rev_growth > 0.20: fund_base += 15 
+    elif rev_growth > 0.10: fund_base += 5
+    elif rev_growth < 0: fund_base -= 15 
+
+    if fcf > 0: fund_base += 5
+    elif fcf < 0: fund_base -= 5
+    
+    if 0 < dte < 100: fund_base += 5
+    elif dte > 200 and not is_financial: fund_base -= 10
+    
+    if target_price > 0 and current_price < target_price: fund_base += 5
+    elif target_price > 0 and current_price > (target_price * 1.05): fund_base -= 5
+
+    fund_score = max(10, min(95, fund_base))
+
+    # --- ALPHA MULTIPLIERS ---
+    if short_interest > 0.15:
+        alpha_bonus += 5
+        extra_ledger.append({
+            "factor": "Short Squeeze Risk", 
+            "val": f"{round(short_interest * 100, 1)}%", 
+            "status": "VOLATILE", 
+            "reasoning": f"With {round(short_interest * 100, 1)}% of the floating supply sold short, any positive catalyst could force short-sellers to aggressively buy back shares, triggering a massive price spike on {ticker}."
+        })
+
+    if insider_hold > 0.05:
+        alpha_bonus += 3
+        extra_ledger.append({
+            "factor": "Insider Conviction", 
+            "val": f"{round(insider_hold * 100, 1)}%", 
+            "status": "BULLISH", 
+            "reasoning": f"Corporate insiders currently hold {round(insider_hold * 100, 1)}% of all {ticker} shares. This high concentration signals massive internal confidence in the company's long-term trajectory."
+        })
+
+    try:
+        options_dates = stock_obj.options
+        if options_dates:
+            chain = stock_obj.option_chain(options_dates[0])
+            calls_vol = chain.calls['volume'].sum()
+            puts_vol = chain.puts['volume'].sum()
+            if calls_vol > 0:
+                put_call_ratio = puts_vol / calls_vol
+                if put_call_ratio < 0.6: 
+                    alpha_bonus += 5
+                    extra_ledger.append({
+                        "factor": "Options Flow", 
+                        "val": "Call Heavy", 
+                        "status": "BULLISH", 
+                        "reasoning": f"The derivatives market for {ticker} is heavily skewed toward the upside. With a Put/Call ratio of {round(put_call_ratio, 2)}, smart money is aggressively betting on a near-term price surge."
+                    })
+                # 🚨 FIX 2: UPGRADED INSTITUTIONAL RISK MALUS
+                # Dropping only 5 points was letting overextended stocks stay at the top. 
+                # Slashing 20 points explicitly forces hyper-hedged positions out of your top screener rankings.
+                elif put_call_ratio > 1.5: 
+                    alpha_bonus -= 20
+                    extra_ledger.append({
+                        "factor": "Options Flow", 
+                        "val": f"Put Heavy ({round(put_call_ratio, 2)})", 
+                        "status": "BEARISH", 
+                        "reasoning": f"Smart money is aggressively buying protective puts at an extreme ratio of {round(put_call_ratio, 2)}. This aggressive institutional hedging signals a massive threat of a near-term correction."
+                    })
+    except Exception:
+        pass
+
+    total_score = max(10, min(99, math.ceil((tech_score + fund_score) / 2) + alpha_bonus))
+
+    return total_score, tech_score, fund_score, extra_ledger, real_rsi, volume, avg_volume, vwap_proxy, upper_band, lower_band, sector, pe, margins, rev_growth, fcf, dte, target_price
+
 async def staleness_worker_loop():
     """Runs every 60 minutes. Sweeps the oldest 50 tickers, scores them, and upserts to Supabase."""
     await asyncio.sleep(60)
