@@ -293,10 +293,12 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price, ti
 # ==========================================
 # --- THE STEALTH DATA WORKER ---
 # ==========================================
-def fetch_ticker_data_sync(t, session):
+
+# 1. ADD THIS HELPER FUNCTION
+def fetch_ticker_data_sync(t):
     """Runs in a separate thread so it doesn't freeze the FastAPI server."""
-    stock = yf.Ticker(t, session=session)
-    hist = stock.history(period="3mo")
+    stock = yf.Ticker(t)
+    hist = stock.history(period="1mo")
     try:
         info = stock.info
     except Exception:
@@ -304,104 +306,107 @@ def fetch_ticker_data_sync(t, session):
     return stock, hist, info
 
 async def staleness_worker_loop():
-    """Runs continuously every 3 minutes. Sweeps 15 stale tickers using Cloudscraper."""
+    """Runs every 60 minutes. Sweeps the oldest 50 tickers, scores them, and upserts to Supabase."""
     await asyncio.sleep(60)
     
     while True:
         if supabase:
             try:
-                # 🧹 1. DATABASE CLEANUP
-                try:
-                    expiration_cutoff = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
-                    supabase.table('ai_scan_cache').delete().lt('last_scanned', expiration_cutoff).execute()
-                except Exception:
-                    pass
-
-                # 🚀 2. MICRO-BATCHING
-                response = supabase.table('market_universe').select('ticker').order('last_scanned', desc=False, nullsfirst=True).limit(15).execute()
+                print(f"[{datetime.now()}] 🤖 WORKER WAKING UP: Initiating Staleness Sweep...", file=sys.stderr)
+                
+                response = supabase.table('market_universe').select('ticker').order('last_scanned', desc=False, nullsfirst=True).limit(50).execute()
                 stale_tickers = [row['ticker'] for row in response.data]
                 
-                # 3. Database Seeding 
                 if not stale_tickers:
-                    print(f"[{datetime.now()}] ⚠️ EMPTY QUEUE: Seeding database from Wikipedia S&P 500...", file=sys.stderr)
-                    # Offload the Wikipedia blocking request to a thread as well
+                    print(f"[{datetime.now()}] ⚠️ EMPTY QUEUE: Seeding database from Wikipedia...", file=sys.stderr)
+                    # 🚨 ENHANCEMENT: Offload the Wikipedia blocking request to a thread as well
                     universe = await asyncio.to_thread(get_market_universe)
-                    for i in range(0, len(universe), 200):
-                        chunk = universe[i:i + 200]
+                    print(f"[{datetime.now()}] 📦 Scraped {len(universe)} tickers. Breaking into safe batches of 50...", file=sys.stderr)
+                    
+                    for i in range(0, len(universe), 50):
+                        chunk = universe[i:i + 50]
                         seed_data = [{'ticker': t} for t in chunk]
                         try:
                             supabase.table('market_universe').upsert(seed_data).execute()
-                        except Exception:
-                            pass
+                            print(f"✅ Batch {i} to {i+len(chunk)} inserted successfully.", file=sys.stderr)
+                        except Exception as e:
+                            print(f"❌ Failed to insert batch {i}: {e}", file=sys.stderr)
                         
-                    response = supabase.table('market_universe').select('ticker').order('last_scanned', desc=False, nullsfirst=True).limit(15).execute()
+                    response = supabase.table('market_universe').select('ticker').order('last_scanned', desc=False, nullsfirst=True).limit(50).execute()
                     stale_tickers = [row['ticker'] for row in response.data]
 
-                print(f"[{datetime.now()}] 🔍 STEALTH BATCH: Processing {len(stale_tickers)} tickers...", file=sys.stderr)
-                rate_limit_hit = False
+                print(f"[{datetime.now()}] 🔍 WORKER SCANNING: Processing {len(stale_tickers)} tickers...", file=sys.stderr)
                 
-                # 🛡️ Create one heavily disguised master session
-                master_session = get_yf_session()
-                
-                # 4. Gather Data
                 for t in stale_tickers:
                     current_time = datetime.now(timezone.utc).isoformat()
                     
                     try:
-                        # 🚨 FIX: AWAIT IN A SEPARATE THREAD SO THE SERVER DOESN'T FREEZE 🚨
-                        stock, hist, info = await asyncio.to_thread(fetch_ticker_data_sync, t, master_session)
+                        # 🚨 ENHANCEMENT: AWAIT IN A SEPARATE THREAD SO THE SERVER DOESN'T FREEZE 🚨
+                        stock, hist, info = await asyncio.to_thread(fetch_ticker_data_sync, t)
                         
-                        clean_close = hist['Close'].dropna()
-
-                        if clean_close.empty or len(clean_close) < 40:
+                        if hist.empty:
+                            print(f"⚠️ {t} is empty or delisted. Deleting from DB...", file=sys.stderr)
+                            supabase.table('market_universe').delete().eq('ticker', t).execute()
+                            continue
+                            
+                        if len(hist) < 2: 
                             supabase.table('market_universe').update({'last_scanned': current_time}).eq('ticker', t).execute()
                             continue
                         
-                        price = round(safe_float(clean_close.iloc[-1]), 2)
-                        prev_price = round(safe_float(clean_close.iloc[-2]), 2) if len(clean_close) > 1 else price
-                        daily_change = round(((price - prev_price) / prev_price) * 100, 2) if prev_price > 0 else 0.0
-
-                        # === INJECTING ONE SOURCE OF TRUTH ===
-                        total_score, tech_score, fund_score, _, _, _, _, _, _, _, sector, pe, _, _, _, _, _ = calculate_quant_metrics(hist, info, stock, price, prev_price, t)
+                        price = float(hist['Close'].iloc[-1])
+                        prev_price = float(hist['Close'].iloc[-2])
+                        daily_change = ((price - prev_price) / prev_price) * 100
                         
-                        # Save successful data to Supabase (wrapped in sanitize_nans)
-                        clean_payload = sanitize_nans({
+                        pe = info.get("trailingPE", 0)
+                        margins = info.get("profitMargins", 0)
+                        sector = info.get("sector", "Macro Profile")
+                        
+                        tech_base = 50
+                        if len(hist) >= 20:
+                            sma_20 = hist['Close'].rolling(window=20).mean().iloc[-1]
+                            if price > sma_20: tech_base += 25
+                            else: tech_base -= 25
+                        if price > prev_price: tech_base += 15
+                        else: tech_base -= 15
+                        tech_score = max(10, min(95, tech_base))
+                        
+                        fund_base = 50
+                        if pe and 0 < pe < 25: fund_base += 20
+                        elif pe and pe > 50: fund_base -= 20
+                        if margins and margins > 0.15: fund_base += 20
+                        elif margins and margins < 0: fund_base -= 25
+                        fund_score = max(10, min(95, fund_base))
+                        
+                        supabase.table('market_universe').upsert({
                             'ticker': t,
-                            'price': price,
-                            'daily_change': daily_change,
+                            'price': round(price, 2),
+                            'daily_change': round(daily_change, 2),
                             'tech_score': tech_score,
                             'fund_score': fund_score,
                             'sector': sector,
-                            'pe': round(pe, 2),
+                            'pe': round(pe, 2) if pe else 0,
                             'last_scanned': current_time
-                        })
-                        supabase.table('market_universe').upsert(clean_payload).execute()
+                        }).execute()
+                        
+                        print(f"✅ Successfully updated {t}", file=sys.stderr)
                         
                     except Exception as e:
-                        error_msg = str(e)
-                        if "Too Many Requests" in error_msg or "429" in error_msg or "Rate limited" in error_msg:
-                            print(f"[{datetime.now()}] 🛑 RATE LIMIT CAUGHT: Aborting micro-batch to cool down...", file=sys.stderr)
-                            rate_limit_hit = True 
-                            break 
-                            
-                        if "Not Found" in error_msg or "delisted" in error_msg.lower():
+                        print(f"❌ Error processing {t}: {e}. Advancing queue...", file=sys.stderr)
+                        if "Not Found" in str(e) or "delisted" in str(e).lower():
                             supabase.table('market_universe').delete().eq('ticker', t).execute()
                         else:
-                            supabase.table('market_universe').update({'last_scanned': current_time}).eq('ticker', t).execute()
-
-                    # 🚦 ANTI-BOT THROTTLE
-                    await asyncio.sleep(random.uniform(1.0, 2.5))
+                            supabase.table('market_universe').update({
+                                'last_scanned': current_time
+                            }).eq('ticker', t).execute()
+                            
+                        continue
                         
-                # 🚀 5. SMART CYCLE SLEEP
-                if rate_limit_hit:
-                    print(f"[{datetime.now()}] 💤 ENTERING PENALTY BOX: Sleeping for 15 minutes to clear ban.", file=sys.stderr)
-                    await asyncio.sleep(900)
-                else:
-                    print(f"[{datetime.now()}] ✅ Stealth Batch complete. Sleeping for 3 minutes.", file=sys.stderr)
-                    await asyncio.sleep(180) 
+                print(f"[{datetime.now()}] ✅ WORKER FINISHED: Queue updated. Sleeping for 60 minutes.", file=sys.stderr)
+                await asyncio.sleep(3600)
                 
             except Exception as e:
                 print(f"❌ CRITICAL WORKER ERROR: {e}", file=sys.stderr)
+                print("Worker crashed. Reviving in 60 seconds...", file=sys.stderr)
                 await asyncio.sleep(60) 
         else:
             await asyncio.sleep(60)
