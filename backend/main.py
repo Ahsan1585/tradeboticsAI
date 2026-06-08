@@ -13,14 +13,12 @@ from supabase import create_client, Client
 import sys
 import pandas as pd
 import asyncio
-import random
 import httpx
 from contextlib import asynccontextmanager
 import requests
 import io
 import numpy as np
 from scipy.signal import argrelextrema
-import cloudscraper
 
 load_dotenv()
 
@@ -55,36 +53,6 @@ def sanitize_nans(obj):
         return [sanitize_nans(i) for i in obj]
     return obj
 
-
-# ==========================================
-# --- THE BROWSER SPOOFER (CLOUDFLARE BYPASS) ---
-# ==========================================
-def get_yf_session():
-    """Uses Cloudscraper with randomized headers to bypass Render IP bans."""
-    scraper = cloudscraper.create_scraper(
-        browser={
-            'browser': 'chrome',
-            'platform': 'windows',
-            'desktop': True
-        }
-    )
-    
-    # Randomize the User-Agent to slip past WAF fingerprinting
-    user_agents = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0"
-    ]
-    scraper.headers.update({
-        "User-Agent": random.choice(user_agents),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1"
-    })
-    return scraper
-
-
 # ==========================================
 # --- KEEP ALIVE CONFIGURATION ---
 # ==========================================
@@ -105,17 +73,19 @@ async def keep_alive_loop():
             
             await asyncio.sleep(600)
 
-
 # ==========================================
 # --- 12-CYLINDER QUANT ENGINE (ONE SOURCE OF TRUTH) ---
 # ==========================================
 def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price, ticker="Asset"):
+    """
+    Centralized math engine. Evaluates 12 data cylinders across Technicals, 
+    Fundamentals, and Institutional Alpha to generate a single unified score.
+    """
     tech_base = 50
     fund_base = 50
     alpha_bonus = 0
     extra_ledger = []
     
-    # 🧹 CLEAN THE DATA: Drop trailing NaNs that poison the rolling math
     clean_close = hist['Close'].dropna()
     valid_hist = hist.dropna(subset=['High', 'Low', 'Close', 'Volume'])
     
@@ -129,24 +99,20 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price, ti
     short_interest = safe_float(info.get("shortPercentOfFloat", 0))
     insider_hold = safe_float(info.get("heldPercentInsiders", 0))
 
-    # --- TECHNICAL ENGINE (6 Cylinders) ---
-    if len(clean_close) >= 40:
+    # --- TECHNICAL ENGINE ---
+    if len(clean_close) >= 20:
         sma_20 = safe_float(clean_close.rolling(window=20).mean().iloc[-1])
-        sma_40 = safe_float(clean_close.rolling(window=40).mean().iloc[-1])
         std_dev = safe_float(clean_close.rolling(window=20).std().iloc[-1])
         
-        # Safely round to prevent massive decimals
         upper_band = round(sma_20 + (2 * std_dev), 2)
         lower_band = round(sma_20 - (2 * std_dev), 2)
 
-        if current_price > sma_20: tech_base += 10
-        else: tech_base -= 10
-        if sma_20 > sma_40: tech_base += 10 
-        else: tech_base -= 5
-        if current_price > upper_band: tech_base -= 15 
-        elif current_price < lower_band: tech_base += 15 
+        if current_price > sma_20: tech_base += 15
+        else: tech_base -= 15
+        
+        if current_price > upper_band: tech_base -= 10 
+        elif current_price < lower_band: tech_base += 10 
 
-        # Alpha Multiplier: Consolidation Squeeze
         bb_width = (upper_band - lower_band) / sma_20 if sma_20 > 0 else 1
         if bb_width < 0.05:
             alpha_bonus += 5
@@ -154,29 +120,21 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price, ti
                 "factor": "Consolidation Phase", 
                 "val": "Tight Squeeze", 
                 "status": "BULLISH", 
-                "reasoning": f"Volatility on {ticker} has compressed to extreme lows (Bollinger Bands squeezed). This pent-up energy typically results in an imminent, explosive directional breakout."
+                "reasoning": f"Volatility on {ticker} has compressed. This pent-up energy typically results in a directional breakout."
             })
     else:
         sma_20 = current_price
         upper_band = round(current_price * 1.05, 2)
         lower_band = round(current_price * 0.95, 2)
 
-    if current_price > prev_price: 
-        tech_base += 5
-    else: 
-        tech_base -= 10  # Increased penalty for downward intraday velocity
-
-    # 🚨 MACD/TREND BEARISH DIVERGENCE PENALTY
-    if current_price < prev_price and tech_base > 75:
-        tech_base -= 20
+    if current_price > prev_price: tech_base += 15
+    else: tech_base -= 15
 
     try:
         delta = clean_close.diff()
-        gain = delta.clip(lower=0)
-        loss = -1 * delta.clip(upper=0)
-        ema_gain = gain.ewm(com=13, adjust=False).mean()
-        ema_loss = loss.ewm(com=13, adjust=False).mean()
-        rs = ema_gain / ema_loss
+        gain = delta.clip(lower=0).ewm(com=13, adjust=False).mean()
+        loss = (-1 * delta.clip(upper=0)).ewm(com=13, adjust=False).mean()
+        rs = gain / loss
         rsi_series = 100 - (100 / (1 + rs))
         real_rsi = round(safe_float(rsi_series.iloc[-1], 50.0), 2)
     except Exception:
@@ -201,40 +159,22 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price, ti
 
     tech_score = max(10, min(95, tech_base))
 
-    # --- FUNDAMENTAL ENGINE (6 Cylinders) ---
+    # --- FUNDAMENTAL ENGINE ---
     is_tech = "Technology" in sector or "Communication" in sector
     is_financial = "Financial" in sector
     
-    if pe > 0 and pe < 25: 
-        fund_base += 10 
-    elif pe >= 25 and pe <= 60 and is_tech: 
-        fund_base += 10 
-    elif pe > 60:
-        if rev_growth < 0.20:
-            fund_base -= 10
+    if pe > 0 and pe < 25: fund_base += 20 
+    elif pe >= 25 and pe <= 50 and is_tech: fund_base += 10 
+    elif pe > 50: fund_base -= 20
     
-    if margins > 0.20: 
-        if is_financial:
-            fund_base += 5
-        else:
-            fund_base += 10
-    elif margins > 0.10: 
-        fund_base += 5
-    elif margins < 0: 
-        fund_base -= 10
+    if margins > 0.15: fund_base += 20
+    elif margins < 0: fund_base -= 25
     
-    if rev_growth > 0.20: fund_base += 15 
-    elif rev_growth > 0.10: fund_base += 5
+    if rev_growth > 0.20: fund_base += 10 
     elif rev_growth < 0: fund_base -= 15 
 
     if fcf > 0: fund_base += 5
     elif fcf < 0: fund_base -= 5
-    
-    if 0 < dte < 100: fund_base += 5
-    elif dte > 200 and not is_financial: fund_base -= 10
-    
-    if target_price > 0 and current_price < target_price: fund_base += 5
-    elif target_price > 0 and current_price > (target_price * 1.05): fund_base -= 5
 
     fund_score = max(10, min(95, fund_base))
 
@@ -245,7 +185,7 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price, ti
             "factor": "Short Squeeze Risk", 
             "val": f"{round(short_interest * 100, 1)}%", 
             "status": "VOLATILE", 
-            "reasoning": f"With {round(short_interest * 100, 1)}% of the floating supply sold short, any positive catalyst could force short-sellers to aggressively buy back shares, triggering a massive price spike on {ticker}."
+            "reasoning": f"With {round(short_interest * 100, 1)}% of the float sold short, any positive catalyst could trigger a massive short-covering spike."
         })
 
     if insider_hold > 0.05:
@@ -254,7 +194,7 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price, ti
             "factor": "Insider Conviction", 
             "val": f"{round(insider_hold * 100, 1)}%", 
             "status": "BULLISH", 
-            "reasoning": f"Corporate insiders currently hold {round(insider_hold * 100, 1)}% of all {ticker} shares. This high concentration signals massive internal confidence in the company's long-term trajectory."
+            "reasoning": f"Corporate insiders hold {round(insider_hold * 100, 1)}% of shares, signaling internal confidence."
         })
 
     try:
@@ -271,30 +211,18 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price, ti
                         "factor": "Options Flow", 
                         "val": "Call Heavy", 
                         "status": "BULLISH", 
-                        "reasoning": f"The derivatives market for {ticker} is heavily skewed toward the upside. With a Put/Call ratio of {round(put_call_ratio, 2)}, smart money is aggressively betting on a near-term price surge."
-                    })
-                # 🚨 UPGRADED INSTITUTIONAL RISK MALUS
-                elif put_call_ratio > 1.5: 
-                    alpha_bonus -= 20
-                    extra_ledger.append({
-                        "factor": "Options Flow", 
-                        "val": f"Put Heavy ({round(put_call_ratio, 2)})", 
-                        "status": "BEARISH", 
-                        "reasoning": f"Smart money is aggressively buying protective puts at an extreme ratio of {round(put_call_ratio, 2)}. This aggressive institutional hedging signals a massive threat of a near-term correction."
+                        "reasoning": f"Derivatives market is skewed toward upside with a Put/Call ratio of {round(put_call_ratio, 2)}."
                     })
     except Exception:
         pass
 
     total_score = max(10, min(99, math.ceil((tech_score + fund_score) / 2) + alpha_bonus))
 
-    return total_score, tech_score, fund_score, extra_ledger, real_rsi, volume, avg_volume, vwap_proxy, upper_band, lower_band, sector, pe, margins, rev_growth, fcf, dte, target_price
-
+    return total_score, tech_score, fund_score, extra_ledger, real_rsi, volume, avg_volume, vwap_proxy, upper_band, lower_band, sector, pe, margins
 
 # ==========================================
 # --- THE STEALTH DATA WORKER ---
 # ==========================================
-
-# 1. ADD THIS HELPER FUNCTION
 def fetch_ticker_data_sync(t):
     """Runs in a separate thread so it doesn't freeze the FastAPI server."""
     stock = yf.Ticker(t)
@@ -319,7 +247,6 @@ async def staleness_worker_loop():
                 
                 if not stale_tickers:
                     print(f"[{datetime.now()}] ⚠️ EMPTY QUEUE: Seeding database from Wikipedia...", file=sys.stderr)
-                    # 🚨 ENHANCEMENT: Offload the Wikipedia blocking request to a thread as well
                     universe = await asyncio.to_thread(get_market_universe)
                     print(f"[{datetime.now()}] 📦 Scraped {len(universe)} tickers. Breaking into safe batches of 50...", file=sys.stderr)
                     
@@ -341,43 +268,24 @@ async def staleness_worker_loop():
                     current_time = datetime.now(timezone.utc).isoformat()
                     
                     try:
-                        # 🚨 ENHANCEMENT: AWAIT IN A SEPARATE THREAD SO THE SERVER DOESN'T FREEZE 🚨
+                        # Threaded fetch prevents the API from freezing
                         stock, hist, info = await asyncio.to_thread(fetch_ticker_data_sync, t)
                         
-                        if hist.empty:
-                            print(f"⚠️ {t} is empty or delisted. Deleting from DB...", file=sys.stderr)
-                            supabase.table('market_universe').delete().eq('ticker', t).execute()
-                            continue
-                            
-                        if len(hist) < 2: 
+                        clean_close = hist['Close'].dropna()
+
+                        if clean_close.empty or len(clean_close) < 20:
+                            print(f"⚠️ {t} data insufficient. Advancing...", file=sys.stderr)
                             supabase.table('market_universe').update({'last_scanned': current_time}).eq('ticker', t).execute()
                             continue
-                        
-                        price = float(hist['Close'].iloc[-1])
-                        prev_price = float(hist['Close'].iloc[-2])
+                            
+                        price = float(clean_close.iloc[-1])
+                        prev_price = float(clean_close.iloc[-2])
                         daily_change = ((price - prev_price) / prev_price) * 100
                         
-                        pe = info.get("trailingPE", 0)
-                        margins = info.get("profitMargins", 0)
-                        sector = info.get("sector", "Macro Profile")
+                        # --- USE THE UNIFIED MATH ENGINE ---
+                        total_score, tech_score, fund_score, _, _, _, _, _, _, _, sector, pe, _ = calculate_quant_metrics(hist, info, stock, price, prev_price, t)
                         
-                        tech_base = 50
-                        if len(hist) >= 20:
-                            sma_20 = hist['Close'].rolling(window=20).mean().iloc[-1]
-                            if price > sma_20: tech_base += 25
-                            else: tech_base -= 25
-                        if price > prev_price: tech_base += 15
-                        else: tech_base -= 15
-                        tech_score = max(10, min(95, tech_base))
-                        
-                        fund_base = 50
-                        if pe and 0 < pe < 25: fund_base += 20
-                        elif pe and pe > 50: fund_base -= 20
-                        if margins and margins > 0.15: fund_base += 20
-                        elif margins and margins < 0: fund_base -= 25
-                        fund_score = max(10, min(95, fund_base))
-                        
-                        supabase.table('market_universe').upsert({
+                        supabase.table('market_universe').upsert(sanitize_nans({
                             'ticker': t,
                             'price': round(price, 2),
                             'daily_change': round(daily_change, 2),
@@ -386,7 +294,7 @@ async def staleness_worker_loop():
                             'sector': sector,
                             'pe': round(pe, 2) if pe else 0,
                             'last_scanned': current_time
-                        }).execute()
+                        })).execute()
                         
                         print(f"✅ Successfully updated {t}", file=sys.stderr)
                         
@@ -719,18 +627,18 @@ async def analyze_ticker(ticker: str):
         # 🚀 2. CALCULATE ROBUST SUPPORT & RESISTANCE
         support, resistance = get_support_resistance(hist)
 
-        current_price = round(safe_float(clean_close.iloc[-1]), 2)
-        prev_price = round(safe_float(clean_close.iloc[-2]), 2) if len(clean_close) > 1 else current_price
+        current_price = round(float(clean_close.iloc[-1]), 2)
+        prev_price = round(float(clean_close.iloc[-2]), 2) if len(clean_close) > 1 else current_price
         
         try:
             info = stock.info
         except Exception:
             info = {}
 
-        # === INJECTING ONE SOURCE OF TRUTH ===
-        total_score, tech_score, fund_score, extra_ledger, real_rsi, volume, avg_volume, vwap_proxy, upper_band, lower_band, sector, pe, margins, rev_growth, fcf, dte, target_price = calculate_quant_metrics(hist, info, stock, current_price, prev_price, ticker_upper)
+        # === INJECTING THE UNIFIED MATH ENGINE ===
+        total_score, tech_score, fund_score, extra_ledger, real_rsi, volume, avg_volume, vwap_proxy, upper_band, lower_band, sector, pe, margins = calculate_quant_metrics(hist, info, stock, current_price, prev_price, ticker_upper)
 
-        raw_mcap = stock.info.get("marketCap")
+        raw_mcap = info.get("marketCap")
         formatted_mcap = "N/A"
         if raw_mcap:
             if raw_mcap >= 1e12:
@@ -803,6 +711,7 @@ async def analyze_ticker(ticker: str):
 
         rsi_status = "OVERBOUGHT" if real_rsi >= 70 else "OVERSOLD" if real_rsi <= 30 else "BULLISH" if real_rsi > 50 else "BEARISH"
 
+        # --- ASSEMBLE THE COMPLETE LEDGER ---
         ledger = [
             {"factor": "Momentum (RSI)", "val": str(real_rsi), "status": rsi_status, "reasoning": f"{ticker_upper} is showing upward momentum. Current RSI proxy suggests buying pressure." if tech_score > 50 else f"{ticker_upper} is losing momentum. RSI proxy suggests selling pressure."},
             {"factor": "Institutional Flow", "val": "High" if volume > avg_volume else "Low", "status": "BULLISH" if volume > avg_volume else "NEUTRAL", "reasoning": f"Current volume of {volume:,} exceeds the historical average of {avg_volume:,}, indicating strong institutional accumulation." if volume > avg_volume else f"Current volume of {volume:,} is below the historical average of {avg_volume:,}, indicating retail-driven consolidation."},
@@ -813,11 +722,12 @@ async def analyze_ticker(ticker: str):
             {"factor": "Mathematical Ceiling", "val": f"${round(resistance, 2)}", "status": "NEUTRAL", "reasoning": f"Calculated major resistance derived from recent local maxima."}
         ]
         
+        # Add any Short Squeeze or Insider Info from the engine
         ledger.extend(extra_ledger)
 
-        final_response = {
+        final_response = sanitize_nans({
             "ticker": ticker_upper,
-            "company_name": stock.info.get("shortName", ticker_upper),
+            "company_name": info.get("shortName", ticker_upper),
             "price": current_price,
             "score": total_score,
             "tech_score": int(tech_score),
@@ -833,13 +743,13 @@ async def analyze_ticker(ticker: str):
             "fundamentals": {
                 "market_cap": formatted_mcap, 
                 "pe_ratio": str(round(pe, 2)) if pe else "N/A",
-                "debt_equity": str(stock.info.get("debtToEquity", "N/A")),
+                "debt_equity": str(info.get("debtToEquity", "N/A")),
                 "margin": f"{round(margins * 100, 2)}%" if margins else "N/A",
                 "sentiment": "BULLISH" if total_score > 65 else "BEARISH" if total_score < 40 else "NEUTRAL",
                 "cash_flow": "POSITIVE" if margins and margins > 0 else "NEGATIVE",
                 "next_earnings": next_earnings 
             }
-        }
+        })
         
         # 🚀 3. SAVE TO CACHE BEFORE RETURNING
         market_cache[ticker_upper] = (now, final_response)
