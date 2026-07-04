@@ -2,9 +2,9 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../lib/supabase";
-import TradeTicket from "../components/TradeTicket"; 
-
-const BACKEND_URL = "https://tradebotics-api.onrender.com";
+import { apiFetch } from "../lib/config";
+import TradeTicket from "../components/TradeTicket";
+import DOMPurify from "isomorphic-dompurify";
 
 // --- WIDGET COMPONENTS ---
 function TickerTape() {
@@ -145,9 +145,8 @@ function TerminalContent() {
         }, 165); 
 
         try {
-            const res = await fetch(`${BACKEND_URL}/run-screener`, {
+            const res = await apiFetch(`/run-screener`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ trade_style: horizon, risk_level: risk })
             });
             const responseData = await res.json();
@@ -177,10 +176,9 @@ function TerminalContent() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
       try {
-          const res = await fetch(`${BACKEND_URL}/execute-trade`, {
+          const res = await apiFetch(`/execute-trade`, {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ user_id: session.user.id, ticker: confirmedTicker, trade_type: tradeType, amount: amount, mode: mode })
+              body: JSON.stringify({ ticker: confirmedTicker, trade_type: tradeType, amount: amount, mode: mode })
           });
           const result = await res.json();
           if (res.ok) {
@@ -238,7 +236,7 @@ function TerminalContent() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) { showToast("Unauthorized Access."); setLoading(false); return; }
 
-      const res = await fetch(`${BACKEND_URL}/analyze/${target}?user_id=${session.user.id}`);
+      const res = await apiFetch(`/analyze/${target}`);
       const result = await res.json();
       
       if (res.ok) { 
@@ -270,7 +268,7 @@ function TerminalContent() {
     showToast("Refreshing Quant Scores...");
     try {
         const updatePromises = watchlist.map(async (item) => {
-            const res = await fetch(`${BACKEND_URL}/analyze/${item.ticker}`);
+            const res = await apiFetch(`/analyze/${item.ticker}`);
             if (res.ok) {
                 const fetchedData = await res.json();
                 await supabase.from('watchlist').update({ score: fetchedData.score }).eq('user_id', user.id).eq('ticker', item.ticker);
@@ -290,8 +288,8 @@ function TerminalContent() {
     try {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session) return;
-        const res = await fetch(`${BACKEND_URL}/translate?user_id=${session.user.id}`, {
-            method: "POST", headers: { "Content-Type": "application/json" },
+        const res = await apiFetch(`/translate`, {
+            method: "POST",
             body: JSON.stringify({ ticker: confirmedTicker, data_context: { score: data.score, price: data.price, fundamentals: data.fundamentals, ledger: data.ledger } })
         });
         const result = await res.json();
@@ -308,8 +306,8 @@ function TerminalContent() {
     if (!data || !confirmedTicker) return; 
     setIsGeneratingExit(true); setExitStrategyResult(null);
     try {
-        const res = await fetch(`${BACKEND_URL}/exit-strategy?user_id=${userId}`, {
-            method: "POST", headers: { "Content-Type": "application/json" },
+        const res = await apiFetch(`/exit-strategy`, {
+            method: "POST",
             body: JSON.stringify({ ticker: confirmedTicker, data_context: data })
         });
         const result = await res.json();
@@ -328,9 +326,9 @@ function TerminalContent() {
     try {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session) return;
-        const res = await fetch(`${BACKEND_URL}/summarize?user_id=${session.user.id}`, { 
-          method: "POST", headers: { "Content-Type": "application/json" }, 
-          body: JSON.stringify({ title: item.title, ticker: confirmedTicker || "Macro", content: item.content || "" }) 
+        const res = await apiFetch(`/summarize`, {
+          method: "POST",
+          body: JSON.stringify({ title: item.title, ticker: confirmedTicker || "Macro", content: item.content || "" })
         });
         const result = await res.json();
         if (res.ok) setSelectedArticle({ ...item, summary: result.summary });
@@ -365,7 +363,7 @@ function TerminalContent() {
   };
 
   const fetchGlobalNews = async () => { 
-    try { const res = await fetch(`${BACKEND_URL}/market-briefing`); if (res.ok) setGlobalNews(await res.json()); } catch { console.warn("Briefing offline."); } 
+    try { const res = await apiFetch(`/market-briefing`); if (res.ok) setGlobalNews(await res.json()); } catch { console.warn("Briefing offline."); }
   };
 
   // --- DERIVED SCREENER STATE (Pulse Cards & Filtering) ---
@@ -462,14 +460,14 @@ function TerminalContent() {
                             .prose p { color: #94a3b8; margin-bottom: 1em; }
                             .prose hr { border-color: #1e293b; margin: 2em 0; }
                         `}} />
-                        <div dangerouslySetInnerHTML={{ 
-                            __html: deepDiveResult
+                        <div dangerouslySetInnerHTML={{
+                            __html: DOMPurify.sanitize(deepDiveResult
                                 .replace(/^### (.*$)/gim, '<h3>$1</h3>')                 // Converts ### to Headers
                                 .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')        // Converts **text** to Bold
                                 .replace(/^---$/gim, '<hr/>')                            // Converts --- to Dividers
                                 .replace(/^\* (.*$)/gim, '<li>$1</li>')                  // Converts * to Bullet Points
                                 .replace(/\n\n/g, '<br/><br/>')                          // Handles Paragraph Spacing
-                                .replace(/\*(LEGAL DISCLAIMER:.*?)\*/gim, '<em class="text-[9px] leading-tight text-slate-600 block mt-8 border-t border-slate-800 pt-4">$1</em>') // Isolates and shrinks the disclaimer
+                                .replace(/\*(LEGAL DISCLAIMER:.*?)\*/gim, '<em class="text-[9px] leading-tight text-slate-600 block mt-8 border-t border-slate-800 pt-4">$1</em>')) // Isolates and shrinks the disclaimer
                         }} />
                     </div>
                 </div>
@@ -910,7 +908,7 @@ function TerminalContent() {
                                     .prose li::before { content: "→"; position: absolute; left: 0.5rem; top: 0.75rem; color: #f87171; font-weight: 900; }
                                     .prose strong { color: #fff; font-size: 1.05em; display: block; margin-bottom: 0.25rem; }
                                 `}} />
-                                <div dangerouslySetInnerHTML={{ __html: exitStrategyResult }} />
+                                <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(exitStrategyResult) }} />
                             </div>
                         </div>
                     )}

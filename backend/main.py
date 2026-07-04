@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, Any, List
@@ -7,7 +7,6 @@ import math
 import time
 from datetime import datetime, timezone, timedelta
 import yfinance as yf
-import google.generativeai as genai
 from dotenv import load_dotenv
 from supabase import create_client, Client
 import sys
@@ -20,9 +19,10 @@ import requests
 import io
 import numpy as np
 from scipy.signal import argrelextrema
-import cloudscraper
-
 load_dotenv()
+
+from llm import generate_text, llm_available
+from auth import get_current_user
 
 # ==========================================
 # --- SAFETY & SANITIZATION UTILITIES ---
@@ -54,32 +54,6 @@ def sanitize_nans(obj):
     elif isinstance(obj, list):
         return [sanitize_nans(i) for i in obj]
     return obj
-
-# ==========================================
-# --- THE BROWSER SPOOFER (CLOUDFLARE BYPASS) ---
-# ==========================================
-def get_yf_session():
-    """Uses Cloudscraper with randomized headers to bypass Render IP bans."""
-    scraper = cloudscraper.create_scraper(
-        browser={
-            'browser': 'chrome',
-            'platform': 'windows',
-            'desktop': True
-        }
-    )
-    user_agents = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0"
-    ]
-    scraper.headers.update({
-        "User-Agent": random.choice(user_agents),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1"
-    })
-    return scraper
 
 # ==========================================
 # --- KEEP ALIVE CONFIGURATION ---
@@ -322,9 +296,15 @@ async def lifecycle(app: FastAPI):
 
 app = FastAPI(lifespan=lifecycle)
 
+# Explicit origins only. Set FRONTEND_ORIGINS on Render, e.g.:
+# FRONTEND_ORIGINS=https://your-app.vercel.app,http://localhost:3000
+ALLOWED_ORIGINS = [
+    o.strip() for o in os.getenv("FRONTEND_ORIGINS", "http://localhost:3000").split(",") if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -348,20 +328,15 @@ else:
     supabase = None
 
 # --- AI CONFIGURATION ---
-GOOGLE_API_KEY = os.getenv("GEMINI_API_KEY")
-if GOOGLE_API_KEY:
-    genai.configure(api_key=GOOGLE_API_KEY)
-    # Using 3.5-flash as the stable production model to prevent 404 errors
-    model = genai.GenerativeModel('gemini-3.5-flash')
-else:
-    model = None
+# LLM calls go through llm.py (Anthropic Claude, default claude-haiku-4-5).
+# The identity of the requester comes from auth.get_current_user (verified JWT),
+# never from client-supplied user_id fields.
 
 # --- REQUEST MODELS ---
 class TradeRequest(BaseModel):
-    user_id: str
     ticker: str
-    trade_type: str  
-    amount: float    
+    trade_type: str
+    amount: float
     mode: str
 
 class ScreenerRequest(BaseModel):
@@ -400,7 +375,7 @@ def check_ai_cache(cache_key: str) -> dict | None:
                 print(f"CACHE HIT [{cache_key}]: Serving from memory. Saves AI Tokens.", file=sys.stderr)
                 return record['cached_response']
     except Exception as e:
-        pass
+        print(f"[CACHE] lookup failed for {cache_key}: {e}", file=sys.stderr)
     return None
 
 def update_ai_cache(cache_key: str, payload: dict):
@@ -412,7 +387,25 @@ def update_ai_cache(cache_key: str, payload: dict):
             'cached_response': payload
         }).execute()
     except Exception as e:
-        pass
+        print(f"[CACHE] update failed for {cache_key}: {e}", file=sys.stderr)
+
+# ==========================================
+# --- AI TOKEN ACCOUNTING (ATOMIC) ---
+# ==========================================
+def get_token_balance(user_id: str) -> int:
+    profile_res = supabase.table('profiles').select('ai_token_balance').eq('id', user_id).execute()
+    if not profile_res.data:
+        raise HTTPException(status_code=404, detail="Operative profile not found.")
+    return int(profile_res.data[0]['ai_token_balance'])
+
+def debit_tokens(user_id: str, cost: int) -> int:
+    """Atomically debits tokens via the debit_tokens Postgres RPC
+    (migrations/001_debit_tokens.sql). Returns the new balance, or raises 402."""
+    res = supabase.rpc('debit_tokens', {'p_user_id': user_id, 'p_cost': cost}).execute()
+    new_balance = res.data if isinstance(res.data, int) else -1
+    if new_balance < 0:
+        raise HTTPException(status_code=402, detail=f"INSUFFICIENT BANDWIDTH. {cost} Tokens required.")
+    return new_balance
 
 # ==========================================
 # --- MATH ENGINE UTILS ---
@@ -677,20 +670,18 @@ async def analyze_ticker(ticker: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/translate")
-async def translate_ai(req: TranslationRequest, user_id: str = Query(...)): 
-    if not model: return {"analysis": "AI Node Offline."}
+async def translate_ai(req: TranslationRequest, user_id: str = Depends(get_current_user)):
+    if not llm_available(): return {"analysis": "AI Node Offline."}
     try:
         cache_key = f"TRANSLATE_{req.ticker.upper()}"
         cached_data = check_ai_cache(cache_key)
-        
-        profile_res = supabase.table('profiles').select('ai_token_balance').eq('id', user_id).execute()
-        if not profile_res.data: raise HTTPException(status_code=404, detail="Operative profile not found.")
-        current_tokens = int(profile_res.data[0]['ai_token_balance'])
+
+        current_tokens = get_token_balance(user_id)
 
         if cached_data:
             cached_data["remaining_tokens"] = current_tokens
             return cached_data
-            
+
         if current_tokens < 3:
             raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 3 Tokens required.")
 
@@ -761,7 +752,7 @@ async def translate_ai(req: TranslationRequest, user_id: str = Query(...)):
             "### 2. Market Mechanics & Technicals\n* **Price Action & Consolidation:** [Analyze price vs structural zones]\n* **Smart Money & Options Flow:** [Synthesize Institutional Volume and Flow]\n* **Momentum (RSI & MACD):** [Synthesize ledger signals]\n\n"
             f"{verdict_block}"
         )
-        response = model.generate_content(prompt)
+        raw_text = await generate_text(prompt, max_tokens=1200, purpose="deep_dive")
 
         disclaimer_html = (
             "<br><br><hr style='border-color: #1e293b; margin-top: 15px; margin-bottom: 15px;'/>"
@@ -773,26 +764,25 @@ async def translate_ai(req: TranslationRequest, user_id: str = Query(...)):
             "</p>"
         )
 
-        try: ai_text = response.text.strip() + disclaimer_html
-        except ValueError: ai_text = "<h3>Execution Blocked</h3><ul><li>AI Node rejected synthesis due to strict safety protocols.</li></ul>"
+        if raw_text is None:
+            # LLM unavailable/declined: do NOT charge the user.
+            return {"analysis": "<h3>Execution Blocked</h3><ul><li>AI Node temporarily unavailable. No tokens were charged.</li></ul>", "remaining_tokens": current_tokens}
+        ai_text = raw_text + disclaimer_html
 
-        new_token_balance = current_tokens - 3
-        supabase.table('profiles').update({'ai_token_balance': new_token_balance}).eq('id', user_id).execute()
+        new_token_balance = debit_tokens(user_id, 3)
 
         final_response = {"analysis": ai_text, "remaining_tokens": new_token_balance}
         update_ai_cache(cache_key, final_response)
         return final_response
-        
+
     except HTTPException as he: raise he
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/exit-strategy")
-async def generate_exit_strategy(req: TranslationRequest, user_id: str = Query(...)): 
-    if not model: return {"analysis": "AI Node Offline."}
+async def generate_exit_strategy(req: TranslationRequest, user_id: str = Depends(get_current_user)):
+    if not llm_available(): return {"analysis": "AI Node Offline."}
     try:
-        profile_res = supabase.table('profiles').select('ai_token_balance').eq('id', user_id).execute()
-        if not profile_res.data: raise HTTPException(status_code=404, detail="Operative profile not found.")
-        current_tokens = int(profile_res.data[0]['ai_token_balance'])
+        current_tokens = get_token_balance(user_id)
         if current_tokens < 2: raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 2 Tokens required.")
 
         prompt = f"Act as a quantitative risk manager. Define a strict, scaled risk-management exit protocol for {req.ticker}.\n\n"
@@ -812,7 +802,7 @@ async def generate_exit_strategy(req: TranslationRequest, user_id: str = Query(.
             "<li><strong>⏱️ TIME HORIZON:</strong> [State the estimated time in days/weeks for this thesis to play out].</li>\n"
             "</ul>"
         )
-        response = model.generate_content(prompt)
+        raw_text = await generate_text(prompt, max_tokens=1000, purpose="exit_strategy")
 
         disclaimer_html = (
             "<br><br><hr style='border-color: #1e293b; margin-top: 15px; margin-bottom: 15px;'/>"
@@ -822,31 +812,29 @@ async def generate_exit_strategy(req: TranslationRequest, user_id: str = Query(.
             "</p>"
         )
 
-        try: ai_text = response.text.strip() + disclaimer_html
-        except ValueError: ai_text = "<h3>Execution Blocked</h3><ul><li>AI Node rejected synthesis due to strict safety protocols.</li></ul>"
+        if raw_text is None:
+            return {"analysis": "<h3>Execution Blocked</h3><ul><li>AI Node temporarily unavailable. No tokens were charged.</li></ul>", "remaining_tokens": current_tokens}
+        ai_text = raw_text + disclaimer_html
 
-        new_token_balance = current_tokens - 2
-        supabase.table('profiles').update({'ai_token_balance': new_token_balance}).eq('id', user_id).execute()
+        new_token_balance = debit_tokens(user_id, 2)
         return {"analysis": ai_text, "remaining_tokens": new_token_balance}
     except HTTPException as he: raise he
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/summarize")
-async def summarize_article(req: SummaryRequest, user_id: str = Query(...)): 
-    if not model: return {"summary": ["AI Node Offline."]}
+async def summarize_article(req: SummaryRequest, user_id: str = Depends(get_current_user)):
+    if not llm_available(): return {"summary": ["AI Node Offline."]}
     try:
         safe_title = ''.join(e for e in req.title if e.isalnum())[:30]
         cache_key = f"SUMMARY_{req.ticker}_{safe_title}"
         cached_data = check_ai_cache(cache_key)
-        
-        profile_res = supabase.table('profiles').select('ai_token_balance').eq('id', user_id).execute()
-        if not profile_res.data: raise HTTPException(status_code=404, detail="Operative profile not found.")
-        current_tokens = int(profile_res.data[0]['ai_token_balance'])
+
+        current_tokens = get_token_balance(user_id)
 
         if cached_data:
             cached_data["remaining_tokens"] = current_tokens
             return cached_data
-            
+
         if current_tokens < 1: raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 1 Token required.")
 
         prompt = (
@@ -855,25 +843,24 @@ async def summarize_article(req: SummaryRequest, user_id: str = Query(...)):
             f"HEADLINE: '{req.title}'\nRAW SNIPPET: '{req.content}'\n\n"
             f"STRICT RULES:\n- Output exactly one cohesive paragraph (3 to 4 sentences).\n- You MUST explicitly mention the specific tickers and companies referenced.\n- Do not just repeat the snippet. Add professional market context explaining WHY this event matters to the sector, supply chain, or stock price.\n- Maintain a ruthless, data-driven, and highly informative tone."
         )
-        response = model.generate_content(prompt)
-        try: ai_text = response.text.strip()
-        except ValueError: ai_text = "AI Node rejected synthesis due to strict safety protocols regarding direct financial advice."
+        ai_text = await generate_text(prompt, max_tokens=400, purpose="summarize")
+        if ai_text is None:
+            return {"summary": ["AI Node temporarily unavailable. No tokens were charged."], "remaining_tokens": current_tokens}
 
-        new_token_balance = current_tokens - 1
-        supabase.table('profiles').update({'ai_token_balance': new_token_balance}).eq('id', user_id).execute()
+        new_token_balance = debit_tokens(user_id, 1)
         final_response = {"summary": [ai_text], "remaining_tokens": new_token_balance}
         update_ai_cache(cache_key, final_response)
         return final_response
     except HTTPException as he: raise he
-    except Exception as e: return {"summary": [f"Synthesis Offline. Error logged in terminal."]}
+    except Exception as e:
+        print(f"[SUMMARIZE] error: {e}", file=sys.stderr)
+        return {"summary": [f"Synthesis Offline. Error logged in terminal."]}
 
 @app.post("/portfolio-analysis")
-async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)): 
-    if not model: return {"analysis": "AI Node Offline."}
+async def analyze_portfolio(req: PortfolioRequest, user_id: str = Depends(get_current_user)):
+    if not llm_available(): return {"analysis": "AI Node Offline."}
     try:
-        profile_res = supabase.table('profiles').select('ai_token_balance').eq('id', user_id).execute()
-        if not profile_res.data: raise HTTPException(status_code=404, detail="Operative profile not found.")
-        current_tokens = int(profile_res.data[0]['ai_token_balance'])
+        current_tokens = get_token_balance(user_id)
         if current_tokens < 5: raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 5 Tokens required.")
 
         portfolio_summary = []
@@ -968,13 +955,11 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Query(...)):
             "<li><strong>STRATEGIC LOGIC:</strong> [1 sentence explaining the data-driven reality of the Quant Score. Be brutally honest: do NOT call scores under 70 'strong' or 'high-conviction'. Describe them objectively based on their numerical value].</li>\n"
             "</ul>"
         )
-        response = await model.generate_content_async(prompt)
+        ai_text = await generate_text(prompt, max_tokens=800, purpose="portfolio")
+        if ai_text is None:
+            return {"analysis": "<h3>Execution Blocked</h3><ul><li>AI Node temporarily unavailable. No tokens were charged.</li></ul>", "holdings": portfolio_summary, "remaining_tokens": current_tokens}
 
-        try: ai_text = response.text.strip()
-        except ValueError: ai_text = "<h3>Execution Blocked</h3><ul><li>AI Node rejected synthesis due to strict safety protocols regarding direct financial execution.</li></ul>"
-
-        new_token_balance = current_tokens - 5
-        supabase.table('profiles').update({'ai_token_balance': new_token_balance}).eq('id', user_id).execute()
+        new_token_balance = debit_tokens(user_id, 5)
         return {"analysis": ai_text, "holdings": portfolio_summary, "remaining_tokens": new_token_balance}
     except HTTPException as he: raise he
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))
@@ -1020,12 +1005,9 @@ async def market_briefing():
     ]
 
 @app.post("/execute-trade")
-async def execute_trade(req: TradeRequest, request: Request):
-    try: body = await request.json()
-    except Exception: pass
-
+async def execute_trade(req: TradeRequest, user_id: str = Depends(get_current_user)):
     if not supabase: raise HTTPException(status_code=500, detail="Database connection offline.")
-    
+
     try:
         ticker = req.ticker.upper()
         stock = yf.Ticker(ticker)
@@ -1041,11 +1023,11 @@ async def execute_trade(req: TradeRequest, request: Request):
             trade_shares = request_amount
             trade_cost = round(trade_shares * live_price, 2)
 
-        profile_res = supabase.table('profiles').select('virtual_cash_balance').eq('id', req.user_id).execute()
+        profile_res = supabase.table('profiles').select('virtual_cash_balance').eq('id', user_id).execute()
         if not profile_res.data: raise HTTPException(status_code=404, detail="Operative profile not found.")
         current_cash = float(profile_res.data[0]['virtual_cash_balance'])
 
-        portfolio_res = supabase.table('portfolio').select('*').eq('user_id', req.user_id).eq('ticker', ticker).execute()
+        portfolio_res = supabase.table('portfolio').select('*').eq('user_id', user_id).eq('ticker', ticker).execute()
         current_position = portfolio_res.data[0] if portfolio_res.data else None
         current_shares_held = float(current_position['shares']) if current_position else 0.0
 
@@ -1056,20 +1038,20 @@ async def execute_trade(req: TradeRequest, request: Request):
                 old_total_cost = current_shares_held * float(current_position['cost_basis'])
                 new_total_shares = current_shares_held + trade_shares
                 new_avg_cost = round((old_total_cost + trade_cost) / new_total_shares, 2)
-                supabase.table('portfolio').update({'shares': new_total_shares, 'cost_basis': new_avg_cost}).eq('user_id', req.user_id).eq('ticker', ticker).execute()
+                supabase.table('portfolio').update({'shares': new_total_shares, 'cost_basis': new_avg_cost}).eq('user_id', user_id).eq('ticker', ticker).execute()
             else:
-                supabase.table('portfolio').insert({'user_id': req.user_id, 'ticker': ticker, 'shares': trade_shares, 'cost_basis': live_price}).execute()
+                supabase.table('portfolio').insert({'user_id': user_id, 'ticker': ticker, 'shares': trade_shares, 'cost_basis': live_price}).execute()
 
         elif req.trade_type == "SELL":
             if trade_shares > (current_shares_held + 0.0001): raise HTTPException(status_code=400, detail="Insufficient shares in vault.")
             new_cash = float(round(current_cash + trade_cost, 2))
             new_total_shares = float(round(current_shares_held - trade_shares, 4))
-            if new_total_shares <= 0.0001: supabase.table('portfolio').delete().eq('user_id', req.user_id).eq('ticker', ticker).execute()
-            else: supabase.table('portfolio').update({'shares': new_total_shares}).eq('user_id', req.user_id).eq('ticker', ticker).execute()
+            if new_total_shares <= 0.0001: supabase.table('portfolio').delete().eq('user_id', user_id).eq('ticker', ticker).execute()
+            else: supabase.table('portfolio').update({'shares': new_total_shares}).eq('user_id', user_id).eq('ticker', ticker).execute()
         else: raise HTTPException(status_code=400, detail="Invalid trade type.")
 
-        supabase.table('profiles').update({'virtual_cash_balance': new_cash}).eq('id', req.user_id).execute()
-        supabase.table('transaction_ledger').insert({'user_id': req.user_id, 'transaction_type': req.trade_type, 'ticker': ticker, 'shares': trade_shares, 'price': live_price, 'total_amount': trade_cost}).execute()
+        supabase.table('profiles').update({'virtual_cash_balance': new_cash}).eq('id', user_id).execute()
+        supabase.table('transaction_ledger').insert({'user_id': user_id, 'transaction_type': req.trade_type, 'ticker': ticker, 'shares': trade_shares, 'price': live_price, 'total_amount': trade_cost}).execute()
 
         return {"status": "success", "message": f"Order Executed: {req.trade_type} {round(trade_shares, 4)} {ticker}", "execution_price": live_price, "total_cost": trade_cost, "remaining_cash": new_cash}
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))

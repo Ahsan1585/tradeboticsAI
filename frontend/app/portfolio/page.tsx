@@ -2,8 +2,8 @@
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../lib/supabase";
-
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "https://tradebotics-api.onrender.com";
+import { apiFetch } from "../lib/config";
+import DOMPurify from "isomorphic-dompurify";
 
 export default function PortfolioPage() {
     const router = useRouter();
@@ -115,9 +115,8 @@ export default function PortfolioPage() {
         setIsAnalyzing(true);
         setAiAnalysis(null);
         try {
-            const res = await fetch(`${BACKEND_URL}/portfolio-analysis?user_id=${userId}`, {
+            const res = await apiFetch(`/portfolio-analysis`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ holdings: portfolio, trade_style: tradeStyle })
             });
             const result = await res.json();
@@ -329,7 +328,7 @@ export default function PortfolioPage() {
                                         .prose li::before { content: "→"; position: absolute; left: 0; color: #a855f7; font-weight: 900; }
                                         .prose strong { color: #fff; }
                                     `}} />
-                                    <div dangerouslySetInnerHTML={{ __html: aiAnalysis }} />
+                                    <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(aiAnalysis) }} />
                                 </div>
                             ) : (
                                 <p className="text-slate-600 text-[10px] md:text-xs italic text-center mt-8 md:mt-10">Analysis offline. Awaiting execution command.</p>

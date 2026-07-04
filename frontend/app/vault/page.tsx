@@ -2,9 +2,8 @@
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../lib/supabase";
+import { apiFetch } from "../lib/config";
 import TradeTicket from "../components/TradeTicket";
-
-const BACKEND_URL = "https://tradebotics-api.onrender.com";
 
 // --- DYNAMIC CHART COMPONENT ---
 function PortfolioChart({ totalValue, totalProfitLoss }: { totalValue: number, totalProfitLoss: number }) {
@@ -139,7 +138,7 @@ export default function VaultPage() {
       const liveUpdates: any = {};
       for (const item of portfolioData) {
         try {
-          const res = await fetch(`${BACKEND_URL}/analyze/${item.ticker}?user_id=${session.user.id}`);
+          const res = await apiFetch(`/analyze/${item.ticker}`);
           if (res.ok) {
             liveUpdates[item.ticker] = await res.json();
           }
@@ -162,9 +161,9 @@ export default function VaultPage() {
     if (!session || !selectedAsset) return;
 
     try {
-        const res = await fetch(`${BACKEND_URL}/execute-trade`, {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ user_id: session.user.id, ticker: selectedAsset.ticker, trade_type: type, amount: amount, mode: mode })
+        const res = await apiFetch(`/execute-trade`, {
+            method: "POST",
+            body: JSON.stringify({ ticker: selectedAsset.ticker, trade_type: type, amount: amount, mode: mode })
         });
         const result = await res.json();
         
@@ -207,9 +206,9 @@ export default function VaultPage() {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session) return;
 
-        const res = await fetch(`${BACKEND_URL}/summarize?user_id=${session.user.id}`, { 
-          method: "POST", headers: { "Content-Type": "application/json" }, 
-          body: JSON.stringify({ title: article.title, ticker: selectedAsset.ticker, content: article.content || "" }) 
+        const res = await apiFetch(`/summarize`, {
+          method: "POST",
+          body: JSON.stringify({ title: article.title, ticker: selectedAsset.ticker, content: article.content || "" })
         });
         
         const result = await res.json();

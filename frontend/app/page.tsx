@@ -2,9 +2,7 @@
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "./lib/supabase";
-
-// 🚨 PRODUCTION URL (Change to http://127.0.0.1:8000 for local testing)
-const BACKEND_URL = "https://tradebotics-api.onrender.com";
+import { BACKEND_URL } from "./lib/config";
 
 // --- MARKETING LANDING PAGE ---
 function MarketingLanding({ onLoginClick, onRegisterClick }: { onLoginClick: () => void, onRegisterClick: () => void }) {
