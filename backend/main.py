@@ -10,10 +10,6 @@ import yfinance as yf
 from dotenv import load_dotenv
 from supabase import create_client, Client
 import sys
-import pandas as pd
-import asyncio
-import requests
-import io
 load_dotenv()
 
 from llm import generate_text, llm_available

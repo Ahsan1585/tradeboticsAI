@@ -34,6 +34,8 @@ def run(supabase_client, tickers: list[str], batch_size: int = 100) -> dict:
                 print(f"[eod_ingest] price_history upsert failed for {ticker}: {e}", file=sys.stderr)
 
         for ticker in batch:
+            if ticker in SECTOR_ETFS:
+                continue  # ETFs are seeded into price_history for Phase 2's regime gate, not screened as stock picks
             if _score_ticker(supabase_client, ticker):
                 scored += 1
 

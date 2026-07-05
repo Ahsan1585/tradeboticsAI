@@ -177,6 +177,49 @@ def test_eod_ingest_isolates_ohlcv_write_failure_per_ticker():
     assert result["scored"] == 2  # scoring is independent of the OHLCV write and must still run for both
 
 
+def test_eod_ingest_seeds_etf_bars_but_does_not_score_them():
+    """Sector ETFs (SPY, QQQ, etc.) must still get their OHLCV bars written
+    to price_history (Phase 2's market-regime gate needs that history), but
+    they must NOT be scored into market_universe -- otherwise they leak into
+    /run-screener as screenable stock candidates, which never happened with
+    the old Wikipedia-scrape-based universe."""
+    from jobs.eod_ingest import run as run_eod_ingest
+
+    tickers = ["SPY", "AAPL"]
+    fake_bar_df = pd.DataFrame(
+        {"Open": [110.0], "High": [111.0], "Low": [109.0], "Close": [110.0], "Volume": [500000]},
+        index=pd.to_datetime(["2026-07-03"]),
+    )
+
+    with patch("jobs.eod_ingest.fetch_ohlcv_batch") as mock_fetch, \
+         patch("jobs.eod_ingest.upsert_price_history") as mock_upsert_ph, \
+         patch("jobs.eod_ingest.load_price_history_df") as mock_load, \
+         patch("jobs.eod_ingest.yf.Ticker") as mock_ticker_cls:
+        mock_fetch.return_value = {"SPY": fake_bar_df, "AAPL": fake_bar_df}
+        mock_load.return_value = _fake_hist_df()
+        mock_ticker_instance = MagicMock()
+        mock_ticker_instance.info = {"sector": "Technology", "trailingPE": 20.0}
+        mock_ticker_instance.options = []
+        mock_ticker_cls.return_value = mock_ticker_instance
+
+        mock_client = MagicMock()
+        result = run_eod_ingest(mock_client, tickers, batch_size=100)
+
+    # OHLCV bars are still fetched/written for the ETF (needed for Phase 2's
+    # regime gate/breadth calc) -- fetch_ohlcv_batch's batch includes SPY,
+    # and upsert_price_history was called for SPY too.
+    fetched_batch = mock_fetch.call_args_list[0][0][0]
+    assert "SPY" in fetched_batch
+    upsert_ph_tickers = {c[0][1] for c in mock_upsert_ph.call_args_list}
+    assert "SPY" in upsert_ph_tickers
+
+    # But SPY must NOT be scored into market_universe.
+    upsert_calls = mock_client.table.return_value.upsert.call_args_list
+    universe_upserts = [c for c in upsert_calls if isinstance(c[0][0], dict) and "tech_score" in c[0][0]]
+    assert {u[0][0]["ticker"] for u in universe_upserts} == {"AAPL"}
+    assert result["scored"] == 1
+
+
 def test_refresh_universe_upserts_scraped_tickers():
     from jobs.refresh_universe import run as run_refresh
 
