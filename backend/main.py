@@ -12,9 +12,6 @@ from supabase import create_client, Client
 import sys
 import pandas as pd
 import asyncio
-import random
-import httpx
-from contextlib import asynccontextmanager
 import requests
 import io
 load_dotenv()
@@ -22,132 +19,13 @@ load_dotenv()
 from llm import generate_text, llm_available
 from auth import get_current_user
 from services.metrics import safe_float, sanitize_nans, calculate_quant_metrics, get_support_resistance
-
-# ==========================================
-# --- KEEP ALIVE CONFIGURATION ---
-# ==========================================
-RENDER_APP_URL = "https://tradebotics-api.onrender.com/market-briefing" 
-
-async def keep_alive_loop():
-    """Loops infinitely every 10 minutes to ping the public URL and prevent sleep."""
-    await asyncio.sleep(30)
-    
-    async with httpx.AsyncClient() as client:
-        while True:
-            try:
-                print(f"[{datetime.now()}] 🛰️ SENDING KEEP-ALIVE PING TO PUBLIC URL...", file=sys.stderr)
-                response = await client.get(RENDER_APP_URL, timeout=10.0)
-                print(f"[{datetime.now()}] 💚 KEEP-ALIVE SUCCESS: Status {response.status_code}", file=sys.stderr)
-            except Exception as e:
-                print(f"[{datetime.now()}] ⚠️ KEEP-ALIVE PING FAILED: {e}", file=sys.stderr)
-            
-            await asyncio.sleep(600)
+from services.market_data import load_price_history_df, get_live_quote
 
 # ==========================================
 # --- 12-CYLINDER QUANT ENGINE (ONE SOURCE OF TRUTH) ---
 # ==========================================
-# ==========================================
-# --- THE STEALTH DATA WORKER ---
-# ==========================================
-def fetch_ticker_data_sync(t):
-    """Runs in a separate thread so it doesn't freeze the FastAPI server."""
-    stock = yf.Ticker(t)
-    hist = stock.history(period="1mo")
-    try:
-        info = stock.info
-    except Exception:
-        info = {}
-    return stock, hist, info
 
-async def staleness_worker_loop():
-    """Runs every 60 minutes. Sweeps the oldest 50 tickers, scores them, and upserts to Supabase."""
-    await asyncio.sleep(60)
-    
-    while True:
-        if supabase:
-            try:
-                print(f"[{datetime.now()}] 🤖 WORKER WAKING UP: Initiating Staleness Sweep...", file=sys.stderr)
-                
-                response = supabase.table('market_universe').select('ticker').order('last_scanned', desc=False, nullsfirst=True).limit(50).execute()
-                stale_tickers = [row['ticker'] for row in response.data]
-                
-                if not stale_tickers:
-                    print(f"[{datetime.now()}] ⚠️ EMPTY QUEUE: Seeding database from Wikipedia...", file=sys.stderr)
-                    universe = await asyncio.to_thread(get_market_universe)
-                    print(f"[{datetime.now()}] 📦 Scraped {len(universe)} tickers. Breaking into safe batches of 50...", file=sys.stderr)
-                    
-                    for i in range(0, len(universe), 50):
-                        chunk = universe[i:i + 50]
-                        seed_data = [{'ticker': t} for t in chunk]
-                        try:
-                            supabase.table('market_universe').upsert(seed_data).execute()
-                            print(f"✅ Batch {i} to {i+len(chunk)} inserted successfully.", file=sys.stderr)
-                        except Exception as e:
-                            print(f"❌ Failed to insert batch {i}: {e}", file=sys.stderr)
-                        
-                    response = supabase.table('market_universe').select('ticker').order('last_scanned', desc=False, nullsfirst=True).limit(50).execute()
-                    stale_tickers = [row['ticker'] for row in response.data]
-
-                print(f"[{datetime.now()}] 🔍 WORKER SCANNING: Processing {len(stale_tickers)} tickers...", file=sys.stderr)
-                
-                for t in stale_tickers:
-                    current_time = datetime.now(timezone.utc).isoformat()
-                    
-                    try:
-                        # THREADED FETCH (Prevents API freeze)
-                        stock, hist, info = await asyncio.to_thread(fetch_ticker_data_sync, t)
-                        
-                        clean_close = hist['Close'].dropna()
-
-                        if clean_close.empty or len(clean_close) < 20:
-                            supabase.table('market_universe').update({'last_scanned': current_time}).eq('ticker', t).execute()
-                            continue
-                            
-                        price = float(clean_close.iloc[-1])
-                        prev_price = float(clean_close.iloc[-2])
-                        daily_change = ((price - prev_price) / prev_price) * 100
-                        
-                        # Unpack exactly 13 values returned by the math engine
-                        (total_score, tech_score, fund_score, _, _, _, _, _, _, _, sector, pe, _) = calculate_quant_metrics(hist, info, stock, price, prev_price, t)
-                        
-                        supabase.table('market_universe').upsert(sanitize_nans({
-                            'ticker': t,
-                            'price': round(price, 2),
-                            'daily_change': round(daily_change, 2),
-                            'tech_score': tech_score,
-                            'fund_score': fund_score,
-                            'sector': sector,
-                            'pe': round(pe, 2) if pe else 0,
-                            'last_scanned': current_time
-                        })).execute()
-                        
-                        print(f"✅ Successfully updated {t}", file=sys.stderr)
-                        
-                    except Exception as e:
-                        print(f"❌ Error processing {t}: {e}. Advancing queue...", file=sys.stderr)
-                        if "Not Found" in str(e) or "delisted" in str(e).lower():
-                            supabase.table('market_universe').delete().eq('ticker', t).execute()
-                        else:
-                            supabase.table('market_universe').update({'last_scanned': current_time}).eq('ticker', t).execute()
-                        continue
-                        
-                print(f"[{datetime.now()}] ✅ WORKER FINISHED: Queue updated. Sleeping for 60 minutes.", file=sys.stderr)
-                await asyncio.sleep(3600)
-                
-            except Exception as e:
-                print(f"❌ CRITICAL WORKER ERROR: {e}", file=sys.stderr)
-                print("Worker crashed. Reviving in 60 seconds...", file=sys.stderr)
-                await asyncio.sleep(60) 
-        else:
-            await asyncio.sleep(60)
-
-@asynccontextmanager
-async def lifecycle(app: FastAPI):
-    asyncio.create_task(keep_alive_loop())
-    asyncio.create_task(staleness_worker_loop())
-    yield
-
-app = FastAPI(lifespan=lifecycle)
+app = FastAPI()
 
 # Explicit origins only. Set FRONTEND_ORIGINS on Render, e.g.:
 # FRONTEND_ORIGINS=https://your-app.vercel.app,http://localhost:3000
@@ -315,13 +193,7 @@ async def execute_screener(req: ScreenerRequest):
 
         final_results = []
         for candidate in top_30:
-            try:
-                stock = yf.Ticker(candidate['ticker'])
-                hist = stock.history(period="1d")
-                if not hist.empty: candidate['price'] = round(float(hist['Close'].iloc[-1]), 2)
-                else: candidate['price'] = candidate['db_price']
-            except Exception:
-                candidate['price'] = candidate['db_price']
+            candidate['price'] = candidate['db_price']
             candidate.pop('db_price', None)
             final_results.append(candidate)
 
@@ -342,16 +214,20 @@ async def analyze_ticker(ticker: str):
         if now - cached_time < MARKET_CACHE_TTL: return cached_data
 
     try:
-        stock = yf.Ticker(ticker_upper)
-        hist = stock.history(period="3mo", prepost=True)
-        clean_close = hist['Close'].dropna()
-        if clean_close.empty: raise HTTPException(status_code=404, detail="Ticker data not found.")
+        hist = load_price_history_df(supabase, ticker_upper, lookback_days=130)
+        if hist.empty or len(hist) < 20:
+            raise HTTPException(status_code=404, detail="Ticker data not found.")
 
         support, resistance = get_support_resistance(hist)
 
-        current_price = round(float(clean_close.iloc[-1]), 2)
-        prev_price = round(float(clean_close.iloc[-2]), 2) if len(clean_close) > 1 else current_price
-        
+        prev_price = round(float(hist['Close'].iloc[-1]), 2)
+        try:
+            quote = await get_live_quote(ticker_upper)
+            current_price = round(float(quote["price"]), 2)
+        except Exception:
+            current_price = prev_price  # DB's last close is the best fallback if no live quote is available
+
+        stock = yf.Ticker(ticker_upper)
         try: info = stock.info
         except Exception: info = {}
 
