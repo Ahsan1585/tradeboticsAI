@@ -28,7 +28,10 @@ def run(supabase_client, tickers: list[str], batch_size: int = 100) -> dict:
         print(f"[eod_ingest] fetching batch {i}-{i + len(batch)} of {len(tickers)}", file=sys.stderr)
         bars = fetch_ohlcv_batch(batch, start, end)
         for ticker, df in bars.items():
-            rows_written += upsert_price_history(supabase_client, ticker, df)
+            try:
+                rows_written += upsert_price_history(supabase_client, ticker, df)
+            except Exception as e:
+                print(f"[eod_ingest] price_history upsert failed for {ticker}: {e}", file=sys.stderr)
 
         for ticker in batch:
             if _score_ticker(supabase_client, ticker):
@@ -38,7 +41,11 @@ def run(supabase_client, tickers: list[str], batch_size: int = 100) -> dict:
 
 
 def _score_ticker(supabase_client, ticker: str) -> bool:
-    hist = load_price_history_df(supabase_client, ticker, lookback_days=130)
+    try:
+        hist = load_price_history_df(supabase_client, ticker, lookback_days=130)
+    except Exception as e:
+        print(f"[eod_ingest] price history load failed for {ticker}: {e}", file=sys.stderr)
+        return False
     if hist.empty or len(hist) < 20:
         return False
 
@@ -63,16 +70,20 @@ def _score_ticker(supabase_client, ticker: str) -> bool:
 
     daily_change = ((current_price - prev_price) / prev_price) * 100 if prev_price else 0.0
 
-    supabase_client.table("market_universe").upsert(sanitize_nans({
-        "ticker": ticker,
-        "price": current_price,
-        "daily_change": round(daily_change, 2),
-        "tech_score": int(tech_score),
-        "fund_score": int(fund_score),
-        "sector": sector,
-        "pe": round(pe, 2) if pe else 0,
-        "last_scanned": datetime.now(timezone.utc).isoformat(),
-    })).execute()
+    try:
+        supabase_client.table("market_universe").upsert(sanitize_nans({
+            "ticker": ticker,
+            "price": current_price,
+            "daily_change": round(daily_change, 2),
+            "tech_score": int(tech_score),
+            "fund_score": int(fund_score),
+            "sector": sector,
+            "pe": round(pe, 2) if pe else 0,
+            "last_scanned": datetime.now(timezone.utc).isoformat(),
+        })).execute()
+    except Exception as e:
+        print(f"[eod_ingest] universe upsert failed for {ticker}: {e}", file=sys.stderr)
+        return False
     return True
 
 

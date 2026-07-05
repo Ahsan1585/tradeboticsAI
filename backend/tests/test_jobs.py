@@ -65,3 +65,113 @@ def test_eod_ingest_writes_bars_and_scores_universe():
     upsert_calls = mock_client.table.return_value.upsert.call_args_list
     universe_upsert = next(c for c in upsert_calls if "tech_score" in c[0][0])
     assert universe_upsert[0][0]["ticker"] == "AAPL"
+
+
+def test_eod_ingest_isolates_scoring_failure_per_ticker():
+    """One ticker's load_price_history_df blowing up must not abort the
+    whole batch: the failing ticker should just not be scored, while its
+    sibling in the same batch still gets scored normally."""
+    from jobs.eod_ingest import run as run_eod_ingest
+
+    tickers = ["BADTICK", "AAPL"]
+    fake_bar_df = pd.DataFrame(
+        {"Open": [110.0], "High": [111.0], "Low": [109.0], "Close": [110.0], "Volume": [500000]},
+        index=pd.to_datetime(["2026-07-03"]),
+    )
+
+    def fake_load(client, ticker, lookback_days=130):
+        if ticker == "BADTICK":
+            raise ConnectionError("supabase read failed")
+        return _fake_hist_df()
+
+    with patch("jobs.eod_ingest.fetch_ohlcv_batch") as mock_fetch, \
+         patch("jobs.eod_ingest.load_price_history_df", side_effect=fake_load), \
+         patch("jobs.eod_ingest.yf.Ticker") as mock_ticker_cls:
+        mock_fetch.return_value = {"BADTICK": fake_bar_df, "AAPL": fake_bar_df}
+        mock_ticker_instance = MagicMock()
+        mock_ticker_instance.info = {"sector": "Technology", "trailingPE": 20.0}
+        mock_ticker_instance.options = []
+        mock_ticker_cls.return_value = mock_ticker_instance
+
+        mock_client = MagicMock()
+        result = run_eod_ingest(mock_client, tickers, batch_size=100)
+
+    assert result["tickers_processed"] == 2
+    assert result["scored"] == 1  # only AAPL, BADTICK's load failure must not count and must not raise
+    upsert_calls = mock_client.table.return_value.upsert.call_args_list
+    universe_upserts = [c for c in upsert_calls if isinstance(c[0][0], dict) and "tech_score" in c[0][0]]
+    assert len(universe_upserts) == 1
+    assert universe_upserts[0][0][0]["ticker"] == "AAPL"
+
+
+def test_eod_ingest_isolates_universe_upsert_failure_per_ticker():
+    """One ticker's final market_universe upsert failing (e.g. a Supabase
+    write error) must not abort the batch, and since the write never
+    landed, that ticker must not be counted as scored even though scoring
+    itself succeeded."""
+    from jobs.eod_ingest import run as run_eod_ingest
+
+    tickers = ["BADWRITE", "AAPL"]
+    fake_bar_df = pd.DataFrame(
+        {"Open": [110.0], "High": [111.0], "Low": [109.0], "Close": [110.0], "Volume": [500000]},
+        index=pd.to_datetime(["2026-07-03"]),
+    )
+
+    def fake_upsert(row, *args, **kwargs):
+        mock_result = MagicMock()
+        if isinstance(row, dict) and row.get("ticker") == "BADWRITE":
+            mock_result.execute.side_effect = ConnectionError("supabase write failed")
+        return mock_result
+
+    with patch("jobs.eod_ingest.fetch_ohlcv_batch") as mock_fetch, \
+         patch("jobs.eod_ingest.load_price_history_df") as mock_load, \
+         patch("jobs.eod_ingest.yf.Ticker") as mock_ticker_cls:
+        mock_fetch.return_value = {"BADWRITE": fake_bar_df, "AAPL": fake_bar_df}
+        mock_load.return_value = _fake_hist_df()
+        mock_ticker_instance = MagicMock()
+        mock_ticker_instance.info = {"sector": "Technology", "trailingPE": 20.0}
+        mock_ticker_instance.options = []
+        mock_ticker_cls.return_value = mock_ticker_instance
+
+        mock_client = MagicMock()
+        mock_client.table.return_value.upsert.side_effect = fake_upsert
+        result = run_eod_ingest(mock_client, tickers, batch_size=100)
+
+    assert result["tickers_processed"] == 2
+    assert result["scored"] == 1  # BADWRITE's write failed, so it must not count as scored
+
+
+def test_eod_ingest_isolates_ohlcv_write_failure_per_ticker():
+    """One ticker's upsert_price_history call raising must not abort the
+    batch: rows_written should only reflect tickers whose write actually
+    succeeded, and scoring should still proceed for every ticker."""
+    from jobs.eod_ingest import run as run_eod_ingest
+
+    tickers = ["BADWRITE", "AAPL"]
+    fake_bar_df = pd.DataFrame(
+        {"Open": [110.0], "High": [111.0], "Low": [109.0], "Close": [110.0], "Volume": [500000]},
+        index=pd.to_datetime(["2026-07-03"]),
+    )
+
+    def fake_upsert_price_history(client, ticker, df):
+        if ticker == "BADWRITE":
+            raise ConnectionError("supabase write failed")
+        return len(df)
+
+    with patch("jobs.eod_ingest.fetch_ohlcv_batch") as mock_fetch, \
+         patch("jobs.eod_ingest.upsert_price_history", side_effect=fake_upsert_price_history), \
+         patch("jobs.eod_ingest.load_price_history_df") as mock_load, \
+         patch("jobs.eod_ingest.yf.Ticker") as mock_ticker_cls:
+        mock_fetch.return_value = {"BADWRITE": fake_bar_df, "AAPL": fake_bar_df}
+        mock_load.return_value = _fake_hist_df()
+        mock_ticker_instance = MagicMock()
+        mock_ticker_instance.info = {"sector": "Technology", "trailingPE": 20.0}
+        mock_ticker_instance.options = []
+        mock_ticker_cls.return_value = mock_ticker_instance
+
+        mock_client = MagicMock()
+        result = run_eod_ingest(mock_client, tickers, batch_size=100)
+
+    assert result["tickers_processed"] == 2
+    assert result["rows_written"] == 1  # only AAPL's row counted; BADWRITE's raise must not propagate
+    assert result["scored"] == 2  # scoring is independent of the OHLCV write and must still run for both
