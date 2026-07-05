@@ -1,9 +1,12 @@
+import asyncio
+
 import pandas as pd
 import pytest
 from datetime import date
 from unittest.mock import MagicMock, patch
 
-from services.market_data import fetch_ohlcv_batch, upsert_price_history, load_price_history_df
+import services.market_data as market_data
+from services.market_data import fetch_ohlcv_batch, upsert_price_history, load_price_history_df, get_live_quote
 
 
 def _fake_yf_download_result(tickers):
@@ -87,3 +90,44 @@ def test_load_price_history_df_reconstructs_ohlcv_shape():
     assert len(df) == 2
     assert df["Close"].iloc[-1] == 11.0
     assert df.index[0] < df.index[1]  # ascending
+
+
+def _clear_quote_state(ticker: str) -> None:
+    """_quote_cache/_quote_locks are module-level singletons that persist
+    across test functions within the same session; clear any pre-existing
+    entry for our ticker so tests don't contaminate each other."""
+    market_data._quote_cache.pop(ticker, None)
+    market_data._quote_locks.pop(ticker, None)
+
+
+def test_get_live_quote_caches_result_and_avoids_second_network_call():
+    ticker = "TESTQ1"
+    _clear_quote_state(ticker)
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"c": 123.45}
+
+    with patch.dict("os.environ", {"FINNHUB_API_KEY": "fake-key"}), \
+         patch("services.market_data.requests.get") as mock_get:
+        mock_get.return_value = mock_response
+
+        first = asyncio.run(get_live_quote(ticker))
+        second = asyncio.run(get_live_quote(ticker))
+
+    assert first == {"price": 123.45, "source": "finnhub"}
+    assert second == {"price": 123.45, "source": "finnhub"}
+    mock_get.assert_called_once()
+
+
+def test_get_live_quote_falls_back_to_fast_info_when_no_finnhub_key():
+    ticker = "TESTQ2"
+    _clear_quote_state(ticker)
+
+    mock_ticker = MagicMock()
+    mock_ticker.fast_info = {"lastPrice": 67.89}
+
+    with patch("services.market_data.os.getenv", return_value=None), \
+         patch("services.market_data.yf.Ticker", return_value=mock_ticker):
+        result = asyncio.run(get_live_quote(ticker))
+
+    assert result == {"price": 67.89, "source": "fast_info"}
