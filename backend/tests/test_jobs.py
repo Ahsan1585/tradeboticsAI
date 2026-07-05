@@ -175,3 +175,18 @@ def test_eod_ingest_isolates_ohlcv_write_failure_per_ticker():
     assert result["tickers_processed"] == 2
     assert result["rows_written"] == 1  # only AAPL's row counted; BADWRITE's raise must not propagate
     assert result["scored"] == 2  # scoring is independent of the OHLCV write and must still run for both
+
+
+def test_refresh_universe_upserts_scraped_tickers():
+    from jobs.refresh_universe import run as run_refresh
+
+    with patch("jobs.refresh_universe.get_market_universe") as mock_scrape:
+        mock_scrape.return_value = ["AAPL", "MSFT", "GOOGL"]
+        mock_client = MagicMock()
+
+        count = run_refresh(mock_client)
+
+    assert count == 3
+    mock_client.table.assert_called_with("market_universe")
+    upserted = mock_client.table.return_value.upsert.call_args[0][0]
+    assert {row["ticker"] for row in upserted} == {"AAPL", "MSFT", "GOOGL"}
