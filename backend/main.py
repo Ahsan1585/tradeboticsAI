@@ -14,8 +14,14 @@ load_dotenv()
 
 from llm import generate_text, llm_available
 from auth import get_current_user
-from services.metrics import safe_float, sanitize_nans, calculate_quant_metrics, get_support_resistance
+from services.metrics import safe_float, sanitize_nans, get_support_resistance
 from services.market_data import load_price_history_df, get_live_quote
+from services.indicators import breadth_pct
+from services.signals import is_defensive_mode, defensive_mode_message
+
+_HORIZON_BY_TRADE_STYLE = {"Day Trade": "day", "Long Term": "longterm"}
+_DEFAULT_HORIZON = "swing"
+_MAX_SCREENER_RESULTS = 10
 
 # ==========================================
 # --- 12-CYLINDER QUANT ENGINE (ONE SOURCE OF TRUTH) ---
@@ -140,6 +146,29 @@ def debit_tokens(user_id: str, cost: int) -> int:
 async def root_health_check():
     return {"status": "Matrix Online", "timestamp": datetime.now()}
 
+def _screener_row(row: dict, horizon: str, sector_lookup: dict) -> dict:
+    """Shapes one daily_metrics row into the screener's display contract.
+    tech_score/fund_score are now real lens scores (trend+momentum+rel-
+    strength+volume blend / fundamentals), not the deleted fake proxies."""
+    sig = (row.get("signals") or {}).get(horizon, {})
+    tech_score = round(((row.get("trend_score") or 0) + (row.get("momentum_score") or 0)
+                         + (row.get("rel_strength_score") or 0) + (row.get("volume_score") or 0)) / 4)
+    fund_score = round(row.get("fundamentals_score") or 0)
+    sector = sector_lookup.get(row["ticker"], "Unknown")
+    return {
+        "ticker": row["ticker"],
+        "price": row["price"],
+        "score": round(sig.get("confidence") or 0),
+        "tech_score": tech_score,
+        "fund_score": fund_score,
+        "verdict": sig.get("verdict"),
+        "reason": sig.get("reason"),
+        "exit_plan": sig.get("exit_plan"),
+        "sector": sector,
+        "metrics": f"Sector: {sector}",
+    }
+
+
 @app.post("/run-screener")
 async def execute_screener(req: ScreenerRequest):
     cache_key = f"{req.trade_style}_{req.risk_level}"
@@ -148,55 +177,47 @@ async def execute_screener(req: ScreenerRequest):
     if cache_key in SCREENER_CACHE:
         cached_results, timestamp = SCREENER_CACHE[cache_key]
         if current_time - timestamp < timedelta(minutes=5):
-            return {"results": cached_results}
+            return cached_results
+
+    horizon = _HORIZON_BY_TRADE_STYLE.get(req.trade_style, _DEFAULT_HORIZON)
 
     try:
-        response = supabase.table('market_universe').select('*').not_.is_('tech_score', 'null').execute()
-        db_universe = response.data
-        if not db_universe: return {"results": []}
+        response = supabase.table('daily_metrics').select('*').execute()
+        rows = response.data
+        if not rows:
+            return {"results": [], "defensive_mode": False}
 
-        scored_candidates = []
-        for row in db_universe:
-            t = row['ticker']
-            tech_score = row['tech_score']
-            fund_score = row['fund_score']
-            sector = row['sector']
-            daily_change = row['daily_change']
-            db_price = row['price']
+        latest_date = max(r["d"] for r in rows)
+        rows = [r for r in rows if r["d"] == latest_date]
 
-            if req.risk_level == "Aggressive": total_score = (tech_score * 0.8) + (fund_score * 0.2)
-            elif req.risk_level == "Conservative": total_score = (tech_score * 0.2) + (fund_score * 0.8)
-            else: total_score = (tech_score * 0.5) + (fund_score * 0.5)
+        universe_resp = supabase.table('market_universe').select('ticker,sector').execute()
+        sector_lookup = {r["ticker"]: r["sector"] for r in universe_resp.data}
 
-            style_bonus = 0
-            if req.trade_style == "Day Trade" and t in ["NVDA", "TSLA", "AMD", "COIN"]: style_bonus = 15 
-            elif req.trade_style == "Long Term" and fund_score > 70: style_bonus = 5
+        regime = rows[0]["regime"]
+        above_sma50 = [r["price"] is not None and r["sma50"] is not None and r["price"] > r["sma50"] for r in rows]
+        breadth = breadth_pct(above_sma50)
 
-            sort_weight = total_score + style_bonus + (daily_change * 0.01)
-            final_display_score = max(10, min(99, math.ceil(total_score + style_bonus)))
-            
-            scored_candidates.append({
-                "ticker": t,
-                "score": final_display_score,
-                "sort_weight": sort_weight,
-                "sector": sector,
-                "db_price": db_price, 
-                "metrics": f"P/E: {row['pe']} | Sector: {sector}"
-            })
+        if is_defensive_mode(regime, breadth):
+            watchlist = [r for r in rows if (r.get("signals") or {}).get(horizon, {}).get("verdict") in ("HOLD", "WAIT")]
+            watchlist.sort(key=lambda r: (r.get("signals") or {}).get(horizon, {}).get("confidence") or 0, reverse=True)
+            payload = {
+                "results": [_screener_row(r, horizon, sector_lookup) for r in watchlist[:_MAX_SCREENER_RESULTS]],
+                "defensive_mode": True,
+                "message": defensive_mode_message(),
+            }
+        else:
+            buys = [r for r in rows if (r.get("signals") or {}).get(horizon, {}).get("verdict") == "BUY"]
+            buys.sort(key=lambda r: (r.get("signals") or {}).get(horizon, {}).get("confidence") or 0, reverse=True)
+            payload = {
+                "results": [_screener_row(r, horizon, sector_lookup) for r in buys[:_MAX_SCREENER_RESULTS]],
+                "defensive_mode": False,
+            }
 
-        scored_candidates.sort(key=lambda x: x['sort_weight'], reverse=True)
-        top_30 = scored_candidates[:30]
-
-        final_results = []
-        for candidate in top_30:
-            candidate['price'] = candidate['db_price']
-            candidate.pop('db_price', None)
-            final_results.append(candidate)
-
-        SCREENER_CACHE[cache_key] = (final_results, current_time)
-        return {"results": final_results}
-    except Exception:
-        return {"results": []}
+        SCREENER_CACHE[cache_key] = (payload, current_time)
+        return payload
+    except Exception as e:
+        print(f"[run-screener] failed: {e}", file=sys.stderr)
+        return {"results": [], "defensive_mode": False}
 
 @app.get("/analyze/{ticker}")
 async def analyze_ticker(ticker: str): 
@@ -210,25 +231,38 @@ async def analyze_ticker(ticker: str):
         if now - cached_time < MARKET_CACHE_TTL: return cached_data
 
     try:
+        metrics_resp = (
+            supabase.table('daily_metrics').select('*')
+            .eq('ticker', ticker_upper).order('d', desc=True).limit(1).execute()
+        )
+        if not metrics_resp.data:
+            raise HTTPException(status_code=404, detail="No honest metrics available for this ticker yet -- check back after tonight's nightly run.")
+        metrics = metrics_resp.data[0]
+
         hist = load_price_history_df(supabase, ticker_upper, lookback_days=130)
-        if hist.empty or len(hist) < 20:
-            raise HTTPException(status_code=404, detail="Ticker data not found.")
+        support, resistance = get_support_resistance(hist) if not hist.empty else (metrics["price"], metrics["price"])
 
-        support, resistance = get_support_resistance(hist)
-
-        prev_price = round(float(hist['Close'].iloc[-1]), 2)
+        prev_price = round(float(metrics["price"]), 2)
         try:
             quote = await get_live_quote(ticker_upper)
             current_price = round(float(quote["price"]), 2)
         except Exception:
-            current_price = prev_price  # DB's last close is the best fallback if no live quote is available
+            current_price = prev_price  # last EOD close is the best fallback if no live quote is available
 
         stock = yf.Ticker(ticker_upper)
         try: info = stock.info
         except Exception: info = {}
 
-        # Unpack exactly 13 values returned by the math engine
-        (total_score, tech_score, fund_score, extra_ledger, real_rsi, volume, avg_volume, vwap_proxy, upper_band, lower_band, sector, pe, margins) = calculate_quant_metrics(hist, info, stock, current_price, prev_price, ticker_upper)
+        volume = float(hist['Volume'].iloc[-1]) if not hist.empty else 0.0
+        avg_volume = float(hist['Volume'].rolling(20).mean().iloc[-1]) if len(hist) >= 20 else volume
+        tech_score = round(((metrics.get("trend_score") or 0) + (metrics.get("momentum_score") or 0)
+                             + (metrics.get("rel_strength_score") or 0) + (metrics.get("volume_score") or 0)) / 4)
+        fund_score = round(metrics.get("fundamentals_score") or 0)
+        signals_by_horizon = metrics.get("signals") or {}
+        swing_signal = signals_by_horizon.get("swing", {})
+        total_score = round(swing_signal.get("confidence") or 0)
+        pe = safe_float(info.get("trailingPE", 0))
+        margins = safe_float(info.get("profitMargins", 0))
 
         raw_mcap = info.get("marketCap")
         formatted_mcap = f"${raw_mcap / 1e12:.2f} Trillion" if raw_mcap and raw_mcap >= 1e12 else f"${raw_mcap / 1e9:.2f} Billion" if raw_mcap else "N/A"
@@ -269,18 +303,22 @@ async def analyze_ticker(ticker: str):
                         })
         except Exception: pass
 
-        rsi_status = "OVERBOUGHT" if real_rsi >= 70 else "OVERSOLD" if real_rsi <= 30 else "BULLISH" if tech_score > 50 else "BEARISH"
+        real_rsi = metrics.get("rsi14")
+        rsi_status = "OVERBOUGHT" if real_rsi and real_rsi >= 70 else "OVERSOLD" if real_rsi and real_rsi <= 30 else "NEUTRAL"
+        macd_hist = metrics.get("macd_hist") or 0
+        extension = metrics.get("extension") or 0
+        rel_spy = metrics.get("rel_strength_spy") or 0
 
         ledger = [
-            {"factor": "Momentum (RSI)", "val": str(real_rsi), "status": rsi_status, "reasoning": "RSI proxy suggests buying pressure." if tech_score > 50 else "RSI proxy suggests selling pressure."},
-            {"factor": "Institutional Flow", "val": "High" if volume > avg_volume else "Low", "status": "BULLISH" if volume > avg_volume else "NEUTRAL", "reasoning": f"Volume of {volume:,} vs average of {avg_volume:,}."},
-            {"factor": "MACD Divergence", "val": "Positive" if current_price > prev_price else "Negative", "status": "BULLISH" if current_price > prev_price else "BEARISH", "reasoning": "Positive bullish crossover." if current_price > prev_price else "Bearish crossover trajectory."},
-            {"factor": "VWAP Deviation", "val": f"${vwap_proxy}", "status": "BULLISH" if current_price > vwap_proxy else "BEARISH", "reasoning": f"Trading {'above' if current_price > vwap_proxy else 'below'} the VWAP."},
-            {"factor": "Bollinger Band Width", "val": f"${lower_band} - ${upper_band}", "status": "NEUTRAL" if lower_band <= current_price <= upper_band else "VOLATILE", "reasoning": "Volatility bands range."},
+            {"factor": "Momentum (RSI-14, Wilder)", "val": str(real_rsi), "status": rsi_status, "reasoning": "Standardized Wilder RSI -- no longer a same-direction proxy."},
+            {"factor": "Volume", "val": "High" if volume > avg_volume else "Low", "status": "BULLISH" if volume > avg_volume else "NEUTRAL", "reasoning": f"Volume of {volume:,.0f} vs 20-day average of {avg_volume:,.0f}."},
+            {"factor": "MACD Histogram", "val": str(round(macd_hist, 4)), "status": "BULLISH" if macd_hist > 0 else "BEARISH", "reasoning": "Real MACD(12,26,9) histogram, not a price-vs-yesterday proxy."},
+            {"factor": "Extension vs 20-SMA", "val": f"{round(extension, 2)} ATR", "status": "VOLATILE" if abs(extension) > 2 else "NEUTRAL", "reasoning": "ATR multiples above/below the 20-day average -- flags overextended entries."},
+            {"factor": "Relative Strength vs SPY (20d)", "val": f"{round(rel_spy * 100, 2)}%", "status": "BULLISH" if rel_spy > 0 else "BEARISH", "reasoning": "Trailing 20-day return vs. the S&P 500 over the same window."},
+            {"factor": "Market Regime", "val": metrics.get("regime", "unknown"), "status": "BULLISH" if metrics.get("regime") == "risk_on" else "BEARISH", "reasoning": "SPY vs its 200-day average and 20-day slope."},
             {"factor": "Mathematical Floor", "val": f"${round(support, 2)}", "status": "NEUTRAL", "reasoning": "Calculated base support level."},
-            {"factor": "Mathematical Ceiling", "val": f"${round(resistance, 2)}", "status": "NEUTRAL", "reasoning": "Calculated major resistance."}
+            {"factor": "Mathematical Ceiling", "val": f"${round(resistance, 2)}", "status": "NEUTRAL", "reasoning": "Calculated major resistance."},
         ]
-        ledger.extend(extra_ledger)
 
         # 1. CALCULATE THESE VARIABLES BEFORE FINAL_RESPONSE
         raw_insider = safe_float(info.get("heldPercentInsiders", 0))
@@ -304,8 +342,10 @@ async def analyze_ticker(ticker: str):
             "volume": f"{int(volume):,}",
             "vol_surge": vol_surge,
             "ledger": ledger,
-            "news": news_list,  
-            "ai_tactical": f"Market conditions evaluated for {ticker_upper}.",
+            "news": news_list,
+            "verdict": swing_signal.get("verdict"),
+            "ai_tactical": swing_signal.get("reason", f"Market conditions evaluated for {ticker_upper}."),
+            "signals": signals_by_horizon,
             "support_level": round(support, 2),
             "resistance_level": round(resistance, 2),
             "fundamentals": {

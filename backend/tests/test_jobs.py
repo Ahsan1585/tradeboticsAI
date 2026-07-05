@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 from unittest.mock import MagicMock, patch
 
 from jobs.backfill_price_history import run as run_backfill
@@ -218,6 +219,100 @@ def test_eod_ingest_seeds_etf_bars_but_does_not_score_them():
     universe_upserts = [c for c in upsert_calls if isinstance(c[0][0], dict) and "tech_score" in c[0][0]]
     assert {u[0][0]["ticker"] for u in universe_upserts} == {"AAPL"}
     assert result["scored"] == 1
+
+
+def _fake_long_hist_df(days=260, start_price=100.0, trend=0.3):
+    idx = pd.date_range("2025-08-01", periods=days, freq="B")
+    close = start_price + np.arange(days) * trend
+    return pd.DataFrame(
+        {"Open": close, "High": close + 1, "Low": close - 1, "Close": close, "Volume": [1_000_000] * days},
+        index=idx,
+    )
+
+
+def test_compute_ticker_metrics_returns_none_when_insufficient_history():
+    from jobs.compute_daily_metrics import compute_ticker_metrics
+    short_hist = _fake_long_hist_df(days=10)
+    spy = short_hist["Close"]
+    result = compute_ticker_metrics("AAPL", short_hist, spy, spy, fundamentals_score=50.0, earnings_within_5d=False, regime="risk_on")
+    assert result is None
+
+
+def test_compute_ticker_metrics_produces_all_three_horizons():
+    from jobs.compute_daily_metrics import compute_ticker_metrics
+    hist = _fake_long_hist_df(days=260, trend=0.5)  # steady uptrend -> should score bullish
+    spy = _fake_long_hist_df(days=260, trend=0.1)["Close"]  # weaker benchmark -> positive rel strength
+    result = compute_ticker_metrics("AAPL", hist, spy, spy, fundamentals_score=70.0, earnings_within_5d=False, regime="risk_on")
+
+    assert result is not None
+    assert result["ticker"] == "AAPL"
+    assert set(result["signals"].keys()) == {"day", "swing", "longterm"}
+    assert result["regime"] == "risk_on"
+    assert result["sma20"] is not None
+    assert result["rsi14"] is not None
+    assert result["trend_score"] is not None
+    assert result["momentum_score"] is not None
+    assert result["rel_strength_score"] is not None
+    assert result["volume_score"] is not None
+    assert result["fundamentals_score"] == pytest.approx(70.0)
+
+
+def test_compute_ticker_metrics_earnings_veto_propagates_to_all_horizons():
+    from jobs.compute_daily_metrics import compute_ticker_metrics
+    hist = _fake_long_hist_df(days=260, trend=0.5)
+    spy = _fake_long_hist_df(days=260, trend=0.1)["Close"]
+    result = compute_ticker_metrics("AAPL", hist, spy, spy, fundamentals_score=70.0, earnings_within_5d=True, regime="risk_on")
+
+    for horizon_signal in result["signals"].values():
+        assert horizon_signal["verdict"] == "WAIT"
+        assert "earnings" in horizon_signal["reason"].lower()
+
+
+def test_compute_daily_metrics_run_writes_row_per_ticker():
+    from jobs.compute_daily_metrics import run
+    long_hist = _fake_long_hist_df(days=260)
+
+    def fake_load(client, ticker, lookback_days=250):
+        return long_hist
+
+    mock_client = MagicMock()
+    mock_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
+        {"sector": "Technology", "pe": 20.0, "margins": 0.2, "rev_growth": 0.1}
+    ]
+
+    with patch("jobs.compute_daily_metrics.load_price_history_df", side_effect=fake_load), \
+         patch("jobs.compute_daily_metrics.has_earnings_within_5d", return_value=False):
+        result = run(mock_client, ["AAPL"])
+
+    assert result["tickers_processed"] == 1
+    assert result["written"] == 1
+    upsert_calls = mock_client.table.return_value.upsert.call_args_list
+    daily_metrics_upserts = [c for c in upsert_calls if isinstance(c[0][0], dict) and "signals" in c[0][0]]
+    assert len(daily_metrics_upserts) == 1
+    assert daily_metrics_upserts[0][0][0]["ticker"] == "AAPL"
+    assert daily_metrics_upserts[0][1]["on_conflict"] == "ticker,d"
+
+
+def test_compute_daily_metrics_run_isolates_per_ticker_failure():
+    from jobs.compute_daily_metrics import run
+    long_hist = _fake_long_hist_df(days=260)
+
+    def fake_load(client, ticker, lookback_days=250):
+        if ticker == "BADTICK":
+            raise ConnectionError("supabase read failed")
+        return long_hist
+
+    mock_client = MagicMock()
+    mock_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
+        {"sector": "Technology", "pe": 20.0, "margins": 0.2, "rev_growth": 0.1}
+    ]
+
+    with patch("jobs.compute_daily_metrics.load_price_history_df", side_effect=fake_load), \
+         patch("jobs.compute_daily_metrics.has_earnings_within_5d", return_value=False):
+        result = run(mock_client, ["BADTICK", "AAPL"])
+
+    assert result["tickers_processed"] == 2
+    assert result["written"] == 1  # only AAPL
 
 
 def test_refresh_universe_upserts_scraped_tickers():

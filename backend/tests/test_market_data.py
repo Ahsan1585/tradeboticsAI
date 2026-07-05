@@ -6,7 +6,10 @@ from datetime import date
 from unittest.mock import MagicMock, patch
 
 import services.market_data as market_data
-from services.market_data import fetch_ohlcv_batch, upsert_price_history, load_price_history_df, get_live_quote
+from services.market_data import (
+    fetch_ohlcv_batch, upsert_price_history, load_price_history_df, get_live_quote,
+    has_earnings_within_5d,
+)
 
 
 def _fake_yf_download_result(tickers):
@@ -131,3 +134,32 @@ def test_get_live_quote_falls_back_to_fast_info_when_no_finnhub_key():
         result = asyncio.run(get_live_quote(ticker))
 
     assert result == {"price": 67.89, "source": "fast_info"}
+
+
+def test_has_earnings_within_5d_true_when_calendar_has_entries():
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"earningsCalendar": [{"date": "2026-07-08"}]}
+    with patch.dict("os.environ", {"FINNHUB_API_KEY": "fake-key"}), \
+         patch("services.market_data.requests.get") as mock_get:
+        mock_get.return_value = mock_response
+        assert has_earnings_within_5d("AAPL", today=date(2026, 7, 5)) is True
+
+
+def test_has_earnings_within_5d_false_when_calendar_empty():
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"earningsCalendar": []}
+    with patch.dict("os.environ", {"FINNHUB_API_KEY": "fake-key"}), \
+         patch("services.market_data.requests.get") as mock_get:
+        mock_get.return_value = mock_response
+        assert has_earnings_within_5d("AAPL", today=date(2026, 7, 5)) is False
+
+
+def test_has_earnings_within_5d_fails_open_without_api_key():
+    with patch.dict("os.environ", {}, clear=True):
+        assert has_earnings_within_5d("AAPL", today=date(2026, 7, 5)) is False
+
+
+def test_has_earnings_within_5d_fails_open_on_network_error():
+    with patch.dict("os.environ", {"FINNHUB_API_KEY": "fake-key"}), \
+         patch("services.market_data.requests.get", side_effect=ConnectionError("timeout")):
+        assert has_earnings_within_5d("AAPL", today=date(2026, 7, 5)) is False

@@ -6,7 +6,7 @@ import asyncio
 import io
 import os
 import sys
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 import requests
@@ -147,3 +147,27 @@ def _fetch_live_quote_sync(ticker: str) -> dict:
         print(f"[market_data] fast_info quote failed for {ticker}: {e}", file=sys.stderr)
 
     raise ValueError(f"No live quote available for {ticker}")
+
+
+def has_earnings_within_5d(ticker: str, today: date | None = None) -> bool:
+    """Checks Finnhub's free earnings calendar for a report in the next 5
+    calendar days. Fails open (returns False, i.e. no veto) if the API key
+    is missing or the request fails -- a transient API issue must not
+    silently block every signal."""
+    finnhub_key = os.getenv("FINNHUB_API_KEY")
+    if not finnhub_key:
+        return False
+
+    today = today or date.today()
+    end = today + timedelta(days=5)
+    try:
+        resp = requests.get(
+            "https://finnhub.io/api/v1/calendar/earnings",
+            params={"from": today.isoformat(), "to": end.isoformat(), "symbol": ticker, "token": finnhub_key},
+            timeout=10,
+        )
+        data = resp.json()
+        return bool(data.get("earningsCalendar"))
+    except Exception as e:
+        print(f"[market_data] earnings calendar fetch failed for {ticker}: {e}", file=sys.stderr)
+        return False
