@@ -26,3 +26,5 @@ supabase
 
 # Misc
 tenacity
+cachetools
+pytest

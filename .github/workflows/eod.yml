@@ -1,0 +1,24 @@
+# .github/workflows/eod.yml
+name: EOD Ingest
+
+on:
+  schedule:
+    - cron: '30 2 * * 2-6'  # ~9:30pm ET weekdays (Tue-Sat UTC covers Mon-Fri US sessions)
+  workflow_dispatch: {}
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - run: python -m jobs.eod_ingest
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}

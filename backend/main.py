@@ -10,291 +10,18 @@ import yfinance as yf
 from dotenv import load_dotenv
 from supabase import create_client, Client
 import sys
-import pandas as pd
-import asyncio
-import random
-import httpx
-from contextlib import asynccontextmanager
-import requests
-import io
-import numpy as np
-from scipy.signal import argrelextrema
 load_dotenv()
 
 from llm import generate_text, llm_available
 from auth import get_current_user
-
-# ==========================================
-# --- SAFETY & SANITIZATION UTILITIES ---
-# ==========================================
-def safe_float(val, default=0.0):
-    """Safely converts potential NaNs, None, or strings into a clean Python float."""
-    try:
-        if val is None:
-            return default
-        f_val = float(val)
-        if math.isnan(f_val) or math.isinf(f_val):
-            return default
-        return f_val
-    except Exception:
-        return default
-
-def sanitize_nans(obj):
-    """Recursively strips out any remaining NaNs or Infinities before JSON serialization."""
-    if isinstance(obj, float) or type(obj).__module__ == 'numpy':
-        try:
-            val = float(obj)
-            if math.isnan(val) or math.isinf(val):
-                return 0.0
-            return val
-        except Exception:
-            return 0.0
-    elif isinstance(obj, dict):
-        return {k: sanitize_nans(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [sanitize_nans(i) for i in obj]
-    return obj
-
-# ==========================================
-# --- KEEP ALIVE CONFIGURATION ---
-# ==========================================
-RENDER_APP_URL = "https://tradebotics-api.onrender.com/market-briefing" 
-
-async def keep_alive_loop():
-    """Loops infinitely every 10 minutes to ping the public URL and prevent sleep."""
-    await asyncio.sleep(30)
-    
-    async with httpx.AsyncClient() as client:
-        while True:
-            try:
-                print(f"[{datetime.now()}] 🛰️ SENDING KEEP-ALIVE PING TO PUBLIC URL...", file=sys.stderr)
-                response = await client.get(RENDER_APP_URL, timeout=10.0)
-                print(f"[{datetime.now()}] 💚 KEEP-ALIVE SUCCESS: Status {response.status_code}", file=sys.stderr)
-            except Exception as e:
-                print(f"[{datetime.now()}] ⚠️ KEEP-ALIVE PING FAILED: {e}", file=sys.stderr)
-            
-            await asyncio.sleep(600)
+from services.metrics import safe_float, sanitize_nans, calculate_quant_metrics, get_support_resistance
+from services.market_data import load_price_history_df, get_live_quote
 
 # ==========================================
 # --- 12-CYLINDER QUANT ENGINE (ONE SOURCE OF TRUTH) ---
 # ==========================================
-def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price, ticker="Asset"):
-    """
-    The 12-Cylinder Engine (Restored Verbose Version).
-    Ensures full parity with original logic while returning exactly 13 values.
-    """
-    tech_base = 50
-    fund_base = 50
-    alpha_bonus = 0
-    extra_ledger = []
-    
-    # 🧹 CLEAN DATA
-    clean_close = hist['Close'].dropna()
-    valid_hist = hist.dropna(subset=['High', 'Low', 'Close', 'Volume'])
-    
-    sector = info.get("sector", "Macro Profile")
-    pe = safe_float(info.get("trailingPE", 0))
-    margins = safe_float(info.get("profitMargins", 0))
-    rev_growth = safe_float(info.get("revenueGrowth", 0))
-    fcf = safe_float(info.get("freeCashflow", 0))
-    short_interest = safe_float(info.get("shortPercentOfFloat", 0))
-    insider_hold = safe_float(info.get("heldPercentInsiders", 0))
 
-    # --- DETAILED TECHNICAL ENGINE ---
-    # SMA & BB Logic
-    if len(clean_close) >= 20:
-        sma_20 = safe_float(clean_close.rolling(window=20).mean().iloc[-1])
-        std_dev = safe_float(clean_close.rolling(window=20).std().iloc[-1])
-        upper_band = round(sma_20 + (2 * std_dev), 2)
-        lower_band = round(sma_20 - (2 * std_dev), 2)
-
-        # Verbose Trending logic
-        if current_price > sma_20: tech_base += 15
-        else: tech_base -= 15
-        
-        # Band Deviation Logic
-        if current_price > upper_band: tech_base -= 10 
-        elif current_price < lower_band: tech_base += 10 
-
-        # Squeeze Logic
-        bb_width = (upper_band - lower_band) / sma_20 if sma_20 > 0 else 1
-        if bb_width < 0.05:
-            alpha_bonus += 5
-            extra_ledger.append({"factor": "Consolidation", "val": "Tight", "status": "BULLISH", "reasoning": "Volatility compression."})
-    else:
-        sma_20 = current_price
-        upper_band, lower_band = round(current_price * 1.05, 2), round(current_price * 0.95, 2)
-
-    # Detailed Momentum (RSI)
-    try:
-        delta = clean_close.diff()
-        gain = delta.clip(lower=0).ewm(com=13, adjust=False).mean()
-        loss = (-1 * delta.clip(upper=0)).ewm(com=13, adjust=False).mean()
-        rs = gain / loss
-        real_rsi = round(100 - (100 / (1 + rs.iloc[-1])), 2)
-    except: real_rsi = 50.0
-
-    if real_rsi >= 70: tech_base -= 15 
-    elif real_rsi <= 30: tech_base += 15 
-    elif 50 < real_rsi < 65: tech_base += 5 
-
-    # Detailed Volume/VWAP logic
-    volume = safe_float(valid_hist['Volume'].iloc[-1])
-    avg_volume = safe_float(valid_hist['Volume'].rolling(20).mean().iloc[-1])
-    if avg_volume > 0 and volume > (avg_volume * 1.2): tech_base += 10
-    else: tech_base -= 5
-    
-    typical_price = (valid_hist['High'] + valid_hist['Low'] + valid_hist['Close']) / 3
-    vwap_proxy = round(safe_float((typical_price * valid_hist['Volume']).sum() / valid_hist['Volume'].sum(), current_price), 2)
-    if current_price > vwap_proxy: tech_base += 10
-    else: tech_base -= 10
-
-    # --- RESTORED FUNDAMENTAL ENGINE ---
-    is_tech = "Technology" in sector or "Communication" in sector
-    is_financial = "Financial" in sector
-    
-    # PE/Margins/Growth Logic (Verbose)
-    if pe > 0 and pe < 25: fund_base += 20 
-    elif pe >= 25 and pe <= 50 and is_tech: fund_base += 10 
-    elif pe > 50: fund_base -= 20
-    
-    if margins > 0.15: fund_base += 20
-    elif margins < 0: fund_base -= 25
-    
-    if rev_growth > 0.20: fund_base += 10 
-    elif rev_growth < 0: fund_base -= 15 
-
-    if fcf > 0: fund_base += 5
-    elif fcf < 0: fund_base -= 5
-
-    # --- RESTORED ALPHA MULTIPLIERS ---
-    if short_interest > 0.15:
-        alpha_bonus += 5
-        extra_ledger.append({"factor": "Short Interest", "val": f"{round(short_interest*100, 1)}%", "status": "VOLATILE", "reasoning": "High squeeze potential."})
-
-    try:
-        opt_dates = stock_obj.options
-        if opt_dates:
-            chain = stock_obj.option_chain(opt_dates[0])
-            calls_vol = chain.calls['volume'].sum()
-            puts_vol = chain.puts['volume'].sum()
-            if calls_vol > 0:
-                pcr = puts_vol / calls_vol
-                if pcr < 0.6: alpha_bonus += 5
-                elif pcr > 1.5: alpha_bonus -= 20
-    except: pass
-
-    total_score = max(10, min(99, math.ceil((tech_base + fund_base) / 2) + alpha_bonus))
-
-    # EXACTLY 13 RETURNS
-    return (
-        total_score, int(tech_base), int(fund_base), extra_ledger, real_rsi, 
-        volume, avg_volume, vwap_proxy, upper_band, lower_band, 
-        sector, pe, margins
-    )
-
-# ==========================================
-# --- THE STEALTH DATA WORKER ---
-# ==========================================
-def fetch_ticker_data_sync(t):
-    """Runs in a separate thread so it doesn't freeze the FastAPI server."""
-    stock = yf.Ticker(t)
-    hist = stock.history(period="1mo")
-    try:
-        info = stock.info
-    except Exception:
-        info = {}
-    return stock, hist, info
-
-async def staleness_worker_loop():
-    """Runs every 60 minutes. Sweeps the oldest 50 tickers, scores them, and upserts to Supabase."""
-    await asyncio.sleep(60)
-    
-    while True:
-        if supabase:
-            try:
-                print(f"[{datetime.now()}] 🤖 WORKER WAKING UP: Initiating Staleness Sweep...", file=sys.stderr)
-                
-                response = supabase.table('market_universe').select('ticker').order('last_scanned', desc=False, nullsfirst=True).limit(50).execute()
-                stale_tickers = [row['ticker'] for row in response.data]
-                
-                if not stale_tickers:
-                    print(f"[{datetime.now()}] ⚠️ EMPTY QUEUE: Seeding database from Wikipedia...", file=sys.stderr)
-                    universe = await asyncio.to_thread(get_market_universe)
-                    print(f"[{datetime.now()}] 📦 Scraped {len(universe)} tickers. Breaking into safe batches of 50...", file=sys.stderr)
-                    
-                    for i in range(0, len(universe), 50):
-                        chunk = universe[i:i + 50]
-                        seed_data = [{'ticker': t} for t in chunk]
-                        try:
-                            supabase.table('market_universe').upsert(seed_data).execute()
-                            print(f"✅ Batch {i} to {i+len(chunk)} inserted successfully.", file=sys.stderr)
-                        except Exception as e:
-                            print(f"❌ Failed to insert batch {i}: {e}", file=sys.stderr)
-                        
-                    response = supabase.table('market_universe').select('ticker').order('last_scanned', desc=False, nullsfirst=True).limit(50).execute()
-                    stale_tickers = [row['ticker'] for row in response.data]
-
-                print(f"[{datetime.now()}] 🔍 WORKER SCANNING: Processing {len(stale_tickers)} tickers...", file=sys.stderr)
-                
-                for t in stale_tickers:
-                    current_time = datetime.now(timezone.utc).isoformat()
-                    
-                    try:
-                        # THREADED FETCH (Prevents API freeze)
-                        stock, hist, info = await asyncio.to_thread(fetch_ticker_data_sync, t)
-                        
-                        clean_close = hist['Close'].dropna()
-
-                        if clean_close.empty or len(clean_close) < 20:
-                            supabase.table('market_universe').update({'last_scanned': current_time}).eq('ticker', t).execute()
-                            continue
-                            
-                        price = float(clean_close.iloc[-1])
-                        prev_price = float(clean_close.iloc[-2])
-                        daily_change = ((price - prev_price) / prev_price) * 100
-                        
-                        # Unpack exactly 13 values returned by the math engine
-                        (total_score, tech_score, fund_score, _, _, _, _, _, _, _, sector, pe, _) = calculate_quant_metrics(hist, info, stock, price, prev_price, t)
-                        
-                        supabase.table('market_universe').upsert(sanitize_nans({
-                            'ticker': t,
-                            'price': round(price, 2),
-                            'daily_change': round(daily_change, 2),
-                            'tech_score': tech_score,
-                            'fund_score': fund_score,
-                            'sector': sector,
-                            'pe': round(pe, 2) if pe else 0,
-                            'last_scanned': current_time
-                        })).execute()
-                        
-                        print(f"✅ Successfully updated {t}", file=sys.stderr)
-                        
-                    except Exception as e:
-                        print(f"❌ Error processing {t}: {e}. Advancing queue...", file=sys.stderr)
-                        if "Not Found" in str(e) or "delisted" in str(e).lower():
-                            supabase.table('market_universe').delete().eq('ticker', t).execute()
-                        else:
-                            supabase.table('market_universe').update({'last_scanned': current_time}).eq('ticker', t).execute()
-                        continue
-                        
-                print(f"[{datetime.now()}] ✅ WORKER FINISHED: Queue updated. Sleeping for 60 minutes.", file=sys.stderr)
-                await asyncio.sleep(3600)
-                
-            except Exception as e:
-                print(f"❌ CRITICAL WORKER ERROR: {e}", file=sys.stderr)
-                print("Worker crashed. Reviving in 60 seconds...", file=sys.stderr)
-                await asyncio.sleep(60) 
-        else:
-            await asyncio.sleep(60)
-
-@asynccontextmanager
-async def lifecycle(app: FastAPI):
-    asyncio.create_task(keep_alive_loop())
-    asyncio.create_task(staleness_worker_loop())
-    yield
-
-app = FastAPI(lifespan=lifecycle)
+app = FastAPI()
 
 # Explicit origins only. Set FRONTEND_ORIGINS on Render, e.g.:
 # FRONTEND_ORIGINS=https://your-app.vercel.app,http://localhost:3000
@@ -407,70 +134,6 @@ def debit_tokens(user_id: str, cost: int) -> int:
         raise HTTPException(status_code=402, detail=f"INSUFFICIENT BANDWIDTH. {cost} Tokens required.")
     return new_balance
 
-# ==========================================
-# --- MATH ENGINE UTILS ---
-# ==========================================
-def get_support_resistance(hist):
-    if len(hist) < 30:
-        return float(hist['Low'].min()), float(hist['High'].max())
-        
-    prices = hist['Close'].values
-    order = 5
-    maxima = argrelextrema(prices, np.greater, order=order)[0]
-    minima = argrelextrema(prices, np.less, order=order)[0]
-    
-    res_levels = prices[maxima][-3:] if len(maxima) > 0 else [prices[-1]]
-    sup_levels = prices[minima][-3:] if len(minima) > 0 else [prices[-1]]
-    
-    return float(np.mean(sup_levels)), float(np.mean(res_levels))
-
-def get_market_universe():
-    """Fetches unique tickers from S&P 500, Nasdaq-100, and DJIA from Wikipedia."""
-    all_tickers = set()
-    sources = [
-        {"url": "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", "col": "Symbol"},
-        {"url": "https://en.wikipedia.org/wiki/Nasdaq-100", "col": "Ticker"},
-        {"url": "https://en.wikipedia.org/wiki/Dow_Jones_Industrial_Average", "col": "Symbol"}
-    ]
-    headers = {'User-Agent': 'TradeBoticsApp/1.0 (Data Scraper)'}
-    
-    for source in sources:
-        try:
-            response = requests.get(source["url"], headers=headers, timeout=15)
-            response.raise_for_status()
-            tables = pd.read_html(io.StringIO(response.text))
-            
-            target_df = None
-            target_col_name = None
-            
-            for df in tables:
-                if isinstance(df.columns, pd.MultiIndex):
-                    df.columns = ['_'.join(map(str, col)).strip() for col in df.columns.values]
-                for col in df.columns:
-                    if source["col"].lower() in str(col).lower():
-                        target_df = df
-                        target_col_name = col
-                        break
-                if target_df is not None: break
-            
-            if target_df is not None and target_col_name is not None:
-                tickers = target_df[target_col_name].tolist()
-                for t in tickers:
-                    clean_t = str(t).replace('.', '-').strip()
-                    if isinstance(clean_t, str) and 1 <= len(clean_t) <= 5 and clean_t.replace('-', '').isalpha():
-                        all_tickers.add(clean_t)
-        except Exception:
-            pass
-            
-    if len(all_tickers) < 50:
-        return [
-            "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "BRK-B", "LLY", "TSLA", "AVGO",
-            "JPM", "V", "WMT", "UNH", "XOM", "MA", "PG", "JNJ", "HD", "COST", "MRK", "ABBV", 
-            "CRM", "AMD", "CVX", "NFLX", "BAC", "KO", "PEP", "TMO", "LIN", "DIS", "ADBE"
-        ]
-        
-    return list(all_tickers)
-
 # --- ENDPOINTS ---
 
 @app.get("/")
@@ -526,13 +189,7 @@ async def execute_screener(req: ScreenerRequest):
 
         final_results = []
         for candidate in top_30:
-            try:
-                stock = yf.Ticker(candidate['ticker'])
-                hist = stock.history(period="1d")
-                if not hist.empty: candidate['price'] = round(float(hist['Close'].iloc[-1]), 2)
-                else: candidate['price'] = candidate['db_price']
-            except Exception:
-                candidate['price'] = candidate['db_price']
+            candidate['price'] = candidate['db_price']
             candidate.pop('db_price', None)
             final_results.append(candidate)
 
@@ -553,16 +210,20 @@ async def analyze_ticker(ticker: str):
         if now - cached_time < MARKET_CACHE_TTL: return cached_data
 
     try:
-        stock = yf.Ticker(ticker_upper)
-        hist = stock.history(period="3mo", prepost=True)
-        clean_close = hist['Close'].dropna()
-        if clean_close.empty: raise HTTPException(status_code=404, detail="Ticker data not found.")
+        hist = load_price_history_df(supabase, ticker_upper, lookback_days=130)
+        if hist.empty or len(hist) < 20:
+            raise HTTPException(status_code=404, detail="Ticker data not found.")
 
         support, resistance = get_support_resistance(hist)
 
-        current_price = round(float(clean_close.iloc[-1]), 2)
-        prev_price = round(float(clean_close.iloc[-2]), 2) if len(clean_close) > 1 else current_price
-        
+        prev_price = round(float(hist['Close'].iloc[-1]), 2)
+        try:
+            quote = await get_live_quote(ticker_upper)
+            current_price = round(float(quote["price"]), 2)
+        except Exception:
+            current_price = prev_price  # DB's last close is the best fallback if no live quote is available
+
+        stock = yf.Ticker(ticker_upper)
         try: info = stock.info
         except Exception: info = {}
 
