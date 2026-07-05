@@ -10,6 +10,9 @@ PyJWT[crypto]
 # LLM (Anthropic Claude)
 anthropic
 
+# Billing
+stripe
+
 # Data
 yfinance
 pandas>=2.0.0
@@ -27,4 +30,6 @@ supabase
 # Misc
 tenacity
 cachetools
+slowapi
 pytest
+ruff

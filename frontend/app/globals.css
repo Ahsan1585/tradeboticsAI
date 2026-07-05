@@ -1,26 +1,56 @@
 @import "tailwindcss";
 
+/* --- TradeBotics design tokens (2026-07-05 redesign) ---
+   Bold trading/crypto aesthetic: flat solid surfaces (no glassmorphism),
+   punchy electric-blue accent, dark-first with a real light theme. */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg-primary: #0a0a0f;
+  --bg-surface: #151823;
+  --bg-surface-hover: #1c2030;
+  --border-color: #262b3d;
+  --text-primary: #f5f5f7;
+  --text-secondary: #9ca3af;
+  --accent: #3b82f6;
+  --accent-hover: #60a5fa;
+  --gain: #10b981;
+  --loss: #ef4444;
+  --warn: #f59e0b;
+}
+
+:root[data-theme="light"] {
+  --bg-primary: #fafafa;
+  --bg-surface: #ffffff;
+  --bg-surface-hover: #f3f4f6;
+  --border-color: #e5e7eb;
+  --text-primary: #0a0a0f;
+  --text-secondary: #6b7280;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --gain: #059669;
+  --loss: #dc2626;
+  --warn: #d97706;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-bg-primary: var(--bg-primary);
+  --color-bg-surface: var(--bg-surface);
+  --color-bg-surface-hover: var(--bg-surface-hover);
+  --color-border: var(--border-color);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-gain: var(--gain);
+  --color-loss: var(--loss);
+  --color-warn: var(--warn);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }

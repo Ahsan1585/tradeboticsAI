@@ -10,11 +10,19 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
 import main
+from routers import billing as billing_router
 
 
 @pytest.fixture
 def client():
     return TestClient(main.app)
+
+
+@pytest.fixture(autouse=True)
+def _override_auth():
+    main.app.dependency_overrides[main.get_current_user] = lambda: "test-user-id"
+    yield
+    main.app.dependency_overrides.pop(main.get_current_user, None)
 
 
 def _fake_hist_df(days=40):
@@ -138,3 +146,117 @@ def test_run_screener_defensive_mode_when_risk_off_and_weak_breadth(client):
     data = resp.json()
     assert data["defensive_mode"] is True
     assert "cash" in data["message"].lower()
+
+
+def test_track_record_aggregates_signals(client):
+    main.TRACK_RECORD_CACHE.clear()
+    mock_supabase = MagicMock()
+    mock_supabase.table.return_value.select.return_value.execute.return_value.data = [
+        {"ticker": "AAPL", "horizon": "swing", "verdict": "BUY", "trade_outcome": "target_hit",
+         "engine_version": "v1", "d": "2026-06-01", "ret_5d": 0.01, "ret_20d": 0.08, "ret_60d": 0.1,
+         "spy_ret_5d": 0.005, "spy_ret_20d": 0.02, "spy_ret_60d": 0.03},
+    ]
+
+    with patch.object(main, "supabase", mock_supabase):
+        resp = client.get("/track-record")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["tracks"]) == 1
+    assert data["tracks"][0]["horizon"] == "swing"
+    assert data["tracks"][0]["wins"] == 1
+
+
+def test_billing_status_initializes_trial_on_first_call(client):
+    mock_supabase = MagicMock()
+    mock_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [
+        {"plan": "free", "trial_ends_at": None, "ai_token_balance": 5}
+    ]
+    mock_supabase.rpc.return_value.execute.return_value.data = 55
+
+    with patch.object(billing_router, "supabase", mock_supabase):
+        resp = client.get("/billing/status")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["plan_status"] == "trial"
+    assert data["trial_ends_at"] is not None
+    mock_supabase.rpc.assert_any_call("credit_tokens", {"p_user_id": "test-user-id", "p_amount": billing_router.billing.TRIAL_TOKEN_GRANT})
+
+
+def test_billing_checkout_subscription_returns_url(client):
+    with patch.object(billing_router, "stripe") as mock_stripe, \
+         patch.object(billing_router, "STRIPE_PRICE_ID_PRO", "price_pro123"):
+        mock_stripe.api_key = "sk_test_fake"
+        mock_stripe.checkout.Session.create.return_value = MagicMock(url="https://checkout.stripe.com/abc")
+        resp = client.post("/billing/checkout", json={"mode": "subscription"})
+
+    assert resp.status_code == 200
+    assert resp.json()["checkout_url"] == "https://checkout.stripe.com/abc"
+
+
+def test_billing_checkout_not_configured_returns_500(client):
+    with patch.object(billing_router, "stripe") as mock_stripe:
+        mock_stripe.api_key = None
+        resp = client.post("/billing/checkout", json={"mode": "subscription"})
+    assert resp.status_code == 500
+
+
+def test_stripe_webhook_activates_subscription_and_is_idempotent(client):
+    mock_supabase = MagicMock()
+    mock_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value.data = []
+
+    fake_event = {
+        "id": "evt_test1", "type": "checkout.session.completed",
+        "data": {"object": {"customer": "cus_1", "client_reference_id": "user-1",
+                             "metadata": {"user_id": "user-1", "kind": "subscription"}}},
+    }
+
+    with patch.object(billing_router, "supabase", mock_supabase), \
+         patch.object(billing_router, "STRIPE_WEBHOOK_SECRET", "whsec_fake"), \
+         patch.object(billing_router, "stripe") as mock_stripe:
+        mock_stripe.Webhook.construct_event.return_value = fake_event
+        resp = client.post("/stripe/webhook", content=b"{}", headers={"stripe-signature": "fake"})
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+    update_calls = mock_supabase.table.return_value.update.call_args_list
+    plan_updates = [c for c in update_calls if c[0][0].get("plan") == "pro"]
+    assert len(plan_updates) == 1
+
+
+def test_list_personas_returns_all_four(client):
+    resp = client.get("/personas")
+    assert resp.status_code == 200
+    ids = {p["id"] for p in resp.json()["personas"]}
+    assert ids == {"buffett", "lynch", "wood", "burry"}
+
+
+def test_persona_take_unknown_persona_returns_404(client):
+    resp = client.post("/persona-take", json={"ticker": "AAPL", "persona_id": "nobody"})
+    assert resp.status_code == 404
+
+
+def test_persona_take_returns_narrated_verdict(client):
+    mock_supabase = MagicMock()
+    mock_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [
+        {"ai_token_balance": 10}
+    ]
+    mock_supabase.table.return_value.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value.data = [
+        {"signals": {"swing": {"verdict": "BUY", "confidence": 82.0, "reason": "Trend and momentum align.",
+                                "consensus": {"bullish": 4, "bearish": 0, "neutral": 1, "total": 5}}}}
+    ]
+    mock_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [{"ai_token_balance": 10}]
+    mock_supabase.rpc.return_value.execute.return_value.data = 9
+
+    with patch.object(main, "supabase", mock_supabase), \
+         patch("main.llm_available", return_value=True), \
+         patch("main.check_ai_cache", return_value=None), \
+         patch("main.generate_text", return_value="Buffett-style narration of the BUY verdict."):
+        resp = client.post("/persona-take", json={"ticker": "AAPL", "persona_id": "buffett"})
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["verdict"] == "BUY"
+    assert data["persona"] == "Warren Buffett"
+    assert "narration" in data["analysis"].lower()

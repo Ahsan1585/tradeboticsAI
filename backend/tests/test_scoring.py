@@ -171,3 +171,78 @@ def test_exit_plan_target_beats_stop_distance():
     risk = plan["entry"] - plan["stop"]
     reward = plan["target"] - plan["entry"]
     assert reward / risk == pytest.approx(2.0)
+
+
+# --- smart_money_score (Phase 2b) --------------------------------------------
+
+def test_smart_money_score_neutral_with_no_signals():
+    assert scoring.smart_money_score(fund_signals=[], insider_net_buy_usd=0.0) == pytest.approx(50.0)
+
+
+def test_smart_money_score_rises_with_bullish_fund_activity():
+    score = scoring.smart_money_score(fund_signals=["new", "increased"], insider_net_buy_usd=0.0)
+    assert score > 50.0
+
+
+def test_smart_money_score_falls_with_bearish_fund_activity():
+    score = scoring.smart_money_score(fund_signals=["exited", "decreased"], insider_net_buy_usd=0.0)
+    assert score < 50.0
+
+
+def test_smart_money_score_rises_with_insider_buying():
+    score = scoring.smart_money_score(fund_signals=[], insider_net_buy_usd=500_000.0)
+    assert score > 50.0
+
+
+def test_smart_money_score_falls_with_insider_selling():
+    score = scoring.smart_money_score(fund_signals=[], insider_net_buy_usd=-500_000.0)
+    assert score < 50.0
+
+
+def test_smart_money_score_clamped_0_to_100():
+    score_hi = scoring.smart_money_score(fund_signals=["new"] * 20, insider_net_buy_usd=1_000_000.0)
+    assert score_hi <= 100.0
+    score_lo = scoring.smart_money_score(fund_signals=["exited"] * 20, insider_net_buy_usd=-1_000_000.0)
+    assert score_lo >= 0.0
+
+
+# --- consensus() with optional 6th smart_money lens --------------------------
+
+def test_consensus_without_smart_money_keeps_five_lenses():
+    result = scoring.consensus(trend=80, momentum=70, rel_strength=20, volume=50, fundamentals=60)
+    assert result["total"] == 5
+    assert "smart_money" not in result["lenses"]
+
+
+def test_consensus_with_smart_money_adds_sixth_lens():
+    result = scoring.consensus(trend=80, momentum=70, rel_strength=20, volume=50, fundamentals=60, smart_money=75)
+    assert result["total"] == 6
+    assert result["lenses"]["smart_money"] == "bullish"
+    assert result["bullish"] == 4  # trend, momentum, fundamentals, smart_money
+
+
+# --- confidence_score() with optional smart_money nudge ----------------------
+
+def test_confidence_score_unaffected_when_smart_money_omitted():
+    base = scoring.confidence_score(trend=70, momentum=70, rel_strength=70, volume=70, fundamentals=70, regime="risk_on")
+    with_neutral = scoring.confidence_score(trend=70, momentum=70, rel_strength=70, volume=70, fundamentals=70, regime="risk_on", smart_money=50)
+    assert base == pytest.approx(with_neutral)
+
+
+def test_confidence_score_bullish_smart_money_nudges_up():
+    base = scoring.confidence_score(trend=70, momentum=70, rel_strength=70, volume=70, fundamentals=70, regime="risk_on")
+    boosted = scoring.confidence_score(trend=70, momentum=70, rel_strength=70, volume=70, fundamentals=70, regime="risk_on", smart_money=100)
+    assert boosted > base
+
+
+def test_confidence_score_bearish_smart_money_nudges_down():
+    base = scoring.confidence_score(trend=70, momentum=70, rel_strength=70, volume=70, fundamentals=70, regime="risk_on")
+    dampened = scoring.confidence_score(trend=70, momentum=70, rel_strength=70, volume=70, fundamentals=70, regime="risk_on", smart_money=0)
+    assert dampened < base
+
+
+def test_confidence_score_smart_money_nudge_is_bounded():
+    # Even an extreme smart-money score should only nudge confidence by a
+    # few points, not overwhelm the 5-weight composite.
+    boosted = scoring.confidence_score(trend=10, momentum=10, rel_strength=10, volume=10, fundamentals=10, regime="risk_on", smart_money=100)
+    assert boosted < 20.0

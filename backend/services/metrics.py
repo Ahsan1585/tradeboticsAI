@@ -55,7 +55,6 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price, ti
     rev_growth = safe_float(info.get("revenueGrowth", 0))
     fcf = safe_float(info.get("freeCashflow", 0))
     short_interest = safe_float(info.get("shortPercentOfFloat", 0))
-    insider_hold = safe_float(info.get("heldPercentInsiders", 0))
 
     # --- DETAILED TECHNICAL ENGINE ---
     # SMA & BB Logic
@@ -108,7 +107,6 @@ def calculate_quant_metrics(hist, info, stock_obj, current_price, prev_price, ti
 
     # --- RESTORED FUNDAMENTAL ENGINE ---
     is_tech = "Technology" in sector or "Communication" in sector
-    is_financial = "Financial" in sector
 
     # PE/Margins/Growth Logic (Verbose)
     if pe > 0 and pe < 25: fund_base += 20

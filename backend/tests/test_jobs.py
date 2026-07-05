@@ -257,6 +257,32 @@ def test_compute_ticker_metrics_produces_all_three_horizons():
     assert result["fundamentals_score"] == pytest.approx(70.0)
 
 
+def test_compute_ticker_metrics_without_smart_money_has_no_sixth_lens():
+    from jobs.compute_daily_metrics import compute_ticker_metrics
+    hist = _fake_long_hist_df(days=260, trend=0.5)
+    spy = _fake_long_hist_df(days=260, trend=0.1)["Close"]
+    result = compute_ticker_metrics("AAPL", hist, spy, spy, fundamentals_score=70.0, earnings_within_5d=False, regime="risk_on")
+
+    assert result["smart_money_score"] is None
+    for horizon_signal in result["signals"].values():
+        assert "smart_money" not in horizon_signal["consensus"]["lenses"]
+
+
+def test_compute_ticker_metrics_with_smart_money_adds_score_and_signals():
+    from jobs.compute_daily_metrics import compute_ticker_metrics
+    hist = _fake_long_hist_df(days=260, trend=0.5)
+    spy = _fake_long_hist_df(days=260, trend=0.1)["Close"]
+    result = compute_ticker_metrics(
+        "AAPL", hist, spy, spy, fundamentals_score=70.0, earnings_within_5d=False, regime="risk_on",
+        fund_signals=["new", "increased"], insider_net_buy_usd=250_000.0,
+    )
+
+    assert result["smart_money_score"] > 50.0
+    assert result["smart_money_signals"] == {"fund_signals": ["new", "increased"], "insider_net_buy_usd": 250_000.0}
+    for horizon_signal in result["signals"].values():
+        assert "smart_money" in horizon_signal["consensus"]["lenses"]
+
+
 def test_compute_ticker_metrics_earnings_veto_propagates_to_all_horizons():
     from jobs.compute_daily_metrics import compute_ticker_metrics
     hist = _fake_long_hist_df(days=260, trend=0.5)
@@ -268,6 +294,30 @@ def test_compute_ticker_metrics_earnings_veto_propagates_to_all_horizons():
         assert "earnings" in horizon_signal["reason"].lower()
 
 
+def _mock_client_with_tables(table_data: dict) -> MagicMock:
+    """Builds a supabase client mock where table(name) returns a stable
+    per-name MagicMock, so chained select/eq/limit calls can be configured
+    independently per table (unlike a bare MagicMock, which would collapse
+    all table names onto the same auto-generated mock)."""
+    tables = {}
+
+    def fake_table(name):
+        if name not in tables:
+            m = MagicMock()
+            if name in table_data:
+                m.select.return_value.execute.return_value.data = table_data[name]
+                m.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = table_data[name]
+                m.select.return_value.eq.return_value.execute.return_value.data = table_data[name]
+                m.select.return_value.gte.return_value.execute.return_value.data = table_data[name]
+            tables[name] = m
+        return tables[name]
+
+    client = MagicMock()
+    client.table.side_effect = fake_table
+    client._tables = tables  # test-only escape hatch for assertions
+    return client
+
+
 def test_compute_daily_metrics_run_writes_row_per_ticker():
     from jobs.compute_daily_metrics import run
     long_hist = _fake_long_hist_df(days=260)
@@ -275,10 +325,11 @@ def test_compute_daily_metrics_run_writes_row_per_ticker():
     def fake_load(client, ticker, lookback_days=250):
         return long_hist
 
-    mock_client = MagicMock()
-    mock_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
-        {"sector": "Technology", "pe": 20.0, "margins": 0.2, "rev_growth": 0.1}
-    ]
+    mock_client = _mock_client_with_tables({
+        "market_universe": [{"sector": "Technology", "pe": 20.0, "margins": 0.2, "rev_growth": 0.1}],
+        "smart_money_13f": [],
+        "smart_money_insider": [],
+    })
 
     with patch("jobs.compute_daily_metrics.load_price_history_df", side_effect=fake_load), \
          patch("jobs.compute_daily_metrics.has_earnings_within_5d", return_value=False):
@@ -286,11 +337,62 @@ def test_compute_daily_metrics_run_writes_row_per_ticker():
 
     assert result["tickers_processed"] == 1
     assert result["written"] == 1
-    upsert_calls = mock_client.table.return_value.upsert.call_args_list
-    daily_metrics_upserts = [c for c in upsert_calls if isinstance(c[0][0], dict) and "signals" in c[0][0]]
-    assert len(daily_metrics_upserts) == 1
-    assert daily_metrics_upserts[0][0][0]["ticker"] == "AAPL"
-    assert daily_metrics_upserts[0][1]["on_conflict"] == "ticker,d"
+    upsert_calls = mock_client._tables["daily_metrics"].upsert.call_args_list
+    assert len(upsert_calls) == 1
+    assert upsert_calls[0][0][0]["ticker"] == "AAPL"
+    assert upsert_calls[0][1]["on_conflict"] == "ticker,d"
+
+
+def test_compute_daily_metrics_run_logs_signals_for_every_horizon():
+    from jobs.compute_daily_metrics import run
+    long_hist = _fake_long_hist_df(days=260)
+
+    def fake_load(client, ticker, lookback_days=250):
+        return long_hist
+
+    mock_client = _mock_client_with_tables({
+        "market_universe": [{"sector": "Technology", "pe": 20.0, "margins": 0.2, "rev_growth": 0.1}],
+        "smart_money_13f": [],
+        "smart_money_insider": [],
+    })
+
+    with patch("jobs.compute_daily_metrics.load_price_history_df", side_effect=fake_load), \
+         patch("jobs.compute_daily_metrics.has_earnings_within_5d", return_value=False):
+        run(mock_client, ["AAPL"])
+
+    signal_upserts = mock_client._tables["signals"].upsert.call_args_list
+    assert len(signal_upserts) == 3  # day, swing, longterm
+    horizons_logged = {c[0][0]["horizon"] for c in signal_upserts}
+    assert horizons_logged == {"day", "swing", "longterm"}
+    assert signal_upserts[0][1]["on_conflict"] == "ticker,horizon,d"
+
+
+def test_compute_daily_metrics_run_feeds_smart_money_into_row():
+    from jobs.compute_daily_metrics import run
+    long_hist = _fake_long_hist_df(days=260)
+
+    def fake_load(client, ticker, lookback_days=250):
+        return long_hist
+
+    mock_client = _mock_client_with_tables({
+        "market_universe": [{"sector": "Technology", "pe": 20.0, "margins": 0.2, "rev_growth": 0.1}],
+        "smart_money_13f": [{"ticker": "AAPL", "change_type": "increased"}, {"ticker": "AAPL", "change_type": "new"}],
+        "smart_money_insider": [
+            {"ticker": "AAPL", "transaction_code": "P", "shares": 1000, "price": 100.0},
+            {"ticker": "AAPL", "transaction_code": "S", "shares": 200, "price": 100.0},
+        ],
+    })
+
+    with patch("jobs.compute_daily_metrics.load_price_history_df", side_effect=fake_load), \
+         patch("jobs.compute_daily_metrics.has_earnings_within_5d", return_value=False):
+        result = run(mock_client, ["AAPL"])
+
+    assert result["written"] == 1
+    row = mock_client._tables["daily_metrics"].upsert.call_args_list[0][0][0]
+    assert row["smart_money_score"] is not None
+    assert row["smart_money_score"] > 50.0  # net buying (1000 bought - 200 sold) + 2 bullish fund signals
+    assert row["smart_money_signals"]["fund_signals"] == ["increased", "new"]
+    assert row["smart_money_signals"]["insider_net_buy_usd"] == pytest.approx((1000 - 200) * 100.0)
 
 
 def test_compute_daily_metrics_run_isolates_per_ticker_failure():
@@ -302,10 +404,11 @@ def test_compute_daily_metrics_run_isolates_per_ticker_failure():
             raise ConnectionError("supabase read failed")
         return long_hist
 
-    mock_client = MagicMock()
-    mock_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
-        {"sector": "Technology", "pe": 20.0, "margins": 0.2, "rev_growth": 0.1}
-    ]
+    mock_client = _mock_client_with_tables({
+        "market_universe": [{"sector": "Technology", "pe": 20.0, "margins": 0.2, "rev_growth": 0.1}],
+        "smart_money_13f": [],
+        "smart_money_insider": [],
+    })
 
     with patch("jobs.compute_daily_metrics.load_price_history_df", side_effect=fake_load), \
          patch("jobs.compute_daily_metrics.has_earnings_within_5d", return_value=False):

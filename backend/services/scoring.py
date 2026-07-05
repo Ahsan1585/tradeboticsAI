@@ -50,9 +50,14 @@ def composite_score(trend: float, momentum: float, rel_strength: float, volume: 
     )
 
 
-def consensus(trend: float, momentum: float, rel_strength: float, volume: float, fundamentals: float) -> dict:
-    """Multi-lens agreement view: how many of the five independent lenses
-    agree on direction. Powers the plain-language 'X of 5 signals agree'."""
+def consensus(
+    trend: float, momentum: float, rel_strength: float, volume: float, fundamentals: float,
+    smart_money: float | None = None,
+) -> dict:
+    """Multi-lens agreement view: how many of the independent lenses agree
+    on direction. Powers the plain-language 'X of 5 signals agree'.
+    smart_money (Phase 2b) is an optional 6th lens -- omitted entirely when
+    not supplied, so Phase 2a callers see no change in shape."""
     lenses = {
         "trend": trend,
         "momentum": momentum,
@@ -60,6 +65,8 @@ def consensus(trend: float, momentum: float, rel_strength: float, volume: float,
         "volume": volume,
         "fundamentals": fundamentals,
     }
+    if smart_money is not None:
+        lenses["smart_money"] = smart_money
     classified = {name: lens_signal(score) for name, score in lenses.items()}
     bullish = sum(1 for v in classified.values() if v == "bullish")
     bearish = sum(1 for v in classified.values() if v == "bearish")
@@ -73,15 +80,25 @@ def consensus(trend: float, momentum: float, rel_strength: float, volume: float,
     }
 
 
+_SMART_MONEY_MAX_NUDGE = 5.0  # points; keeps the 5-weight composite dominant
+
+
 def confidence_score(
-    trend: float, momentum: float, rel_strength: float, volume: float, fundamentals: float, regime: str
+    trend: float, momentum: float, rel_strength: float, volume: float, fundamentals: float, regime: str,
+    smart_money: float | None = None,
 ) -> float:
     """Composite score with the regime multiplier applied, clamped 0-100.
     Risk-off regimes dampen confidence so BUY becomes structurally harder
-    to reach, without special-casing the verdict logic itself."""
+    to reach, without special-casing the verdict logic itself.
+    smart_money (Phase 2b) is an optional small bounded nudge (+/-5 points
+    at the extremes) -- informational, not a rework of the approved
+    5-weight composite. Omitted entirely, confidence is unchanged from
+    Phase 2a's behavior."""
     score = composite_score(trend, momentum, rel_strength, volume, fundamentals)
     if regime == "risk_off":
         score *= _RISK_OFF_MULTIPLIER
+    if smart_money is not None:
+        score += (smart_money - 50.0) / 50.0 * _SMART_MONEY_MAX_NUDGE
     return max(0.0, min(100.0, score))
 
 
@@ -112,6 +129,32 @@ def verdict(confidence: float, extension: float, gap_pct: float, regime: str, ea
         return "AVOID", "Multiple signals point negative — this does not look like a good entry."
 
     return "HOLD", "Signals are mixed — no strong edge in either direction right now."
+
+
+_FUND_SIGNAL_WEIGHT = 8.0
+
+
+def smart_money_score(fund_signals: list[str], insider_net_buy_usd: float) -> float:
+    """0-100 lens from Phase 2b's smart-money layer. fund_signals: the
+    change_type ('new'/'increased'/'decreased'/'unchanged'/'exited') of
+    each tracked hedge fund currently or previously holding this ticker.
+    insider_net_buy_usd: aggregate dollar value of open-market insider
+    purchases minus sales in the trailing window. Insider selling is
+    weighted less than buying -- executives sell for many reasons unrelated
+    to conviction (taxes, diversification), but voluntarily buying on the
+    open market is a strong, low-noise signal."""
+    score = 50.0
+    bullish_funds = sum(1 for s in fund_signals if s in ("new", "increased"))
+    bearish_funds = sum(1 for s in fund_signals if s in ("decreased", "exited"))
+    score += bullish_funds * _FUND_SIGNAL_WEIGHT
+    score -= bearish_funds * _FUND_SIGNAL_WEIGHT
+
+    if insider_net_buy_usd > 0:
+        score += 10.0
+    elif insider_net_buy_usd < 0:
+        score -= 5.0
+
+    return max(0.0, min(100.0, score))
 
 
 def exit_plan(entry_price: float, atr: float) -> dict:

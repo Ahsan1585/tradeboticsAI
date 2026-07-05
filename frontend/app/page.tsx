@@ -3,192 +3,170 @@ import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "./lib/supabase";
 import { BACKEND_URL } from "./lib/config";
+import ThemeToggle from "./components/ThemeToggle";
+import Button from "./components/ui/Button";
+import Card from "./components/ui/Card";
 
 // --- MARKETING LANDING PAGE ---
 function MarketingLanding({ onLoginClick, onRegisterClick }: { onLoginClick: () => void, onRegisterClick: () => void }) {
     const [demoTicker, setDemoTicker] = useState("");
     const [demoResult, setDemoResult] = useState<any>(null);
     const [demoLoading, setDemoLoading] = useState(false);
+    const [trackRecord, setTrackRecord] = useState<any[]>([]);
+
+    useEffect(() => {
+        fetch(`${BACKEND_URL}/track-record`)
+            .then((res) => res.json())
+            .then((data) => setTrackRecord(data.tracks || []))
+            .catch(() => setTrackRecord([]));
+    }, []);
 
     const runDemoScan = async () => {
-        if(!demoTicker) return;
+        if (!demoTicker) return;
         setDemoLoading(true);
         setDemoResult(null);
-        
+
         try {
             const res = await fetch(`${BACKEND_URL}/analyze/${demoTicker.toUpperCase()}`);
             const data = await res.json();
-            
+
             if (res.ok) {
                 const trend = data.tech_score > 75 ? "bullish accumulation" : "consolidation";
-                const verdict = `${data.company_name} is currently trading at $${data.price}. Initial scans indicate ${trend} with an aggregate Quant Score of ${data.score}. Technical momentum scores ${data.tech_score}/100 while institutional fundamental DNA scores ${data.fund_score}/100.`;
-                setDemoResult({
-                    ticker: data.ticker,
-                    price: data.price,
-                    score: data.score,
-                    verdict: verdict
-                });
+                const verdict = `${data.company_name} is currently trading at $${data.price}. Initial scans indicate ${trend} with a score of ${data.score}. Technical momentum scores ${data.tech_score}/100 while fundamentals score ${data.fund_score}/100.`;
+                setDemoResult({ ticker: data.ticker, price: data.price, score: data.score, verdict });
             } else {
-                setDemoResult({
-                    ticker: demoTicker.toUpperCase(),
-                    score: "N/A",
-                    verdict: "Asset scan failed. Please verify the ticker symbol is a standard US equity."
-                });
+                setDemoResult({ ticker: demoTicker.toUpperCase(), score: "N/A", verdict: "Couldn't find that ticker. Try a standard US equity symbol." });
             }
-        } catch (error) {
-            setDemoResult({
-                ticker: demoTicker.toUpperCase(),
-                score: "ERR",
-                verdict: "Terminal connection offline. Please try again."
-            });
+        } catch {
+            setDemoResult({ ticker: demoTicker.toUpperCase(), score: "ERR", verdict: "Connection issue -- please try again." });
         }
         setDemoLoading(false);
     };
 
-    const testimonials = [
-        { name: "Marcus T.", title: "Quant Trader", img: "https://randomuser.me/api/portraits/men/32.jpg", quote: "The Tactical Exit Strategy alone saved my portfolio during the last tech correction. It accurately predicted the NVDA pullback three days before the broader market reacted." },
-        { name: "Sarah J.", title: "Retail Investor", img: "https://randomuser.me/api/portraits/women/44.jpg", quote: "Having fundamental DNA and real-time global sentiment synthesized into a single terminal is a game changer. I don't execute a trade without running it through TradeBotics first." },
-        { name: "David L.", title: "Swing Trader", img: "https://randomuser.me/api/portraits/men/68.jpg", quote: "The Portfolio Intelligence mapping helped me optimize my cost-basis across three different brokers. It acts like a silent, hyper-intelligent hedge fund manager." },
-        { name: "Elena R.", title: "Risk Analyst", img: "https://randomuser.me/api/portraits/women/63.jpg", quote: "As a risk manager, the neural synthesis provides the exact probability matrices I need. The AI doesn't hallucinate; it strictly analyzes the math and historical tape." },
-        { name: "James K.", title: "Proprietary Trader", img: "https://randomuser.me/api/portraits/men/85.jpg", quote: "I migrated from Bloomberg to TradeBotics because of the AI integrations. It filters the noise and gives me definitive strike zones instantly without the bloat." },
-        { name: "Aisha M.", title: "Family Office Director", img: "https://randomuser.me/api/portraits/women/12.jpg", quote: "The automated portfolio sync completely eliminated my need for manual tracking. I see my exact P&L dynamically adjusted against AI price targets every morning." }
-    ];
-
     return (
-        <div className="min-h-screen bg-[#020617] text-slate-300 font-sans overflow-x-hidden selection:bg-blue-500/30">
-            <style dangerouslySetInnerHTML={{__html: `
-                @keyframes scroll {
-                    0% { transform: translateX(0); }
-                    100% { transform: translateX(calc(-50% - 1rem)); }
-                }
-                .animate-scroll {
-                    animation: scroll 40s linear infinite;
-                }
-                .animate-scroll:hover {
-                    animation-play-state: paused;
-                }
-            `}} />
-
-            <nav className="w-full border-b border-slate-800/50 bg-[#020617]/80 backdrop-blur-md fixed top-0 z-50">
+        <div className="min-h-screen bg-bg-primary text-text-primary font-sans overflow-x-hidden selection:bg-accent/30">
+            <nav className="w-full border-b border-border bg-bg-primary/90 backdrop-blur-md fixed top-0 z-50">
                 <div className="max-w-7xl mx-auto px-4 md:px-6 h-16 md:h-20 flex items-center justify-between">
-                    <h1 className="text-xl md:text-2xl font-black text-white tracking-tighter">TRADEBOTICS<span className="text-blue-500">AI</span></h1>
-                    <div className="flex items-center gap-3 md:gap-6">
-                        <button onClick={onLoginClick} className="text-[10px] md:text-xs font-black uppercase tracking-widest text-slate-400 hover:text-white transition-colors hidden sm:block">Operative Login</button>
-                        <button onClick={onRegisterClick} className="bg-blue-600 hover:bg-blue-500 text-white text-[9px] md:text-[10px] font-black px-4 py-2 md:px-6 md:py-3 rounded-full uppercase tracking-widest transition-all shadow-[0_0_20px_rgba(59,130,246,0.2)]">Request Clearance</button>
+                    <h1 className="text-xl md:text-2xl font-black tracking-tighter">TRADEBOTICS<span className="text-accent">AI</span></h1>
+                    <div className="flex items-center gap-3 md:gap-4">
+                        <ThemeToggle />
+                        <button onClick={onLoginClick} className="text-[10px] md:text-xs font-black uppercase tracking-widest text-text-secondary hover:text-text-primary transition-colors hidden sm:block">Log In</button>
+                        <Button onClick={onRegisterClick} size="sm">Start Free</Button>
                     </div>
                 </div>
             </nav>
 
             <section className="pt-28 md:pt-40 pb-16 md:pb-20 px-4 md:px-6 max-w-7xl mx-auto flex flex-col lg:flex-row items-center gap-12 md:gap-16">
                 <div className="flex-1 space-y-6 md:space-y-8 text-center lg:text-left z-10 w-full">
-                    <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-[9px] md:text-[10px] font-black uppercase tracking-widest mb-2 md:mb-4">
-                        SYSTEMS ONLINE
+                    <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-accent/10 border border-accent/20 text-accent text-[9px] md:text-[10px] font-black uppercase tracking-widest mb-2 md:mb-4">
+                        7-Day Free Trial &middot; No Card Required
                     </div>
-                    <h2 className="text-4xl sm:text-5xl lg:text-7xl font-black text-white leading-[1.1] tracking-tighter">
-                        Institutional-Grade <br className="hidden sm:block lg:hidden" /><span className="text-blue-500">AI Analytics.</span><br/>Retail Edge.
+                    <h2 className="text-4xl sm:text-5xl lg:text-7xl font-black leading-[1.1] tracking-tighter">
+                        Know what to invest in, <span className="text-accent">without the guesswork.</span>
                     </h2>
-                    <p className="text-sm md:text-lg text-slate-400 leading-relaxed max-w-xl mx-auto lg:mx-0">
-                        TradeBotics AI synthesizes global news, technical indicators, and fundamental DNA in seconds to calculate definitive strike zones and tactical exit strategies.
+                    <p className="text-sm md:text-lg text-text-secondary leading-relaxed max-w-xl mx-auto lg:mx-0">
+                        TradeBotics turns real technical data, hedge-fund filings, and insider trades into a
+                        plain-English verdict on any stock -- with a stop-loss and target on every pick.
                     </p>
                     <div className="flex flex-col sm:flex-row items-center gap-3 md:gap-4 justify-center lg:justify-start w-full sm:w-auto px-4 sm:px-0">
-                        <button onClick={onRegisterClick} className="w-full sm:w-auto bg-white text-[#020617] px-8 py-4 rounded-full font-black text-[10px] md:text-xs uppercase tracking-[0.2em] hover:bg-slate-200 transition-colors">Start Free Trial</button>
-                        <button onClick={onLoginClick} className="w-full sm:w-auto bg-slate-900 border border-slate-700 text-white px-8 py-4 rounded-full font-black text-[10px] md:text-xs uppercase tracking-[0.2em] hover:border-blue-500 transition-colors">Sign In</button>
+                        <Button onClick={onRegisterClick} size="lg" className="w-full sm:w-auto">Start Free Trial</Button>
+                        <Button onClick={onLoginClick} variant="secondary" size="lg" className="w-full sm:w-auto">Log In</Button>
                     </div>
                 </div>
 
                 <div className="flex-1 w-full max-w-md relative mt-8 lg:mt-0">
-                    <div className="absolute inset-0 bg-blue-600/20 blur-[80px] md:blur-[100px] rounded-full pointer-events-none" />
-                    <div className="bg-slate-900/60 border border-slate-800 p-6 md:p-8 rounded-[32px] md:rounded-[40px] shadow-2xl backdrop-blur-xl relative z-10">
-                        <p className="text-[9px] md:text-[10px] font-black text-blue-500 uppercase tracking-[0.3em] mb-4 md:mb-6 text-center">Free Public Pulse Scan</p>
-                        
+                    <Card className="p-6 md:p-8 relative z-10">
+                        <p className="text-[9px] md:text-[10px] font-black text-accent uppercase tracking-[0.3em] mb-4 md:mb-6 text-center">Try It Free -- No Signup</p>
+
                         <div className="flex flex-col sm:flex-row gap-2 mb-6">
-                            <input value={demoTicker} onChange={(e) => setDemoTicker(e.target.value.toUpperCase())} onKeyDown={(e) => e.key === 'Enter' && runDemoScan()} placeholder="ENTER TICKER..." className="flex-1 bg-slate-950 border border-slate-800 rounded-xl md:rounded-2xl px-4 py-3 md:py-4 text-white font-black outline-none focus:border-blue-500 text-base md:text-lg transition-colors text-center sm:text-left" />
-                            <button onClick={runDemoScan} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 md:py-0 rounded-xl md:rounded-2xl font-black text-[10px] uppercase tracking-widest transition-colors w-full sm:w-auto">
-                                {demoLoading ? "..." : "SCAN"}
-                            </button>
+                            <input
+                                value={demoTicker}
+                                onChange={(e) => setDemoTicker(e.target.value.toUpperCase())}
+                                onKeyDown={(e) => e.key === "Enter" && runDemoScan()}
+                                placeholder="Enter a ticker, e.g. AAPL"
+                                className="flex-1 bg-bg-primary border border-border rounded-xl px-4 py-3 md:py-4 font-black outline-none focus:border-accent text-base md:text-lg transition-colors text-center sm:text-left"
+                            />
+                            <Button onClick={runDemoScan} className="w-full sm:w-auto">{demoLoading ? "..." : "Scan"}</Button>
                         </div>
 
                         {demoLoading && (
                             <div className="py-8 md:py-10 flex flex-col items-center">
-                                <div className="w-6 h-6 md:w-8 md:h-8 border-4 border-slate-800 border-t-blue-500 rounded-full animate-spin mb-3 md:mb-4" />
-                                <p className="text-[9px] md:text-[10px] text-blue-500 uppercase font-black tracking-widest animate-pulse text-center">Running Neural Synthesis...</p>
+                                <div className="w-6 h-6 md:w-8 md:h-8 border-4 border-border border-t-accent rounded-full animate-spin mb-3 md:mb-4" />
+                                <p className="text-[9px] md:text-[10px] text-accent uppercase font-black tracking-widest animate-pulse text-center">Analyzing...</p>
                             </div>
                         )}
 
                         {demoResult && !demoLoading && (
-                            <div className="bg-[#020617] border border-blue-500/30 rounded-[24px] md:rounded-3xl p-5 md:p-6 animate-in zoom-in-95 fade-in text-center">
-                                <p className="text-2xl md:text-3xl font-black text-white mb-1">{demoResult.ticker}</p>
-                                {demoResult.price && <p className="text-[10px] md:text-xs font-bold text-slate-400 mb-4 bg-slate-900/50 inline-block px-3 py-1 rounded-lg border border-slate-800">LIVE PRICE: ${demoResult.price}</p>}
+                            <div className="bg-bg-primary border border-accent/30 rounded-2xl p-5 md:p-6 text-center">
+                                <p className="text-2xl md:text-3xl font-black mb-1">{demoResult.ticker}</p>
+                                {demoResult.price && <p className="text-[10px] md:text-xs font-bold text-text-secondary mb-4 bg-bg-surface inline-block px-3 py-1 rounded-lg border border-border">${demoResult.price}</p>}
                                 <div className="flex items-center justify-center gap-2 mb-4">
-                                    <span className="text-blue-500 font-black text-xl md:text-2xl">{demoResult.score}</span>
-                                    <span className="text-[9px] md:text-[10px] text-slate-500 font-bold uppercase">Quant Score</span>
+                                    <span className="text-accent font-black text-xl md:text-2xl">{demoResult.score}</span>
+                                    <span className="text-[9px] md:text-[10px] text-text-secondary font-bold uppercase">Score</span>
                                 </div>
-                                <p className="text-xs md:text-sm text-slate-300 italic border-l-2 border-blue-500 pl-3 text-left leading-relaxed mb-6">
-                                    "{demoResult.verdict}"
+                                <p className="text-xs md:text-sm text-text-secondary italic border-l-2 border-accent pl-3 text-left leading-relaxed mb-6">
+                                    &ldquo;{demoResult.verdict}&rdquo;
                                 </p>
-                                <button onClick={onRegisterClick} className="w-full bg-blue-600/10 hover:bg-blue-600 border border-blue-500/50 hover:border-transparent text-blue-400 hover:text-white py-3 rounded-xl font-black text-[9px] md:text-[10px] uppercase tracking-widest transition-all">
-                                    Unlock Full AI Deep Dive
-                                </button>
+                                <Button onClick={onRegisterClick} className="w-full">Get The Full Picture</Button>
                             </div>
                         )}
                         {!demoResult && !demoLoading && (
-                            <p className="text-center text-slate-500 text-[10px] md:text-xs italic font-medium px-2 md:px-4">Input any US equity ticker to experience a fractional execution of our proprietary AI scoring model.</p>
+                            <p className="text-center text-text-secondary text-[10px] md:text-xs italic font-medium px-2 md:px-4">Type any US stock ticker to see a real, live sample of our scoring model.</p>
                         )}
-                    </div>
+                    </Card>
                 </div>
             </section>
 
-            <section className="border-t border-slate-800/50 bg-[#060b1f] py-16 md:py-24 overflow-hidden">
-                <div className="flex flex-col items-center justify-center mb-10 md:mb-16 px-4 md:px-6 text-center">
-                    <div className="flex gap-1 text-blue-500 text-xl md:text-2xl mb-3 md:mb-4 drop-shadow-[0_0_10px_rgba(59,130,246,0.8)]">★★★★★</div>
-                    <h3 className="text-2xl md:text-3xl font-black text-white tracking-tighter uppercase mb-2">Operative Testimonials</h3>
-                    <p className="text-slate-500 font-bold uppercase tracking-widest text-[9px] md:text-[10px]">Trusted by over 4,500+ Institutional & Retail Operatives</p>
+            <section className="border-t border-border bg-bg-surface py-16 md:py-24">
+                <div className="flex flex-col items-center justify-center mb-10 md:mb-14 px-4 md:px-6 text-center">
+                    <h3 className="text-2xl md:text-3xl font-black tracking-tighter uppercase mb-2">Our Live Track Record</h3>
+                    <p className="text-text-secondary font-bold uppercase tracking-widest text-[9px] md:text-[10px]">Every signal logged before we know the outcome. No cherry-picking.</p>
                 </div>
-                
-                <div className="flex overflow-hidden w-full relative group">
-                    <div className="absolute top-0 left-0 w-16 md:w-32 h-full bg-gradient-to-r from-[#060b1f] to-transparent z-10 pointer-events-none" />
-                    <div className="absolute top-0 right-0 w-16 md:w-32 h-full bg-gradient-to-l from-[#060b1f] to-transparent z-10 pointer-events-none" />
-                    
-                    <div className="flex gap-4 md:gap-8 min-w-max animate-scroll">
-                        {[...testimonials, ...testimonials].map((t, i) => (
-                            <div key={i} className="bg-slate-900/40 border border-slate-800 p-6 md:p-8 rounded-[24px] md:rounded-[32px] text-left flex flex-col w-[300px] md:w-[400px] shrink-0 whitespace-normal hover:border-blue-500/50 transition-colors shadow-xl">
-                                <div className="flex items-center gap-1 text-blue-500 mb-3 md:mb-4 text-sm md:text-lg">★★★★★</div>
-                                <p className="text-slate-300 text-xs md:text-sm leading-relaxed mb-4 md:mb-6 flex-1">"{t.quote}"</p>
-                                <div className="flex items-center gap-3 md:gap-4 border-t border-slate-800/50 pt-4 md:pt-6">
-                                    <img src={t.img} alt={t.name} className="w-8 h-8 md:w-10 md:h-10 rounded-full border border-slate-700" />
-                                    <div>
-                                        <p className="text-[9px] md:text-[10px] font-black uppercase text-white tracking-widest">{t.name}</p>
-                                        <p className="text-[8px] md:text-[9px] font-bold uppercase text-slate-500 tracking-widest">{t.title}</p>
-                                    </div>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
+
+                <div className="max-w-5xl mx-auto px-4 md:px-6">
+                    {trackRecord.length === 0 ? (
+                        <p className="text-text-secondary text-center text-sm py-6">
+                            Track record is building -- resolved trades will appear here as signals play out.
+                        </p>
+                    ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
+                            {trackRecord.map((t: any) => (
+                                <Card key={`${t.horizon}-${t.engine_version}`} className="p-6 text-center">
+                                    <p className="text-[9px] font-bold uppercase text-text-secondary tracking-widest mb-2">{t.horizon} track</p>
+                                    <p className={`text-3xl font-black mb-1 ${t.hit_rate >= 55 ? "text-gain" : t.hit_rate >= 45 ? "text-warn" : "text-loss"}`}>{t.hit_rate}%</p>
+                                    <p className="text-[10px] text-text-secondary uppercase tracking-wide">Hit Rate &middot; {t.total_resolved} resolved trades</p>
+                                </Card>
+                            ))}
+                        </div>
+                    )}
+                    <p className="text-[10px] text-text-secondary text-center mt-6">
+                        <a href="/track-record" className="underline hover:text-text-primary">See the full track record &rarr;</a>
+                    </p>
                 </div>
             </section>
 
             <section className="py-16 md:py-24 max-w-7xl mx-auto px-6">
-                 <div className="grid grid-cols-1 md:grid-cols-3 gap-10 md:gap-12 text-center md:text-left">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-10 md:gap-12 text-center md:text-left">
                     <div className="flex flex-col items-center md:items-start">
-                        <div className="w-12 h-12 bg-blue-500/10 rounded-2xl flex items-center justify-center mb-4 md:mb-6 border border-blue-500/20"><span className="text-blue-500 text-xl">🧠</span></div>
-                        <h4 className="text-lg md:text-xl font-black text-white mb-3 md:mb-4">Neural Market Synthesis</h4>
-                        <p className="text-slate-400 text-xs md:text-sm leading-relaxed">We aggregate millions of data points from global news wires, SEC filings, and technical indicators to provide a definitive 1-100 Quant Score for any asset.</p>
+                        <div className="w-12 h-12 bg-accent/10 rounded-2xl flex items-center justify-center mb-4 md:mb-6 border border-accent/20"><span className="text-accent text-xl">🧠</span></div>
+                        <h4 className="text-lg md:text-xl font-black mb-3 md:mb-4">Honest, Deterministic Signals</h4>
+                        <p className="text-text-secondary text-xs md:text-sm leading-relaxed">Real technical indicators and market-regime checks compute a transparent verdict -- the AI narrates it, it never invents it.</p>
                     </div>
                     <div className="flex flex-col items-center md:items-start">
-                        <div className="w-12 h-12 bg-orange-500/10 rounded-2xl flex items-center justify-center mb-4 md:mb-6 border border-orange-500/20"><span className="text-orange-500 text-xl">🎯</span></div>
-                        <h4 className="text-lg md:text-xl font-black text-white mb-3 md:mb-4">Tactical Strike Zones</h4>
-                        <p className="text-slate-400 text-xs md:text-sm leading-relaxed">Remove emotion from your entries and exits. The AI calculates precise trailing targets and stop-loss floors based on real-time volatility profiles.</p>
+                        <div className="w-12 h-12 bg-warn/10 rounded-2xl flex items-center justify-center mb-4 md:mb-6 border border-warn/20"><span className="text-warn text-xl">🎯</span></div>
+                        <h4 className="text-lg md:text-xl font-black mb-3 md:mb-4">Built-In Exit Plan</h4>
+                        <p className="text-text-secondary text-xs md:text-sm leading-relaxed">Every BUY ships with an ATR-based stop and target, so you always know when to walk away -- winning or losing.</p>
                     </div>
                     <div className="flex flex-col items-center md:items-start">
-                        <div className="w-12 h-12 bg-purple-500/10 rounded-2xl flex items-center justify-center mb-4 md:mb-6 border border-purple-500/20"><span className="text-purple-500 text-xl">💼</span></div>
-                        <h4 className="text-lg md:text-xl font-black text-white mb-3 md:mb-4">Portfolio Intelligence</h4>
-                        <p className="text-slate-400 text-xs md:text-sm leading-relaxed">Securely sync your current holdings to the terminal. Our AI acts as a dedicated risk manager, analyzing your specific exposure and cost-basis.</p>
+                        <div className="w-12 h-12 bg-accent/10 rounded-2xl flex items-center justify-center mb-4 md:mb-6 border border-accent/20"><span className="text-accent text-xl">🏦</span></div>
+                        <h4 className="text-lg md:text-xl font-black mb-3 md:mb-4">See What Smart Money Is Doing</h4>
+                        <p className="text-text-secondary text-xs md:text-sm leading-relaxed">We track hedge-fund 13F filings and insider trades directly from SEC EDGAR, so you know when the pros are buying too.</p>
                     </div>
-                 </div>
+                </div>
             </section>
-            
-            <footer className="border-t border-slate-800/50 py-8 md:py-10 text-center">
-                <p className="text-[9px] md:text-[10px] uppercase tracking-[0.2em] font-black text-slate-600">© 2026 TradeBotics AI. All Systems Operational.</p>
+
+            <footer className="border-t border-border py-8 md:py-10 text-center">
+                <p className="text-[9px] md:text-[10px] uppercase tracking-[0.2em] font-black text-text-secondary">© 2026 TradeBotics AI</p>
             </footer>
         </div>
     );
@@ -196,26 +174,21 @@ function MarketingLanding({ onLoginClick, onRegisterClick }: { onLoginClick: () 
 
 /// --- MAIN APP ENTRY ---
 export default function Home() {
-  const router = useRouter(); 
+  const router = useRouter();
   const [user, setUser] = useState<any>(null);
-  const [userProfile, setUserProfile] = useState<any>(null); 
-  
+
   const [showAuth, setShowAuth] = useState(false);
-  
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState(""); 
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [isSignUp, setIsSignUp] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null); 
-
-  useEffect(() => {
-    // Intentionally left blank to stop auto-login loop bugs
-  }, []);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3500); 
+    setTimeout(() => setToastMessage(null), 3500);
   };
 
   const handleAuth = async (e: React.FormEvent) => {
@@ -229,115 +202,81 @@ export default function Home() {
           return;
       }
       const { error } = await supabase.auth.signUp({ email, password });
-      if (error) showToast(error.message); 
-      else showToast("Registration received. Please check your email to verify your account.");
+      if (error) showToast(error.message);
+      else showToast("Account created! Check your email to verify, then log in to start your free trial.");
     } else {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) {
           if (error.message.includes("Email not confirmed")) {
-              showToast("Access Denied: Email not verified. Please check your inbox.");
+              showToast("Please verify your email before logging in.");
           } else { showToast(error.message); }
       } else {
-          const { data: profile } = await supabase.from('profiles').select('*').eq('id', data.user.id).single();
-          setUserProfile(profile);
           setUser(data.user);
-          
-          if (profile?.status !== 'pending') {
-              router.push('/hub');
-          }
+          router.push('/hub');
       }
     }
     setAuthLoading(false);
   };
 
-  const handleSignOut = async () => { 
-    await supabase.auth.signOut(); 
-    setUser(null); 
-    setUserProfile(null);
-    setShowAuth(false); 
-  };
-
-  if (user && userProfile?.status !== 'pending') {
+  if (user) {
       return (
-          <main className="min-h-screen bg-[#020617] flex items-center justify-center">
-             <div className="w-12 h-12 md:w-16 md:h-16 border-4 border-slate-800 border-t-blue-500 rounded-full animate-spin mb-6" />
+          <main className="min-h-screen bg-bg-primary flex items-center justify-center">
+             <div className="w-12 h-12 md:w-16 md:h-16 border-4 border-border border-t-accent rounded-full animate-spin mb-6" />
           </main>
       );
   }
 
-  if (!user && !showAuth) {
-      return <MarketingLanding 
-          onLoginClick={() => { setIsSignUp(false); setShowAuth(true); }} 
-          onRegisterClick={() => { setIsSignUp(true); setShowAuth(true); }} 
+  if (!showAuth) {
+      return <MarketingLanding
+          onLoginClick={() => { setIsSignUp(false); setShowAuth(true); }}
+          onRegisterClick={() => { setIsSignUp(true); setShowAuth(true); }}
       />;
   }
 
-  if (!user && showAuth) return (
-    <main className="min-h-screen bg-[#020617] flex flex-col items-center justify-center p-4 md:p-6 relative">
-      <button onClick={() => setShowAuth(false)} className="absolute top-6 left-4 md:top-8 md:left-8 text-slate-500 font-bold hover:text-white transition-colors text-xs md:text-sm">← Back to Home</button>
-      
+  return (
+    <main className="min-h-screen bg-bg-primary flex flex-col items-center justify-center p-4 md:p-6 relative">
+      <button onClick={() => setShowAuth(false)} className="absolute top-6 left-4 md:top-8 md:left-8 text-text-secondary font-bold hover:text-text-primary transition-colors text-xs md:text-sm">&larr; Back to Home</button>
+      <div className="absolute top-6 right-4 md:top-8 md:right-8"><ThemeToggle /></div>
+
       {toastMessage && (
         <div className="fixed inset-x-4 top-4 md:inset-0 md:top-0 z-[150] flex items-start md:items-center justify-center pointer-events-none">
-           <div className="bg-slate-900 border border-blue-500/50 px-6 py-4 md:px-10 md:py-6 rounded-2xl md:rounded-3xl shadow-[0_0_40px_rgba(59,130,246,0.3)] animate-in slide-in-from-top-4 md:zoom-in-95 fade-in duration-300 flex flex-col items-center">
-              <div className="hidden md:flex w-8 h-8 bg-blue-500/20 rounded-full items-center justify-center mb-3"><div className="w-3 h-3 bg-blue-500 rounded-full animate-pulse" /></div>
-              <p className="text-white font-black uppercase tracking-widest text-[10px] md:text-sm text-center">{toastMessage}</p>
-           </div>
+           <Card className="px-6 py-4 md:px-10 md:py-6 flex flex-col items-center pointer-events-auto">
+              <p className="font-black uppercase tracking-widest text-[10px] md:text-sm text-center">{toastMessage}</p>
+           </Card>
         </div>
       )}
 
-      <div className="w-full max-w-md bg-slate-900/40 border border-slate-800 p-6 md:p-10 rounded-[32px] md:rounded-[48px] shadow-2xl text-center z-10 mt-12 md:mt-0">
-        <h1 className="text-3xl md:text-4xl font-black text-white tracking-tighter mb-2">TRADEBOTICS<span className="text-blue-500">AI</span></h1>
-        
-        <p className="text-[9px] md:text-[10px] font-black text-slate-500 uppercase tracking-widest mb-6 md:mb-8">
-            {isSignUp ? "New Operative Registration" : "Operative Login"}
+      <Card className="w-full max-w-md p-6 md:p-10 text-center z-10 mt-12 md:mt-0">
+        <h1 className="text-3xl md:text-4xl font-black tracking-tighter mb-2">TRADEBOTICS<span className="text-accent">AI</span></h1>
+
+        <p className="text-[9px] md:text-[10px] font-black text-text-secondary uppercase tracking-widest mb-6 md:mb-8">
+            {isSignUp ? "Create Your Account" : "Welcome Back"}
         </p>
 
         <form onSubmit={handleAuth} className="space-y-3 md:space-y-4 text-left">
           {isSignUp ? (
             <>
-              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl md:rounded-2xl px-4 py-3 md:px-6 md:py-4 text-white outline-none focus:border-blue-500 transition-colors text-sm md:text-base" placeholder="Official Email Address" required />
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl md:rounded-2xl px-4 py-3 md:px-6 md:py-4 text-white outline-none focus:border-blue-500 transition-colors text-sm md:text-base" placeholder="Create Access Key (Password)" minLength={6} required />
-              <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl md:rounded-2xl px-4 py-3 md:px-6 md:py-4 text-white outline-none focus:border-blue-500 transition-colors text-sm md:text-base" placeholder="Confirm Access Key" minLength={6} required />
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full bg-bg-primary border border-border rounded-xl px-4 py-3 md:px-6 md:py-4 outline-none focus:border-accent transition-colors text-sm md:text-base" placeholder="Email" required />
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full bg-bg-primary border border-border rounded-xl px-4 py-3 md:px-6 md:py-4 outline-none focus:border-accent transition-colors text-sm md:text-base" placeholder="Password" minLength={6} required />
+              <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} className="w-full bg-bg-primary border border-border rounded-xl px-4 py-3 md:px-6 md:py-4 outline-none focus:border-accent transition-colors text-sm md:text-base" placeholder="Confirm Password" minLength={6} required />
             </>
           ) : (
             <>
-              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl md:rounded-2xl px-4 py-3 md:px-6 md:py-4 text-white outline-none focus:border-blue-500 transition-colors text-sm md:text-base" placeholder="Personnel ID (Email)" required />
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl md:rounded-2xl px-4 py-3 md:px-6 md:py-4 text-white outline-none focus:border-blue-500 transition-colors text-sm md:text-base" placeholder="Access Key (Password)" required />
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full bg-bg-primary border border-border rounded-xl px-4 py-3 md:px-6 md:py-4 outline-none focus:border-accent transition-colors text-sm md:text-base" placeholder="Email" required />
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full bg-bg-primary border border-border rounded-xl px-4 py-3 md:px-6 md:py-4 outline-none focus:border-accent transition-colors text-sm md:text-base" placeholder="Password" required />
             </>
           )}
-          <button type="submit" disabled={authLoading} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black py-4 md:py-5 rounded-xl md:rounded-2xl uppercase tracking-widest text-[10px] md:text-xs transition-colors mt-2 md:mt-4">
-            {isSignUp ? "Submit Clearance Request" : "Access Terminal"}
-          </button>
+          <Button type="submit" disabled={authLoading} className="w-full mt-2 md:mt-4">
+            {isSignUp ? "Start Free Trial" : "Log In"}
+          </Button>
         </form>
-        <button onClick={() => { setIsSignUp(!isSignUp); setPassword(""); setConfirmPassword(""); setEmail(""); }} className="w-full mt-4 md:mt-6 text-[9px] md:text-[10px] text-slate-400 uppercase font-bold hover:text-white transition-colors">
-            {isSignUp ? "← Return to Login" : "Request Access"}
+        <button onClick={() => { setIsSignUp(!isSignUp); setPassword(""); setConfirmPassword(""); setEmail(""); }} className="w-full mt-4 md:mt-6 text-[9px] md:text-[10px] text-text-secondary uppercase font-bold hover:text-text-primary transition-colors">
+            {isSignUp ? "Already have an account? Log in" : "New here? Start your free trial"}
         </button>
-      </div>
+      </Card>
       <div className="absolute bottom-6 w-full text-center pointer-events-none">
-          <p className="text-[9px] md:text-[10px] uppercase tracking-[0.2em] font-black text-slate-600">© 2026 TradeBotics AI. All Systems Operational.</p>
+          <p className="text-[9px] md:text-[10px] uppercase tracking-[0.2em] font-black text-text-secondary">© 2026 TradeBotics AI</p>
       </div>
     </main>
   );
-
-  if (user && userProfile?.status === 'pending') return (
-    <main className="min-h-screen bg-[#020617] flex flex-col items-center justify-center p-4 md:p-6 relative">
-      <div className="w-full max-w-md bg-slate-900/40 border border-orange-500/50 p-6 md:p-10 rounded-[32px] md:rounded-[48px] shadow-2xl text-center animate-in fade-in zoom-in-95 z-10">
-        <div className="w-12 h-12 md:w-16 md:h-16 bg-orange-500/20 rounded-full flex items-center justify-center mx-auto mb-4 md:mb-6">
-            <div className="w-5 h-5 md:w-6 md:h-6 border-4 border-orange-500 border-t-transparent rounded-full animate-spin" />
-        </div>
-        <h2 className="text-xl md:text-2xl font-black text-white mb-3 md:mb-4 uppercase tracking-widest">Clearance Pending</h2>
-        <p className="text-slate-400 text-xs md:text-sm leading-relaxed mb-6 md:mb-8">
-            Your email has been verified. However, an administrator must manually approve your clearance before terminal access is granted.
-        </p>
-        <button onClick={handleSignOut} className="text-[9px] md:text-[10px] uppercase font-black text-slate-500 hover:text-white transition-all tracking-widest border border-slate-800 px-5 py-2.5 md:px-6 md:py-3 rounded-full hover:bg-slate-800">
-            Sign Out
-        </button>
-      </div>
-      <div className="absolute bottom-6 w-full text-center pointer-events-none">
-          <p className="text-[9px] md:text-[10px] uppercase tracking-[0.2em] font-black text-slate-600">© 2026 TradeBotics AI. All Systems Operational.</p>
-      </div>
-    </main>
-  );
-
-  return null;
 }

@@ -6,14 +6,14 @@ eod_ingest:
 Requires SUPABASE_URL and SUPABASE_SERVICE_KEY in the environment."""
 import os
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
 from supabase import create_client
 
 from services.market_data import load_price_history_df, has_earnings_within_5d
 from services.metrics import sanitize_nans, safe_float
-from services import indicators, signals
+from services import indicators, signals, scoring
 
 MIN_HISTORY_DAYS = 60
 
@@ -110,14 +110,26 @@ def _lens_scores(hist: pd.DataFrame, spy_close: pd.Series, sector_close: pd.Seri
 def compute_ticker_metrics(
     ticker: str, hist: pd.DataFrame, spy_close: pd.Series, sector_close: pd.Series,
     fundamentals_score: float, earnings_within_5d: bool, regime: str,
+    fund_signals: list[str] | None = None, insider_net_buy_usd: float | None = None,
 ) -> dict | None:
     """Pure computation: raw indicators + per-horizon signals for one
     ticker. Returns None when there isn't enough history to trust the
-    longer-window indicators (SMA50/rel-strength)."""
+    longer-window indicators (SMA50/rel-strength).
+    fund_signals/insider_net_buy_usd (Phase 2b) are optional -- omitted
+    entirely (both None) when the smart-money job hasn't populated data
+    for this ticker yet, in which case the smart-money lens is skipped."""
     if len(hist) < MIN_HISTORY_DAYS:
         return None
 
     lenses = _lens_scores(hist, spy_close, sector_close, fundamentals_score)
+
+    smart_money = None
+    smart_money_signals_summary = None
+    if fund_signals is not None or insider_net_buy_usd is not None:
+        smart_money = scoring.smart_money_score(fund_signals or [], insider_net_buy_usd or 0.0)
+        smart_money_signals_summary = {
+            "fund_signals": fund_signals or [], "insider_net_buy_usd": insider_net_buy_usd or 0.0,
+        }
 
     horizons = {
         horizon: signals.build_signal(
@@ -127,6 +139,7 @@ def compute_ticker_metrics(
             fundamentals=lenses["fundamentals_score"],
             regime=regime, extension=lenses["extension"], gap_pct=lenses["gap_pct"],
             earnings_within_5d=earnings_within_5d, price=lenses["price"], atr=lenses["atr14"],
+            smart_money=smart_money,
         )
         for horizon in signals.HORIZON_LOOKBACKS
     }
@@ -156,14 +169,44 @@ def compute_ticker_metrics(
         "regime": regime,
         "earnings_within_5d": earnings_within_5d,
         "signals": sanitize_nans(horizons),
+        "smart_money_score": round(smart_money, 2) if smart_money is not None else None,
+        "smart_money_signals": smart_money_signals_summary,
         "engine_version": "v1",
         "computed_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
+_INSIDER_LOOKBACK_DAYS = 30
+
+
+def _load_smart_money_maps(supabase_client) -> tuple[dict[str, list[str]], dict[str, float]]:
+    """Loads the whole smart_money_13f table and the trailing-window slice
+    of smart_money_insider once (avoids an N+1 query per ticker), grouped
+    by ticker. fund_signals_by_ticker maps ticker -> list of change_type;
+    insider_net_buy_by_ticker maps ticker -> net $ bought (P) minus sold (S)."""
+    fund_signals_by_ticker: dict[str, list[str]] = {}
+    thirteenf_resp = supabase_client.table("smart_money_13f").select("ticker,change_type").execute()
+    for row in thirteenf_resp.data or []:
+        fund_signals_by_ticker.setdefault(row["ticker"], []).append(row["change_type"])
+
+    insider_net_buy_by_ticker: dict[str, float] = {}
+    since = (date.today() - timedelta(days=_INSIDER_LOOKBACK_DAYS)).isoformat()
+    insider_resp = (
+        supabase_client.table("smart_money_insider").select("ticker,transaction_code,shares,price")
+        .gte("transaction_date", since).execute()
+    )
+    for row in insider_resp.data or []:
+        shares, price = row.get("shares") or 0, row.get("price") or 0.0
+        signed = shares * price if row["transaction_code"] == "P" else -(shares * price)
+        insider_net_buy_by_ticker[row["ticker"]] = insider_net_buy_by_ticker.get(row["ticker"], 0.0) + signed
+
+    return fund_signals_by_ticker, insider_net_buy_by_ticker
+
+
 def run(supabase_client, tickers: list[str]) -> dict:
     regime, spy_close = _load_regime(supabase_client)
     sector_close_cache: dict[str, pd.Series] = {}
+    fund_signals_by_ticker, insider_net_buy_by_ticker = _load_smart_money_maps(supabase_client)
     written = 0
 
     for ticker in tickers:
@@ -188,13 +231,23 @@ def run(supabase_client, tickers: list[str]) -> dict:
                 rev_growth=safe_float(info.get("rev_growth", 0)),
             )
             earnings_soon = has_earnings_within_5d(ticker)
+            fund_signals = fund_signals_by_ticker.get(ticker)
+            insider_net_buy = insider_net_buy_by_ticker.get(ticker)
 
-            row = compute_ticker_metrics(ticker, hist, spy_close, sector_close_cache[etf], fscore, earnings_soon, regime)
+            row = compute_ticker_metrics(
+                ticker, hist, spy_close, sector_close_cache[etf], fscore, earnings_soon, regime,
+                fund_signals=fund_signals, insider_net_buy_usd=insider_net_buy,
+            )
             if row is None:
                 continue
 
             supabase_client.table("daily_metrics").upsert(row, on_conflict="ticker,d").execute()
             written += 1
+
+            inputs_snapshot = {k: v for k, v in row.items() if k != "signals"}
+            for horizon_signal in row["signals"].values():
+                log_row = signals.signal_log_row(horizon_signal, price=row["price"], d=row["d"], inputs_snapshot=inputs_snapshot)
+                supabase_client.table("signals").upsert(log_row, on_conflict="ticker,horizon,d").execute()
         except Exception as e:
             print(f"[compute_daily_metrics] failed for {ticker}: {e}", file=sys.stderr)
 

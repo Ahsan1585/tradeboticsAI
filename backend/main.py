@@ -1,5 +1,4 @@
-from fastapi import FastAPI, HTTPException, Query, Request, Depends
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import HTTPException, Request, Depends
 from pydantic import BaseModel
 from typing import Dict, Any, List
 import os
@@ -7,58 +6,28 @@ import math
 import time
 from datetime import datetime, timezone, timedelta
 import yfinance as yf
-from dotenv import load_dotenv
-from supabase import create_client, Client
 import sys
-load_dotenv()
 
+from config import (
+    app, limiter, LLM_RATE_LIMIT, supabase,
+    market_cache, MARKET_CACHE_TTL, SCREENER_CACHE, TRACK_RECORD_CACHE, TRACK_RECORD_CACHE_TTL,
+    _HORIZON_BY_TRADE_STYLE, _DEFAULT_HORIZON, _MAX_SCREENER_RESULTS,
+)
 from llm import generate_text, llm_available
 from auth import get_current_user
 from services.metrics import safe_float, sanitize_nans, get_support_resistance
 from services.market_data import load_price_history_df, get_live_quote
 from services.indicators import breadth_pct
 from services.signals import is_defensive_mode, defensive_mode_message
+from services.personas import PERSONAS, build_persona_prompt
+from services.track_record import compute_track_record
+from routers import billing as billing_router
 
-_HORIZON_BY_TRADE_STYLE = {"Day Trade": "day", "Long Term": "longterm"}
-_DEFAULT_HORIZON = "swing"
-_MAX_SCREENER_RESULTS = 10
+app.include_router(billing_router.router)
 
 # ==========================================
 # --- 12-CYLINDER QUANT ENGINE (ONE SOURCE OF TRUTH) ---
 # ==========================================
-
-app = FastAPI()
-
-# Explicit origins only. Set FRONTEND_ORIGINS on Render, e.g.:
-# FRONTEND_ORIGINS=https://your-app.vercel.app,http://localhost:3000
-ALLOWED_ORIGINS = [
-    o.strip() for o in os.getenv("FRONTEND_ORIGINS", "http://localhost:3000").split(",") if o.strip()
-]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# --- CACHE ---
-market_cache = {}
-MARKET_CACHE_TTL = 60 
-SCREENER_CACHE = {}
-
-# --- SUPABASE CONFIGURATION ---
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY") 
-
-if SUPABASE_URL and SUPABASE_KEY:
-    try:
-        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-    except Exception as e:
-        supabase = None
-else:
-    supabase = None
 
 # --- AI CONFIGURATION ---
 # LLM calls go through llm.py (Anthropic Claude, default claude-haiku-4-5).
@@ -93,6 +62,11 @@ class SwapRequest(BaseModel):
 class PortfolioRequest(BaseModel):
     holdings: List[Dict[str, Any]]
     trade_style: str = "Long Term"
+
+class PersonaRequest(BaseModel):
+    ticker: str
+    persona_id: str
+    horizon: str = "swing"
 
 # --- 30-MINUTE AI CACHE ENGINE ---
 def check_ai_cache(cache_key: str) -> dict | None:
@@ -164,6 +138,7 @@ def _screener_row(row: dict, horizon: str, sector_lookup: dict) -> dict:
         "verdict": sig.get("verdict"),
         "reason": sig.get("reason"),
         "exit_plan": sig.get("exit_plan"),
+        "smart_money_score": row.get("smart_money_score"),
         "sector": sector,
         "metrics": f"Sector: {sector}",
     }
@@ -218,6 +193,32 @@ async def execute_screener(req: ScreenerRequest):
     except Exception as e:
         print(f"[run-screener] failed: {e}", file=sys.stderr)
         return {"results": [], "defensive_mode": False}
+
+@app.get("/track-record")
+async def track_record():
+    """Public, unauthenticated: the honest performance record that
+    replaces marketing testimonials. Cached for an hour since the
+    underlying `signals` table only changes on the nightly evaluate_signals
+    run."""
+    now = time.time()
+    if "data" in TRACK_RECORD_CACHE:
+        cached_time, cached_data = TRACK_RECORD_CACHE["data"]
+        if now - cached_time < TRACK_RECORD_CACHE_TTL:
+            return cached_data
+
+    if not supabase:
+        return {"tracks": [], "swing_equity_curve": []}
+
+    try:
+        rows = supabase.table('signals').select(
+            'ticker,horizon,verdict,trade_outcome,engine_version,d,ret_5d,ret_20d,ret_60d,spy_ret_5d,spy_ret_20d,spy_ret_60d'
+        ).execute().data or []
+        result = compute_track_record(rows)
+        TRACK_RECORD_CACHE["data"] = (now, result)
+        return result
+    except Exception as e:
+        print(f"[track-record] failed: {e}", file=sys.stderr)
+        return {"tracks": [], "swing_equity_curve": []}
 
 @app.get("/analyze/{ticker}")
 async def analyze_ticker(ticker: str): 
@@ -320,6 +321,18 @@ async def analyze_ticker(ticker: str):
             {"factor": "Mathematical Ceiling", "val": f"${round(resistance, 2)}", "status": "NEUTRAL", "reasoning": "Calculated major resistance."},
         ]
 
+        smart_money_score = metrics.get("smart_money_score")
+        smart_money_signals = metrics.get("smart_money_signals")
+        if smart_money_score is not None:
+            fund_signals = (smart_money_signals or {}).get("fund_signals", [])
+            bullish_funds = sum(1 for s in fund_signals if s in ("new", "increased"))
+            ledger.append({
+                "factor": "Smart Money (13F + Insiders)",
+                "val": f"{bullish_funds}/{len(fund_signals)} tracked funds accumulating" if fund_signals else "No tracked-fund activity",
+                "status": "BULLISH" if smart_money_score > 60 else "BEARISH" if smart_money_score < 40 else "NEUTRAL",
+                "reasoning": "Hedge-fund 13F holdings changes and open-market insider buy/sell activity.",
+            })
+
         # 1. CALCULATE THESE VARIABLES BEFORE FINAL_RESPONSE
         raw_insider = safe_float(info.get("heldPercentInsiders", 0))
         insider_str = f"{round(raw_insider * 100, 2)}%" if raw_insider > 0 else "N/A"
@@ -346,6 +359,8 @@ async def analyze_ticker(ticker: str):
             "verdict": swing_signal.get("verdict"),
             "ai_tactical": swing_signal.get("reason", f"Market conditions evaluated for {ticker_upper}."),
             "signals": signals_by_horizon,
+            "smart_money_score": smart_money_score,
+            "smart_money_signals": smart_money_signals,
             "support_level": round(support, 2),
             "resistance_level": round(resistance, 2),
             "fundamentals": {
@@ -371,7 +386,8 @@ async def analyze_ticker(ticker: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/translate")
-async def translate_ai(req: TranslationRequest, user_id: str = Depends(get_current_user)):
+@limiter.limit(LLM_RATE_LIMIT)
+async def translate_ai(request: Request, req: TranslationRequest, user_id: str = Depends(get_current_user)):
     if not llm_available(): return {"analysis": "AI Node Offline."}
     try:
         cache_key = f"TRANSLATE_{req.ticker.upper()}"
@@ -413,7 +429,7 @@ async def translate_ai(req: TranslationRequest, user_id: str = Depends(get_curre
 
         ledger = req.data_context.get("ledger", [])
         if ledger:
-            prompt += f"TECHNICAL LEDGER:\n"
+            prompt += "TECHNICAL LEDGER:\n"
             for item in ledger: prompt += f"- {item.get('factor')}: {item.get('val')} ({item.get('status')})\n"
 
         # 🚨 ENHANCEMENT 4: PYTHON OVERRIDE LOGIC (Stops WDC Buy Signal)
@@ -479,8 +495,67 @@ async def translate_ai(req: TranslationRequest, user_id: str = Depends(get_curre
     except HTTPException as he: raise he
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/personas")
+async def list_personas():
+    """Public, unauthenticated: lets the frontend render persona choices
+    without spending a token just to see the list."""
+    return {"personas": [{"id": pid, "name": p["name"], "philosophy": p["philosophy"]} for pid, p in PERSONAS.items()]}
+
+@app.post("/persona-take")
+@limiter.limit(LLM_RATE_LIMIT)
+async def persona_take(request: Request, req: PersonaRequest, user_id: str = Depends(get_current_user)):
+    """Narrates the already-computed deterministic verdict in an investor
+    persona's voice (Phase 2c). Reads daily_metrics server-side rather than
+    trusting client-supplied data, unlike the legacy /translate endpoint --
+    the persona can never see or narrate a verdict TradeBotics didn't
+    actually compute."""
+    if req.persona_id not in PERSONAS:
+        raise HTTPException(status_code=404, detail=f"Unknown persona '{req.persona_id}'.")
+    if not llm_available(): return {"analysis": "AI Node Offline."}
+    if not supabase: raise HTTPException(status_code=500, detail="Database connection offline.")
+
+    ticker_upper = req.ticker.upper()
+    try:
+        cache_key = f"PERSONA_{req.persona_id}_{req.horizon}_{ticker_upper}"
+        current_tokens = get_token_balance(user_id)
+        cached_data = check_ai_cache(cache_key)
+        if cached_data:
+            cached_data["remaining_tokens"] = current_tokens
+            return cached_data
+
+        if current_tokens < 1:
+            raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 1 Token required.")
+
+        metrics_resp = (
+            supabase.table('daily_metrics').select('signals')
+            .eq('ticker', ticker_upper).order('d', desc=True).limit(1).execute()
+        )
+        if not metrics_resp.data:
+            raise HTTPException(status_code=404, detail="No honest metrics available for this ticker yet.")
+        horizon_signal = (metrics_resp.data[0].get('signals') or {}).get(req.horizon)
+        if not horizon_signal:
+            raise HTTPException(status_code=404, detail=f"No '{req.horizon}' signal computed for this ticker yet.")
+
+        system_extra, prompt = build_persona_prompt(req.persona_id, ticker_upper, horizon_signal)
+        narrative = await generate_text(prompt, system_extra=system_extra, max_tokens=400, purpose="persona")
+
+        if narrative is None:
+            return {"analysis": "AI Node temporarily unavailable. No tokens were charged.", "remaining_tokens": current_tokens}
+
+        new_token_balance = debit_tokens(user_id, 1)
+        final_response = {
+            "ticker": ticker_upper, "persona": PERSONAS[req.persona_id]["name"],
+            "verdict": horizon_signal["verdict"], "confidence": horizon_signal["confidence"],
+            "analysis": narrative, "remaining_tokens": new_token_balance,
+        }
+        update_ai_cache(cache_key, final_response)
+        return final_response
+    except HTTPException as he: raise he
+    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/exit-strategy")
-async def generate_exit_strategy(req: TranslationRequest, user_id: str = Depends(get_current_user)):
+@limiter.limit(LLM_RATE_LIMIT)
+async def generate_exit_strategy(request: Request, req: TranslationRequest, user_id: str = Depends(get_current_user)):
     if not llm_available(): return {"analysis": "AI Node Offline."}
     try:
         current_tokens = get_token_balance(user_id)
@@ -523,7 +598,8 @@ async def generate_exit_strategy(req: TranslationRequest, user_id: str = Depends
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/summarize")
-async def summarize_article(req: SummaryRequest, user_id: str = Depends(get_current_user)):
+@limiter.limit(LLM_RATE_LIMIT)
+async def summarize_article(request: Request, req: SummaryRequest, user_id: str = Depends(get_current_user)):
     if not llm_available(): return {"summary": ["AI Node Offline."]}
     try:
         safe_title = ''.join(e for e in req.title if e.isalnum())[:30]
@@ -555,10 +631,11 @@ async def summarize_article(req: SummaryRequest, user_id: str = Depends(get_curr
     except HTTPException as he: raise he
     except Exception as e:
         print(f"[SUMMARIZE] error: {e}", file=sys.stderr)
-        return {"summary": [f"Synthesis Offline. Error logged in terminal."]}
+        return {"summary": ["Synthesis Offline. Error logged in terminal."]}
 
 @app.post("/portfolio-analysis")
-async def analyze_portfolio(req: PortfolioRequest, user_id: str = Depends(get_current_user)):
+@limiter.limit(LLM_RATE_LIMIT)
+async def analyze_portfolio(request: Request, req: PortfolioRequest, user_id: str = Depends(get_current_user)):
     if not llm_available(): return {"analysis": "AI Node Offline."}
     try:
         current_tokens = get_token_balance(user_id)
@@ -591,7 +668,7 @@ async def analyze_portfolio(req: PortfolioRequest, user_id: str = Depends(get_cu
         try:
             db_response = supabase.table('market_universe').select('*').not_.is_('tech_score', 'null').execute()
             db_universe = db_response.data
-        except Exception as db_err:
+        except Exception:
             db_universe = []
 
         scored_candidates = []

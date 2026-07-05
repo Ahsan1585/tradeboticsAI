@@ -5,6 +5,7 @@ import { supabase } from "../lib/supabase";
 import { apiFetch } from "../lib/config";
 import TradeTicket from "../components/TradeTicket";
 import DOMPurify from "isomorphic-dompurify";
+import ThemeToggle from "../components/ThemeToggle";
 
 // --- WIDGET COMPONENTS ---
 function TickerTape() {
@@ -42,13 +43,13 @@ function TradingViewWidget({ symbol }: { symbol: string }) {
       container.current.appendChild(script);
     }
   }, [symbol]);
-  return <div className="w-full h-[350px] lg:h-[450px] bg-slate-950 rounded-[24px] lg:rounded-[32px] overflow-hidden border border-slate-800 shadow-2xl" ref={container}><div id="tv_chart" className="w-full h-full" /></div>;
+  return <div className="w-full h-[350px] lg:h-[450px] bg-bg-primary rounded-[24px] lg:rounded-[32px] overflow-hidden border border-border shadow-2xl" ref={container}><div id="tv_chart" className="w-full h-full" /></div>;
 }
 
-function Stat({ label, val, color = "text-white" }: { label: string, val: string, color?: string }) {
+function Stat({ label, val, color = "text-text-primary" }: { label: string, val: string, color?: string }) {
   return (
-    <div className="flex justify-between items-end border-b border-slate-800/50 pb-2 group hover:border-blue-500/30 transition-all">
-      <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] group-hover:text-blue-500/50 transition-colors">{label}</p>
+    <div className="flex justify-between items-end border-b border-border pb-2 group hover:border-accent/30 transition-all">
+      <p className="text-[10px] font-black text-text-secondary uppercase tracking-[0.2em] group-hover:text-accent/50 transition-colors">{label}</p>
       <p className={`${color} font-black text-base lg:text-lg tracking-tight text-right`}>{val}</p>
     </div>
   );
@@ -384,17 +385,17 @@ function TerminalContent() {
 
   if (!isAuthorized) {
       return (
-          <main className="min-h-screen bg-[#020617] flex items-center justify-center p-4">
+          <main className="min-h-screen bg-bg-primary flex items-center justify-center p-4">
               <div className="flex flex-col items-center gap-4">
-                  <div className="w-12 h-12 md:w-16 md:h-16 border-4 border-slate-800 border-t-blue-500 rounded-full animate-spin" />
-                  <p className="text-[10px] text-blue-500 font-black uppercase tracking-widest animate-pulse">Verifying Clearance...</p>
+                  <div className="w-12 h-12 md:w-16 md:h-16 border-4 border-border border-t-accent rounded-full animate-spin" />
+                  <p className="text-[10px] text-accent font-black uppercase tracking-widest animate-pulse">Verifying Clearance...</p>
               </div>
           </main>
       );
   }
 
   return (
-    <main className="min-h-screen bg-[#020617] text-slate-300 flex flex-col font-sans relative overflow-x-hidden">
+    <main className="min-h-screen bg-bg-primary text-text-secondary flex flex-col font-sans relative overflow-x-hidden">
       
       <style dangerouslySetInnerHTML={{__html: `
         .custom-scrollbar::-webkit-scrollbar { width: 4px; }
@@ -407,9 +408,9 @@ function TerminalContent() {
       {/* GLOBAL TOAST */}
       {toastMessage && (
         <div className="fixed inset-x-4 top-4 md:inset-0 md:top-0 z-[150] flex items-start md:items-center justify-center pointer-events-none">
-           <div className="bg-slate-900 border border-blue-500/50 px-6 py-4 md:px-10 md:py-6 rounded-2xl md:rounded-3xl shadow-[0_0_40px_rgba(59,130,246,0.3)] animate-in slide-in-from-top-4 md:zoom-in-95 fade-in duration-300 flex flex-col items-center">
-              <div className="hidden md:flex w-8 h-8 bg-blue-500/20 rounded-full items-center justify-center mb-3"><div className="w-3 h-3 bg-blue-500 rounded-full animate-pulse" /></div>
-              <p className="text-white font-black uppercase tracking-widest text-[10px] md:text-sm text-center">{toastMessage}</p>
+           <div className="bg-bg-surface border border-accent/50 px-6 py-4 md:px-10 md:py-6 rounded-2xl md:rounded-3xl shadow-[0_0_40px_rgba(59,130,246,0.3)] animate-in slide-in-from-top-4 md:zoom-in-95 fade-in duration-300 flex flex-col items-center">
+              <div className="hidden md:flex w-8 h-8 bg-accent/20 rounded-full items-center justify-center mb-3"><div className="w-3 h-3 bg-accent rounded-full animate-pulse" /></div>
+              <p className="text-text-primary font-black uppercase tracking-widest text-[10px] md:text-sm text-center">{toastMessage}</p>
            </div>
         </div>
       )}
@@ -427,9 +428,9 @@ function TerminalContent() {
       )}
 
       {(loading || isAnalyzing) && (
-        <div className="fixed inset-0 z-[120] bg-[#020617]/90 backdrop-blur-md flex flex-col items-center justify-center p-4">
-           <div className="w-12 h-12 md:w-16 md:h-16 border-4 border-slate-800 border-t-blue-500 rounded-full animate-spin mb-6" />
-           <p className="text-blue-500 font-black tracking-[0.3em] md:tracking-[0.4em] uppercase text-[10px] md:text-xs animate-pulse text-center">
+        <div className="fixed inset-0 z-[120] bg-bg-primary/90 flex flex-col items-center justify-center p-4">
+           <div className="w-12 h-12 md:w-16 md:h-16 border-4 border-border border-t-accent rounded-full animate-spin mb-6" />
+           <p className="text-accent font-black tracking-[0.3em] md:tracking-[0.4em] uppercase text-[10px] md:text-xs animate-pulse text-center">
                {loading ? "Initializing Scan..." : "Neural Synthesis in Progress..."}
            </p>
         </div>
@@ -437,14 +438,14 @@ function TerminalContent() {
 
       {/* 🚀 SLIDE-OUT AI DRAWER */}
       {deepDiveResult && !isAnalyzing && (
-        <div className="fixed inset-0 z-[110] bg-black/60 backdrop-blur-sm flex justify-end animate-in fade-in duration-300">
-            <div className="w-full md:w-[450px] lg:w-[500px] h-full bg-[#020617] border-l border-blue-500/30 shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
-                <div className="p-6 md:p-8 border-b border-slate-800 flex justify-between items-center bg-slate-900/50 shrink-0">
+        <div className="fixed inset-0 z-[110] bg-black/60 flex justify-end animate-in fade-in duration-300">
+            <div className="w-full md:w-[450px] lg:w-[500px] h-full bg-bg-primary border-l border-accent/30 shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
+                <div className="p-6 md:p-8 border-b border-border flex justify-between items-center bg-bg-surface shrink-0">
                     <div className="flex items-center gap-3">
-                        <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
-                        <p className="text-[10px] font-black uppercase tracking-[0.4em] text-blue-500">AI Deep Dive</p>
+                        <div className="w-2 h-2 bg-accent rounded-full animate-pulse" />
+                        <p className="text-[10px] font-black uppercase tracking-[0.4em] text-accent">AI Deep Dive</p>
                     </div>
-                    <button onClick={() => setDeepDiveResult(null)} className="text-slate-500 hover:text-white transition-colors">
+                    <button onClick={() => setDeepDiveResult(null)} className="text-text-secondary hover:text-text-primary transition-colors">
                         <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                     </button>
                 </div>
@@ -467,7 +468,7 @@ function TerminalContent() {
                                 .replace(/^---$/gim, '<hr/>')                            // Converts --- to Dividers
                                 .replace(/^\* (.*$)/gim, '<li>$1</li>')                  // Converts * to Bullet Points
                                 .replace(/\n\n/g, '<br/><br/>')                          // Handles Paragraph Spacing
-                                .replace(/\*(LEGAL DISCLAIMER:.*?)\*/gim, '<em class="text-[9px] leading-tight text-slate-600 block mt-8 border-t border-slate-800 pt-4">$1</em>')) // Isolates and shrinks the disclaimer
+                                .replace(/\*(LEGAL DISCLAIMER:.*?)\*/gim, '<em class="text-[9px] leading-tight text-text-secondary block mt-8 border-t border-border pt-4">$1</em>')) // Isolates and shrinks the disclaimer
                         }} />
                     </div>
                 </div>
@@ -476,28 +477,28 @@ function TerminalContent() {
       )}
 
       {selectedArticle && (
-        <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex items-center justify-center p-3 md:p-4">
-            <div className="w-full max-w-3xl max-h-[95vh] md:max-h-[85vh] bg-[#020617] border border-blue-500/30 rounded-[32px] md:rounded-[40px] overflow-hidden flex flex-col shadow-2xl">
-              <div className="p-6 md:p-8 border-b border-slate-800 bg-slate-900/40 shrink-0 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-3 md:p-4">
+            <div className="w-full max-w-3xl max-h-[95vh] md:max-h-[85vh] bg-bg-primary border border-accent/30 rounded-[32px] md:rounded-[40px] overflow-hidden flex flex-col shadow-2xl">
+              <div className="p-6 md:p-8 border-b border-border bg-bg-surface shrink-0 flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
                     <div className="flex items-center gap-3 mb-2 md:mb-4">
-                        <div className={`w-2 h-2 ${isSummarizing ? 'bg-orange-500' : 'bg-blue-500'} rounded-full animate-pulse`} />
-                        <p className="text-[10px] font-black uppercase text-blue-500">AI Synthesis</p>
+                        <div className={`w-2 h-2 ${isSummarizing ? 'bg-orange-500' : 'bg-accent'} rounded-full animate-pulse`} />
+                        <p className="text-[10px] font-black uppercase text-accent">AI Synthesis</p>
                     </div>
-                    <h2 className="text-lg md:text-2xl font-bold text-white line-clamp-2 md:line-clamp-none">{selectedArticle?.title}</h2>
+                    <h2 className="text-lg md:text-2xl font-bold text-text-primary line-clamp-2 md:line-clamp-none">{selectedArticle?.title}</h2>
                 </div>
-                <button onClick={() => setSelectedArticle(null)} className="text-slate-400 font-black text-[10px] uppercase bg-slate-800 px-4 py-2 rounded-full h-fit self-end md:self-auto shrink-0">Close</button>
+                <button onClick={() => setSelectedArticle(null)} className="text-text-secondary font-black text-[10px] uppercase bg-bg-surface-hover px-4 py-2 rounded-full h-fit self-end md:self-auto shrink-0">Close</button>
               </div>
-              <div className="p-6 md:p-8 bg-slate-950 overflow-y-auto flex-1 custom-scrollbar">
+              <div className="p-6 md:p-8 bg-bg-primary overflow-y-auto flex-1 custom-scrollbar">
                  {isSummarizing ? (
                      <div className="space-y-4 animate-pulse">
-                         <div className="h-4 bg-slate-800 rounded w-full"></div>
-                         <div className="h-4 bg-slate-800 rounded w-5/6"></div>
-                         <div className="h-4 bg-slate-800 rounded w-4/6"></div>
+                         <div className="h-4 bg-bg-surface-hover rounded w-full"></div>
+                         <div className="h-4 bg-bg-surface-hover rounded w-5/6"></div>
+                         <div className="h-4 bg-bg-surface-hover rounded w-4/6"></div>
                      </div>
                  ) : (
                      <div className="space-y-4 md:space-y-6">
-                         {selectedArticle?.summary?.map((p: string, i: number) => <p key={i} className="text-slate-300 leading-relaxed text-sm md:text-base">{p}</p>)}
+                         {selectedArticle?.summary?.map((p: string, i: number) => <p key={i} className="text-text-secondary leading-relaxed text-sm md:text-base">{p}</p>)}
                      </div>
                  )}
               </div>
@@ -512,25 +513,29 @@ function TerminalContent() {
         {/* RESPONSIVE NAV HEADER */}
         <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-6 mb-8 md:mb-12">
           <div>
-              <h1 className="text-3xl md:text-5xl font-black text-white tracking-tighter cursor-pointer hover:text-blue-500 transition-colors" onClick={() => router.push('/hub')}>
-                  TRADEBOTICS<span className="text-blue-500">AI</span>
+              <h1 className="text-3xl md:text-5xl font-black text-text-primary tracking-tighter cursor-pointer hover:text-accent transition-colors" onClick={() => router.push('/hub')}>
+                  TRADEBOTICS<span className="text-accent">AI</span>
               </h1>
-              <p className="text-[9px] uppercase tracking-[0.5em] text-slate-400 italic mt-1 md:mt-2">Operative // {userEmail.split('@')[0]}</p>
+              <p className="text-[9px] uppercase tracking-[0.5em] text-text-secondary italic mt-1 md:mt-2">Operative // {userEmail.split('@')[0]}</p>
           </div>
           
           <div className="flex flex-col sm:flex-row gap-3 w-full xl:w-auto items-stretch sm:items-center">
             <div className="flex gap-2">
-                <button onClick={() => { setData(null); setTicker(""); setConfirmedTicker(""); }} className="flex-1 sm:flex-none justify-center flex items-center gap-2 px-4 md:px-6 py-3 md:py-3 bg-slate-900/50 border border-slate-800 rounded-xl md:rounded-full hover:border-blue-500/50 transition-all group">
-                    <span className="text-[9px] md:text-[10px] font-black uppercase tracking-[0.2em] text-slate-300 group-hover:text-white">Alpha Screener</span>
+                <button onClick={() => { setData(null); setTicker(""); setConfirmedTicker(""); }} className="flex-1 sm:flex-none justify-center flex items-center gap-2 px-4 md:px-6 py-3 md:py-3 bg-bg-surface border border-border rounded-xl md:rounded-full hover:border-accent/50 transition-all group">
+                    <span className="text-[9px] md:text-[10px] font-black uppercase tracking-[0.2em] text-text-secondary group-hover:text-text-primary">Alpha Screener</span>
                 </button>
-                <button onClick={() => router.push('/hub')} className="hidden sm:flex items-center gap-3 px-6 py-3 bg-slate-900/50 border border-slate-800 rounded-full hover:border-blue-500/50 transition-all group">
-                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-300 group-hover:text-white">← Hub</span>
+                <button onClick={() => router.push('/hub')} className="hidden sm:flex items-center gap-3 px-6 py-3 bg-bg-surface border border-border rounded-full hover:border-accent/50 transition-all group">
+                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-text-secondary group-hover:text-text-primary">← Hub</span>
                 </button>
+                <button onClick={() => router.push('/beginner')} className="flex items-center gap-3 px-6 py-3 bg-bg-surface border border-border rounded-full hover:border-gain/50 transition-all group">
+                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-text-secondary group-hover:text-text-primary">Simple Mode</span>
+                </button>
+                <ThemeToggle />
             </div>
             
-            <div className="flex gap-2 w-full sm:w-auto bg-slate-900/80 p-2 md:p-3 rounded-xl md:rounded-[24px] border border-slate-800 focus-within:border-blue-500/50">
-              <input value={ticker} onChange={(e) => setTicker(e.target.value.toUpperCase())} onKeyDown={(e) => e.key === 'Enter' && runAnalysis()} className="bg-transparent border-none text-white font-black w-full sm:w-32 md:w-48 px-3 outline-none text-base md:text-lg" placeholder="TICKER..." />
-              <button onClick={() => runAnalysis()} className="bg-blue-600 text-white px-6 md:px-10 py-3 md:py-4 rounded-lg md:rounded-xl font-black text-[10px] md:text-xs uppercase hover:bg-blue-500 transition-colors shrink-0">SCAN</button>
+            <div className="flex gap-2 w-full sm:w-auto bg-bg-surface p-2 md:p-3 rounded-xl md:rounded-[24px] border border-border focus-within:border-accent/50">
+              <input value={ticker} onChange={(e) => setTicker(e.target.value.toUpperCase())} onKeyDown={(e) => e.key === 'Enter' && runAnalysis()} className="bg-transparent border-none text-text-primary font-black w-full sm:w-32 md:w-48 px-3 outline-none text-base md:text-lg" placeholder="TICKER..." />
+              <button onClick={() => runAnalysis()} className="bg-accent text-white px-6 md:px-10 py-3 md:py-4 rounded-lg md:rounded-xl font-black text-[10px] md:text-xs uppercase hover:bg-accent-hover transition-colors shrink-0">SCAN</button>
             </div>
           </div>
         </div>
@@ -542,20 +547,20 @@ function TerminalContent() {
           <div className="col-span-1 lg:col-span-3 space-y-6 lg:space-y-8 flex flex-col order-2 lg:order-1">
             
             {data && (
-              <div className="bg-slate-900/40 border border-slate-800 rounded-[32px] md:rounded-[40px] p-6 lg:p-8 shadow-inner relative group animate-in fade-in">
-                <button onClick={addToWatchlist} className="absolute top-4 right-4 lg:top-6 lg:right-6 lg:opacity-0 group-hover:opacity-100 bg-blue-600 hover:bg-blue-500 text-white text-[9px] font-black px-3 py-1.5 lg:px-4 lg:py-2 rounded-full transition-all">ADD</button>
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Total Quant Score</p>
-                <div className="text-7xl lg:text-[120px] font-black text-white leading-none tracking-tighter mb-4 lg:mb-4">{data.score}</div>
-                <div className="grid grid-cols-2 gap-4 border-t border-slate-800 pt-4 lg:pt-8">
-                  <div><p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Tech</p><p className="text-white font-black text-xs md:text-sm">{data.tech_score}/100</p></div>
-                  <div><p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Fund</p><p className="text-white font-black text-xs md:text-sm">{data.fund_score}/100</p></div>
+              <div className="bg-bg-surface border border-border rounded-[32px] md:rounded-[40px] p-6 lg:p-8 shadow-inner relative group animate-in fade-in">
+                <button onClick={addToWatchlist} className="absolute top-4 right-4 lg:top-6 lg:right-6 lg:opacity-0 group-hover:opacity-100 bg-accent hover:bg-accent-hover text-white text-[9px] font-black px-3 py-1.5 lg:px-4 lg:py-2 rounded-full transition-all">ADD</button>
+                <p className="text-[10px] font-black text-text-secondary uppercase tracking-widest mb-2">Total Quant Score</p>
+                <div className="text-7xl lg:text-[120px] font-black text-text-primary leading-none tracking-tighter mb-4 lg:mb-4">{data.score}</div>
+                <div className="grid grid-cols-2 gap-4 border-t border-border pt-4 lg:pt-8">
+                  <div><p className="text-[9px] font-bold text-text-secondary uppercase mb-1">Tech</p><p className="text-text-primary font-black text-xs md:text-sm">{data.tech_score}/100</p></div>
+                  <div><p className="text-[9px] font-bold text-text-secondary uppercase mb-1">Fund</p><p className="text-text-primary font-black text-xs md:text-sm">{data.fund_score}/100</p></div>
                 </div>
               </div>
             )}
 
             {data?.fundamentals && (
-              <div className="bg-[#020617] border border-blue-500/20 rounded-[32px] md:rounded-[40px] p-6 lg:p-10 shadow-[inset_0_0_20px_rgba(59,130,246,0.05)] animate-in fade-in">
-                  <p className="text-[10px] lg:text-[11px] font-black text-blue-500 uppercase tracking-[0.3em] lg:tracking-[0.4em] mb-6 lg:mb-10 opacity-80">Institutional DNA</p>
+              <div className="bg-bg-primary border border-accent/20 rounded-[32px] md:rounded-[40px] p-6 lg:p-10 shadow-[inset_0_0_20px_rgba(59,130,246,0.05)] animate-in fade-in">
+                  <p className="text-[10px] lg:text-[11px] font-black text-accent uppercase tracking-[0.3em] lg:tracking-[0.4em] mb-6 lg:mb-10 opacity-80">Institutional DNA</p>
                   <div className="space-y-4 lg:space-y-8">
                       <Stat label="P/E Ratio" val={data.fundamentals.pe_ratio} />
                       <Stat label="Debt/Equity" val={data.fundamentals.debt_equity} />
@@ -565,17 +570,17 @@ function TerminalContent() {
                       <Stat label="Insider Ownership" val={data.fundamentals.insider_ownership} />
                       <Stat label="Short Interest" val={data.fundamentals.short_interest} />
                       
-                      <Stat label="Sentiment" val={data.fundamentals.sentiment} color="text-blue-500" />
+                      <Stat label="Sentiment" val={data.fundamentals.sentiment} color="text-accent" />
                       <Stat label="Cash Flow" val={data.fundamentals.cash_flow} />
                   </div>
               </div>
             )}
 
-            <div className="bg-slate-900/40 border border-slate-800 rounded-[32px] md:rounded-[40px] p-6 lg:p-8 shadow-inner">
+            <div className="bg-bg-surface border border-border rounded-[32px] md:rounded-[40px] p-6 lg:p-8 shadow-inner">
               <div className="flex justify-between items-center mb-4 lg:mb-6 px-1">
-                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Secured Watchlist</p>
-                 <button onClick={handleRefreshWatchlist} disabled={isRefreshingWatchlist || watchlist.length === 0} className="text-slate-500 hover:text-blue-500 disabled:opacity-50 transition-colors p-2" title="Refresh Scores">
-                    <svg className={`w-4 h-4 lg:w-3.5 lg:h-3.5 ${isRefreshingWatchlist ? 'animate-spin text-blue-500' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                 <p className="text-[10px] font-black text-text-secondary uppercase tracking-widest">Secured Watchlist</p>
+                 <button onClick={handleRefreshWatchlist} disabled={isRefreshingWatchlist || watchlist.length === 0} className="text-text-secondary hover:text-accent disabled:opacity-50 transition-colors p-2" title="Refresh Scores">
+                    <svg className={`w-4 h-4 lg:w-3.5 lg:h-3.5 ${isRefreshingWatchlist ? 'animate-spin text-accent' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                     </svg>
                  </button>
@@ -584,15 +589,15 @@ function TerminalContent() {
               <div className="space-y-2 lg:space-y-3 max-h-[300px] lg:max-h-[350px] overflow-y-auto custom-scrollbar pr-1 lg:pr-2">
                 {watchlist?.map((item, i) => (
                   <div key={i} className="flex gap-2 w-full group">
-                    <button onClick={() => runAnalysis(item.ticker)} className="flex-1 flex justify-between items-center p-3 lg:p-4 rounded-xl lg:rounded-2xl bg-slate-950 border border-slate-800 hover:border-blue-500/50 transition-all">
-                      <span className="font-black text-white text-base lg:text-lg">{item.ticker}</span>
-                      <span className="text-[9px] lg:text-[10px] font-bold text-slate-500">{item.score} PTS</span>
+                    <button onClick={() => runAnalysis(item.ticker)} className="flex-1 flex justify-between items-center p-3 lg:p-4 rounded-xl lg:rounded-2xl bg-bg-primary border border-border hover:border-accent/50 transition-all">
+                      <span className="font-black text-text-primary text-base lg:text-lg">{item.ticker}</span>
+                      <span className="text-[9px] lg:text-[10px] font-bold text-text-secondary">{item.score} PTS</span>
                     </button>
-                    <button onClick={(e) => removeFromWatchlist(item.ticker, e)} className="px-3 lg:px-4 rounded-xl lg:rounded-2xl bg-slate-950 border border-slate-800 hover:bg-red-500/10 hover:border-red-500 hover:text-red-500 text-slate-600 transition-all font-black text-xs">✕</button>
+                    <button onClick={(e) => removeFromWatchlist(item.ticker, e)} className="px-3 lg:px-4 rounded-xl lg:rounded-2xl bg-bg-primary border border-border hover:bg-loss/10 hover:border-loss hover:text-loss text-text-secondary transition-all font-black text-xs">✕</button>
                   </div>
                 ))}
                 {watchlist.length === 0 && (
-                    <p className="text-center text-[10px] font-bold text-slate-600 uppercase tracking-widest mt-6">Watchlist Empty.</p>
+                    <p className="text-center text-[10px] font-bold text-text-secondary uppercase tracking-widest mt-6">Watchlist Empty.</p>
                 )}
               </div>
             </div>
@@ -603,29 +608,29 @@ function TerminalContent() {
           <div className="col-span-1 lg:col-span-6 flex flex-col gap-6 lg:gap-8 order-1 lg:order-2">
             {!data ? (
                 // 🚀 NATIVE ALPHA SCREENER (Fluid Height on Mobile)
-                <div className="bg-slate-900/40 border border-slate-800/80 rounded-[32px] md:rounded-[40px] p-5 md:p-8 lg:p-10 shadow-2xl backdrop-blur-md flex flex-col h-auto min-h-[500px] lg:h-[800px]">
-                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6 lg:mb-8 border-b border-slate-800/50 pb-4 lg:pb-6">
+                <div className="bg-bg-surface border border-border rounded-[32px] md:rounded-[40px] p-5 md:p-8 lg:p-10 shadow-2xl flex flex-col h-auto min-h-[500px] lg:h-[800px]">
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6 lg:mb-8 border-b border-border pb-4 lg:pb-6">
                         <div>
-                            <h3 className="text-xl lg:text-2xl font-black text-white tracking-tight uppercase">Alpha Screener</h3>
-                            <p className="text-[9px] lg:text-[10px] text-blue-500 font-bold uppercase tracking-[0.2em] mt-1">Proprietary Index Matrix</p>
+                            <h3 className="text-xl lg:text-2xl font-black text-text-primary tracking-tight uppercase">Alpha Screener</h3>
+                            <p className="text-[9px] lg:text-[10px] text-accent font-bold uppercase tracking-[0.2em] mt-1">Proprietary Index Matrix</p>
                         </div>
                         <button 
                             onClick={executeMarketScan} 
                             disabled={isScanning}
-                            className="w-full sm:w-auto px-6 py-4 sm:py-3 bg-white hover:bg-slate-200 text-slate-950 rounded-xl lg:rounded-2xl font-black text-[10px] uppercase tracking-widest disabled:opacity-50 transition-all shadow-[0_0_15px_rgba(255,255,255,0.2)]"
+                            className="w-full sm:w-auto px-6 py-4 sm:py-3 bg-bg-surface hover:bg-bg-surface-hover text-bg-primary rounded-xl lg:rounded-2xl font-black text-[10px] uppercase tracking-widest disabled:opacity-50 transition-all shadow-[0_0_15px_rgba(255,255,255,0.2)]"
                         >
                             {isScanning ? "Scanning..." : "Execute Matrix"}
                         </button>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 lg:gap-6 mb-6 lg:mb-8 bg-slate-950/60 p-4 lg:p-6 rounded-2xl lg:rounded-3xl border border-slate-800/60 shrink-0">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 lg:gap-6 mb-6 lg:mb-8 bg-bg-primary p-4 lg:p-6 rounded-2xl lg:rounded-3xl border border-border shrink-0">
                         <div>
-                            <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-3">Target Horizon</p>
+                            <p className="text-[9px] font-bold text-text-secondary uppercase tracking-widest mb-3">Target Horizon</p>
                             <div className="flex gap-2">
                                 {["Day Trade", "Swing Trade", "Long Term"].map((h) => (
                                     <button
                                         key={h} onClick={() => setHorizon(h)}
-                                        className={`flex-1 py-3 rounded-lg lg:rounded-xl font-bold text-[9px] uppercase tracking-wider transition-all border text-center ${horizon === h ? 'bg-blue-600 border-blue-500 text-white shadow-[0_0_15px_rgba(37,99,235,0.2)]' : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'}`}
+                                        className={`flex-1 py-3 rounded-lg lg:rounded-xl font-bold text-[9px] uppercase tracking-wider transition-all border text-center ${horizon === h ? 'bg-accent border-accent text-white shadow-[0_0_15px_rgba(37,99,235,0.2)]' : 'bg-bg-surface border-border text-text-secondary hover:text-text-primary'}`}
                                     >
                                         {h.split(' ')[0]}
                                     </button>
@@ -633,12 +638,12 @@ function TerminalContent() {
                             </div>
                         </div>
                         <div>
-                            <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-3">Risk Profile</p>
+                            <p className="text-[9px] font-bold text-text-secondary uppercase tracking-widest mb-3">Risk Profile</p>
                             <div className="flex gap-2">
                                 {["Low", "Medium", "High"].map((r) => (
                                     <button
                                         key={r} onClick={() => setRisk(r)}
-                                        className={`flex-1 py-3 rounded-lg lg:rounded-xl font-bold text-[9px] uppercase tracking-wider transition-all border text-center truncate px-1 ${risk === r ? (r === 'High' ? 'bg-red-900/40 border-red-500 text-red-200' : r === 'Low' ? 'bg-emerald-900/40 border-emerald-500 text-emerald-200' : 'bg-purple-900/40 border-purple-500 text-purple-200') : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'}`}
+                                        className={`flex-1 py-3 rounded-lg lg:rounded-xl font-bold text-[9px] uppercase tracking-wider transition-all border text-center truncate px-1 ${risk === r ? (r === 'High' ? 'bg-loss/40 border-loss text-loss' : r === 'Low' ? 'bg-gain/40 border-gain text-gain' : 'bg-purple-900/40 border-purple-500 text-purple-200') : 'bg-bg-surface border-border text-text-secondary hover:text-text-primary'}`}
                                     >
                                         {r}
                                     </button>
@@ -647,59 +652,59 @@ function TerminalContent() {
                         </div>
                     </div>
 
-                    <div className="flex-1 bg-slate-950/40 border border-slate-800/50 rounded-2xl lg:rounded-3xl overflow-hidden flex flex-col relative min-h-[300px]">
+                    <div className="flex-1 bg-bg-primary border border-border rounded-2xl lg:rounded-3xl overflow-hidden flex flex-col relative min-h-[300px]">
                         {isScanning ? (
-                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#020617]/90 backdrop-blur-md z-10 px-6 lg:px-10">
+                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-bg-primary/90 z-10 px-6 lg:px-10">
                                 <div className="w-full max-w-sm">
                                     <div className="flex justify-between items-end mb-3">
-                                        <p className="text-[8px] lg:text-[10px] text-blue-500 font-black uppercase tracking-widest animate-pulse truncate mr-2">
+                                        <p className="text-[8px] lg:text-[10px] text-accent font-black uppercase tracking-widest animate-pulse truncate mr-2">
                                             {loadingText}
                                         </p>
-                                        <p className="text-xl lg:text-2xl font-mono font-black text-white">
+                                        <p className="text-xl lg:text-2xl font-mono font-black text-text-primary">
                                             {scanProgress}%
                                         </p>
                                     </div>
-                                    <div className="w-full h-1.5 lg:h-2 bg-slate-900 rounded-full overflow-hidden border border-slate-800">
+                                    <div className="w-full h-1.5 lg:h-2 bg-bg-surface rounded-full overflow-hidden border border-border">
                                         <div 
-                                            className="h-full bg-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.8)] transition-all duration-200 ease-out"
+                                            className="h-full bg-accent shadow-[0_0_15px_rgba(59,130,246,0.8)] transition-all duration-200 ease-out"
                                             style={{ width: `${scanProgress}%` }}
                                         />
                                     </div>
                                     <div className="mt-4 lg:mt-6 space-y-1 h-12 overflow-hidden opacity-50">
-                                        <p className="text-[7px] lg:text-[8px] font-mono text-slate-500">[{new Date().toISOString()}] INITIALIZING MULTI-THREAD MATRIX</p>
-                                        {scanProgress > 20 && <p className="text-[7px] lg:text-[8px] font-mono text-emerald-500">[{new Date().toISOString()}] SUCCESS: 170 UNIQUE ASSETS ISOLATED</p>}
+                                        <p className="text-[7px] lg:text-[8px] font-mono text-text-secondary">[{new Date().toISOString()}] INITIALIZING MULTI-THREAD MATRIX</p>
+                                        {scanProgress > 20 && <p className="text-[7px] lg:text-[8px] font-mono text-gain">[{new Date().toISOString()}] SUCCESS: 170 UNIQUE ASSETS ISOLATED</p>}
                                     </div>
                                 </div>
                             </div>
                         ) : screenerResults.length === 0 ? (
-                            <div className="flex flex-col items-center justify-center h-full text-slate-600 p-6 text-center">
+                            <div className="flex flex-col items-center justify-center h-full text-text-secondary p-6 text-center">
                                 <span className="text-3xl lg:text-4xl mb-4">📡</span>
                                 <p className="font-black uppercase tracking-[0.2em] text-[9px] lg:text-[10px]">Awaiting Execution Parameters</p>
                             </div>
                         ) : (
-                            <div className="flex flex-col h-full bg-[#020617]">
+                            <div className="flex flex-col h-full bg-bg-primary">
                                 {/* THE PULSE CARDS GRID */}
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-4 bg-slate-900/30 border-b border-slate-800/80">
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-4 bg-bg-surface border-b border-border">
                                     {topAlpha && (
-                                    <div onClick={() => { setTicker(topAlpha.ticker); runAnalysis(topAlpha.ticker); }} className="bg-slate-950 border border-blue-900/50 rounded-xl p-4 hover:border-blue-500 transition-colors cursor-pointer shadow-sm group">
-                                        <h4 className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-2 group-hover:text-blue-400 transition-colors">🏆 Top Alpha</h4>
+                                    <div onClick={() => { setTicker(topAlpha.ticker); runAnalysis(topAlpha.ticker); }} className="bg-bg-primary border border-accent/30 rounded-xl p-4 hover:border-accent transition-colors cursor-pointer shadow-sm group">
+                                        <h4 className="text-[9px] font-bold text-text-secondary uppercase tracking-widest mb-2 group-hover:text-accent transition-colors">🏆 Top Alpha</h4>
                                         <div className="flex justify-between items-end">
                                             <div>
-                                                <h2 className="text-lg font-black text-white leading-none">{topAlpha.ticker}</h2>
-                                                <p className="text-[10px] font-mono font-bold text-slate-400 mt-1">${topAlpha.price?.toFixed(2)}</p>
+                                                <h2 className="text-lg font-black text-text-primary leading-none">{topAlpha.ticker}</h2>
+                                                <p className="text-[10px] font-mono font-bold text-text-secondary mt-1">${topAlpha.price?.toFixed(2)}</p>
                                             </div>
-                                            <div className="bg-blue-600/20 border border-blue-500/50 text-blue-400 font-black text-sm px-2 py-1 rounded-md">{topAlpha.score}</div>
+                                            <div className="bg-accent/20 border border-accent/50 text-accent font-black text-sm px-2 py-1 rounded-md">{topAlpha.score}</div>
                                         </div>
                                     </div>
                                     )}
 
                                     {topGrowth && (
-                                    <div onClick={() => { setTicker(topGrowth.ticker); runAnalysis(topGrowth.ticker); }} className="bg-slate-950 border border-purple-900/50 rounded-xl p-4 hover:border-purple-500 transition-colors cursor-pointer shadow-sm group">
-                                        <h4 className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-2 group-hover:text-purple-400 transition-colors">🚀 Momentum</h4>
+                                    <div onClick={() => { setTicker(topGrowth.ticker); runAnalysis(topGrowth.ticker); }} className="bg-bg-primary border border-purple-900/50 rounded-xl p-4 hover:border-purple-500 transition-colors cursor-pointer shadow-sm group">
+                                        <h4 className="text-[9px] font-bold text-text-secondary uppercase tracking-widest mb-2 group-hover:text-purple-400 transition-colors">🚀 Momentum</h4>
                                         <div className="flex justify-between items-end">
                                             <div>
-                                                <h2 className="text-lg font-black text-white leading-none">{topGrowth.ticker}</h2>
-                                                <p className="text-[10px] font-mono font-bold text-slate-400 mt-1">${topGrowth.price?.toFixed(2)}</p>
+                                                <h2 className="text-lg font-black text-text-primary leading-none">{topGrowth.ticker}</h2>
+                                                <p className="text-[10px] font-mono font-bold text-text-secondary mt-1">${topGrowth.price?.toFixed(2)}</p>
                                             </div>
                                             <div className="bg-purple-600/20 border border-purple-500/50 text-purple-400 font-black text-sm px-2 py-1 rounded-md">{topGrowth.score}</div>
                                         </div>
@@ -707,37 +712,37 @@ function TerminalContent() {
                                     )}
 
                                     {topValue && (
-                                    <div onClick={() => { setTicker(topValue.ticker); runAnalysis(topValue.ticker); }} className="bg-slate-950 border border-emerald-900/50 rounded-xl p-4 hover:border-emerald-500 transition-colors cursor-pointer shadow-sm group hidden md:block">
-                                        <h4 className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-2 group-hover:text-emerald-400 transition-colors">⚖️ Value Floor</h4>
+                                    <div onClick={() => { setTicker(topValue.ticker); runAnalysis(topValue.ticker); }} className="bg-bg-primary border border-gain/50 rounded-xl p-4 hover:border-gain transition-colors cursor-pointer shadow-sm group hidden md:block">
+                                        <h4 className="text-[9px] font-bold text-text-secondary uppercase tracking-widest mb-2 group-hover:text-gain transition-colors">⚖️ Value Floor</h4>
                                         <div className="flex justify-between items-end">
                                             <div>
-                                                <h2 className="text-lg font-black text-white leading-none">{topValue.ticker}</h2>
-                                                <p className="text-[10px] font-mono font-bold text-slate-400 mt-1">${topValue.price?.toFixed(2)}</p>
+                                                <h2 className="text-lg font-black text-text-primary leading-none">{topValue.ticker}</h2>
+                                                <p className="text-[10px] font-mono font-bold text-text-secondary mt-1">${topValue.price?.toFixed(2)}</p>
                                             </div>
-                                            <div className="bg-emerald-600/20 border border-emerald-500/50 text-emerald-400 font-black text-sm px-2 py-1 rounded-md">{topValue.score}</div>
+                                            <div className="bg-gain/20 border border-gain/50 text-gain font-black text-sm px-2 py-1 rounded-md">{topValue.score}</div>
                                         </div>
                                     </div>
                                     )}
                                 </div>
 
                                 {/* SECTOR FILTERS */}
-                                <div className="flex space-x-2 px-4 py-3 border-b border-slate-800/80 overflow-x-auto custom-scrollbar bg-slate-900/20 shrink-0">
+                                <div className="flex space-x-2 px-4 py-3 border-b border-border overflow-x-auto custom-scrollbar bg-bg-surface shrink-0">
                                     {["ALL", "Technology", "Financials", "Healthcare", "Consumer", "Energy"].map(sector => (
                                         <button 
                                             key={sector}
                                             onClick={() => setActiveSector(sector)}
-                                            className={`px-3 py-1.5 rounded-full text-[9px] font-bold uppercase tracking-widest whitespace-nowrap transition-all ${activeSector === sector ? 'bg-blue-600 text-white' : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800'}`}
+                                            className={`px-3 py-1.5 rounded-full text-[9px] font-bold uppercase tracking-widest whitespace-nowrap transition-all ${activeSector === sector ? 'bg-accent text-white' : 'bg-bg-surface border border-border text-text-secondary hover:text-text-primary hover:bg-bg-surface-hover'}`}
                                         >
                                             {sector}
                                         </button>
                                     ))}
                                 </div>
 
-                                <div className="grid grid-cols-12 gap-2 lg:gap-4 px-4 lg:px-6 py-3 border-b border-slate-800/80 text-[8px] lg:text-[9px] font-black uppercase tracking-widest text-slate-500 shrink-0">
+                                <div className="grid grid-cols-12 gap-2 lg:gap-4 px-4 lg:px-6 py-3 border-b border-border text-[8px] lg:text-[9px] font-black uppercase tracking-widest text-text-secondary shrink-0">
                                     <div className="col-span-5 lg:col-span-5">Asset</div>
                                     <div className="col-span-4 lg:col-span-3 text-right">Price / Change</div>
                                     <div className="hidden lg:block lg:col-span-2 text-right">{horizon === "Long Term" ? "Fund Score" : "Tech Score"}</div>
-                                    <div className="col-span-3 lg:col-span-2 text-right text-blue-400">Total</div>
+                                    <div className="col-span-3 lg:col-span-2 text-right text-accent">Total</div>
                                 </div>
                                 <div className="overflow-y-auto custom-scrollbar flex-1 pb-4">
                                     {filteredScreenerResults.map((stock, idx) => {
@@ -746,36 +751,36 @@ function TerminalContent() {
                                             <div 
                                                 key={stock.ticker}
                                                 onClick={() => { setTicker(stock.ticker); runAnalysis(stock.ticker); }}
-                                                className={`grid grid-cols-12 gap-2 lg:gap-4 px-4 lg:px-6 py-3 lg:py-4 items-center border-b border-slate-800/30 cursor-pointer group transition-all duration-200 ${isOverdrive ? 'bg-blue-950/10 hover:bg-blue-950/20 border-l-4 border-l-blue-500' : 'hover:bg-slate-900/80'}`}
+                                                className={`grid grid-cols-12 gap-2 lg:gap-4 px-4 lg:px-6 py-3 lg:py-4 items-center border-b border-border cursor-pointer group transition-all duration-200 ${isOverdrive ? 'bg-accent/10 hover:bg-accent-hover/20 border-l-4 border-l-accent' : 'hover:bg-bg-surface-hover/80'}`}
                                             >
                                                 <div className="col-span-5 lg:col-span-5 flex items-center gap-2 lg:gap-3">
-                                                    <span className="hidden sm:inline-block text-[10px] text-slate-600 font-mono w-4">{idx + 1}</span>
+                                                    <span className="hidden sm:inline-block text-[10px] text-text-secondary font-mono w-4">{idx + 1}</span>
                                                     <div>
                                                         <div className="flex items-center gap-2">
-                                                            <span className="font-black text-white text-xs lg:text-sm">{stock.ticker}</span>
-                                                            {isOverdrive && <span className="bg-blue-500/10 text-blue-400 text-[8px] font-black tracking-widest uppercase px-1.5 py-0.5 rounded border border-blue-500/20 animate-pulse hidden md:block">OVERDRIVE</span>}
+                                                            <span className="font-black text-text-primary text-xs lg:text-sm">{stock.ticker}</span>
+                                                            {isOverdrive && <span className="bg-accent/10 text-accent text-[8px] font-black tracking-widest uppercase px-1.5 py-0.5 rounded border border-accent/20 animate-pulse hidden md:block">OVERDRIVE</span>}
                                                         </div>
-                                                        <span className="text-[8px] font-bold text-slate-500 uppercase tracking-widest hidden lg:block mt-0.5">{stock.sector || "Equities"}</span>
+                                                        <span className="text-[8px] font-bold text-text-secondary uppercase tracking-widest hidden lg:block mt-0.5">{stock.sector || "Equities"}</span>
                                                     </div>
                                                 </div>
                                                 <div className="col-span-4 lg:col-span-3 text-right">
-                                                    <p className="text-xs lg:text-sm font-mono font-bold text-slate-200">${stock.price?.toFixed(2)}</p>
+                                                    <p className="text-xs lg:text-sm font-mono font-bold text-text-primary">${stock.price?.toFixed(2)}</p>
                                                 </div>
                                                 <div className="hidden lg:block lg:col-span-2 text-right">
-                                                    <p className={`text-[10px] font-mono font-bold ${horizon === "Long Term" ? "text-emerald-400" : "text-purple-400"}`}>
+                                                    <p className={`text-[10px] font-mono font-bold ${horizon === "Long Term" ? "text-gain" : "text-purple-400"}`}>
                                                         {horizon === "Long Term" ? stock.fund_score || '--' : stock.tech_score || '--'}
                                                     </p>
                                                 </div>
                                                 <div className="col-span-3 lg:col-span-2 flex justify-end">
-                                                    <div className={`px-2 lg:px-3 py-1 rounded-md text-center border transition-all ${isOverdrive ? 'bg-blue-600 border-blue-400 text-white shadow-[0_0_10px_rgba(59,130,246,0.3)]' : 'bg-blue-600/20 border-blue-500/30'}`}>
-                                                        <span className={`text-xs lg:text-sm font-black font-mono ${isOverdrive ? 'text-white' : 'text-blue-400'}`}>{stock.score}</span>
+                                                    <div className={`px-2 lg:px-3 py-1 rounded-md text-center border transition-all ${isOverdrive ? 'bg-accent border-accent text-white shadow-[0_0_10px_rgba(59,130,246,0.3)]' : 'bg-accent/20 border-accent/30'}`}>
+                                                        <span className={`text-xs lg:text-sm font-black font-mono ${isOverdrive ? 'text-text-primary' : 'text-accent'}`}>{stock.score}</span>
                                                     </div>
                                                 </div>
                                             </div>
                                         );
                                     })}
                                     {filteredScreenerResults.length === 0 && (
-                                        <div className="p-8 text-center text-slate-500 text-[10px] font-bold uppercase tracking-widest">No assets found in this sector.</div>
+                                        <div className="p-8 text-center text-text-secondary text-[10px] font-bold uppercase tracking-widest">No assets found in this sector.</div>
                                     )}
                                 </div>
                             </div>
@@ -787,16 +792,16 @@ function TerminalContent() {
                 <TradingViewWidget symbol={confirmedTicker} />
                 <div className="grid grid-cols-1 gap-4">
                   {data.ledger?.map((item: any, i: number) => (
-                    <div key={i} className="bg-slate-900/30 border border-slate-800/50 p-6 lg:p-8 rounded-[32px] lg:rounded-[40px] flex flex-col sm:flex-row justify-between items-start transition-all hover:border-slate-600 gap-4 sm:gap-0">
+                    <div key={i} className="bg-bg-surface border border-border p-6 lg:p-8 rounded-[32px] lg:rounded-[40px] flex flex-col sm:flex-row justify-between items-start transition-all hover:border-border gap-4 sm:gap-0">
                       <div className="flex-1 w-full">
                           <div className="flex justify-between items-start sm:items-center mb-3 sm:mb-4">
                               <div>
-                                  <p className="text-white font-black text-lg lg:text-xl">{item.factor}</p>
-                                  <p className="text-[10px] lg:text-[11px] text-blue-500 font-bold uppercase mt-1">{item.status}</p>
+                                  <p className="text-text-primary font-black text-lg lg:text-xl">{item.factor}</p>
+                                  <p className="text-[10px] lg:text-[11px] text-accent font-bold uppercase mt-1">{item.status}</p>
                               </div>
-                              <span className="text-white font-black text-lg lg:text-xl">{item.val}</span>
+                              <span className="text-text-primary font-black text-lg lg:text-xl">{item.val}</span>
                           </div>
-                          <p className="text-slate-400 text-xs lg:text-sm italic border-l-2 border-slate-800 pl-3 lg:pl-4 leading-relaxed font-medium">"{item.reasoning}"</p>
+                          <p className="text-text-secondary text-xs lg:text-sm italic border-l-2 border-border pl-3 lg:pl-4 leading-relaxed font-medium">"{item.reasoning}"</p>
                       </div>
                     </div>
                   ))}
@@ -808,42 +813,42 @@ function TerminalContent() {
           {/* RIGHT PANEL (Responsive) */}
           <div className="col-span-1 lg:col-span-3 space-y-6 lg:space-y-8 order-3">
             
-            <div className="bg-slate-900 border border-slate-800 rounded-[32px] md:rounded-[40px] p-6 lg:p-10 shadow-2xl">
-               <div className="flex items-center gap-3 mb-6 lg:mb-10 text-blue-500"><div className="w-2 h-2 lg:w-2.5 lg:h-2.5 bg-blue-500 rounded-full animate-pulse" /><p className="text-[9px] lg:text-[10px] font-black uppercase tracking-[0.3em]">AI Market Intercept</p></div>
+            <div className="bg-bg-surface border border-border rounded-[32px] md:rounded-[40px] p-6 lg:p-10 shadow-2xl">
+               <div className="flex items-center gap-3 mb-6 lg:mb-10 text-accent"><div className="w-2 h-2 lg:w-2.5 lg:h-2.5 bg-accent rounded-full animate-pulse" /><p className="text-[9px] lg:text-[10px] font-black uppercase tracking-[0.3em]">AI Market Intercept</p></div>
                {data ? (
                  <>
                     {/* PAPER TRADING EXECUTION TRIGGER */}
                     <button 
                         onClick={() => setShowTradeTicket(true)}
-                        className="w-full mb-6 lg:mb-8 bg-emerald-600 border border-emerald-500 py-4 rounded-xl lg:rounded-2xl text-white font-black text-base lg:text-lg uppercase tracking-widest hover:bg-emerald-500 transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)]"
+                        className="w-full mb-6 lg:mb-8 bg-gain border border-gain py-4 rounded-xl lg:rounded-2xl text-white font-black text-base lg:text-lg uppercase tracking-widest hover:bg-gain transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)]"
                     >
                         TRADE {data.ticker}
                     </button>
                     
                     <div className="mb-6 lg:mb-8">
-                       <p className="text-[9px] lg:text-[10px] font-black text-slate-400 uppercase mb-2">Current Price</p>
-                       <p className="text-5xl lg:text-7xl font-mono font-black text-white tracking-tighter mb-3 lg:mb-4">${data.price}</p>
-                       <p className="text-[9px] lg:text-[10px] font-black text-blue-400 uppercase tracking-widest bg-blue-500/10 px-3 py-1.5 lg:py-2 rounded-lg inline-block">{data.company_name}</p>
+                       <p className="text-[9px] lg:text-[10px] font-black text-text-secondary uppercase mb-2">Current Price</p>
+                       <p className="text-5xl lg:text-7xl font-mono font-black text-text-primary tracking-tighter mb-3 lg:mb-4">${data.price}</p>
+                       <p className="text-[9px] lg:text-[10px] font-black text-accent uppercase tracking-widest bg-accent/10 px-3 py-1.5 lg:py-2 rounded-lg inline-block">{data.company_name}</p>
                     </div>
 
                     {/* HIGH CONVICTION BOOSTER BADGES */}
-                    <div className="flex flex-wrap gap-1.5 mt-4 mb-6 border-b border-slate-800 pb-5">
-                        <div className="bg-slate-950 border border-slate-800 px-2 py-1 rounded text-[9px] font-bold text-slate-400 uppercase">
+                    <div className="flex flex-wrap gap-1.5 mt-4 mb-6 border-b border-border pb-5">
+                        <div className="bg-bg-primary border border-border px-2 py-1 rounded text-[9px] font-bold text-text-secondary uppercase">
                             ⚙️ Tech: {data.tech_score}
                         </div>
-                        <div className="bg-slate-950 border border-slate-800 px-2 py-1 rounded text-[9px] font-bold text-slate-400 uppercase">
+                        <div className="bg-bg-primary border border-border px-2 py-1 rounded text-[9px] font-bold text-text-secondary uppercase">
                             📊 Fund: {data.fund_score}
                         </div>
                         {data.ledger?.filter((item: any) => ["Consolidation Phase", "Short Squeeze Risk", "Options Flow", "Insider Conviction"].includes(item.factor) && item.status !== "BEARISH").map((booster: any, i: number) => (
-                            <div key={i} className="bg-blue-500/10 border border-blue-500/30 text-blue-400 px-2 py-1 rounded text-[9px] font-black tracking-wide uppercase flex items-center gap-1 shadow-[0_0_10px_rgba(59,130,246,0.05)]">
+                            <div key={i} className="bg-accent/10 border border-accent/30 text-accent px-2 py-1 rounded text-[9px] font-black tracking-wide uppercase flex items-center gap-1 shadow-[0_0_10px_rgba(59,130,246,0.05)]">
                                 🔥 {booster.factor}: {booster.val}
                             </div>
                         ))}
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4 lg:gap-8 border-t border-slate-800 pt-6 lg:pt-8 mb-6 lg:mb-8">
-                       <div><p className="text-[8px] lg:text-[9px] font-bold text-slate-400 uppercase mb-1 lg:mb-2">24H Volume</p><p className="text-white font-black text-xs lg:text-sm">{data.volume}</p></div>
-                       <div><p className="text-[8px] lg:text-[9px] font-bold text-slate-400 uppercase mb-1 lg:mb-2">Rel Surge</p><p className="text-blue-400 font-black text-xs lg:text-sm">{data.vol_surge}</p></div>
+                    <div className="grid grid-cols-2 gap-4 lg:gap-8 border-t border-border pt-6 lg:pt-8 mb-6 lg:mb-8">
+                       <div><p className="text-[8px] lg:text-[9px] font-bold text-text-secondary uppercase mb-1 lg:mb-2">24H Volume</p><p className="text-text-primary font-black text-xs lg:text-sm">{data.volume}</p></div>
+                       <div><p className="text-[8px] lg:text-[9px] font-bold text-text-secondary uppercase mb-1 lg:mb-2">Rel Surge</p><p className="text-accent font-black text-xs lg:text-sm">{data.vol_surge}</p></div>
                     </div>
 
                     {/* ACTION BUTTONS: STACKED DESIGN */}
@@ -852,15 +857,15 @@ function TerminalContent() {
                         <button 
                             onClick={() => setAuthModal({ isOpen: true, title: "Tactical Deep Dive", cost: 3, actionName: "INITIATE SCAN", onConfirm: runMasterAnalysis })}
                             disabled={isAnalyzing || !data}
-                            className="w-full bg-blue-900/20 border border-blue-500/40 hover:bg-blue-900/40 hover:border-blue-400 py-4 lg:py-5 px-4 lg:px-6 rounded-xl lg:rounded-2xl transition-all shadow-[0_0_20px_rgba(37,99,235,0.1)] disabled:opacity-50 flex items-center justify-between group"
+                            className="w-full bg-accent/10 border border-accent/40 hover:bg-accent-hover/40 hover:border-accent py-4 lg:py-5 px-4 lg:px-6 rounded-xl lg:rounded-2xl transition-all shadow-[0_0_20px_rgba(37,99,235,0.1)] disabled:opacity-50 flex items-center justify-between group"
                         >
                             <div className="flex items-center gap-3 lg:gap-4">
-                                {isAnalyzing ? <div className="w-2.5 h-2.5 lg:w-3 lg:h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" /> : <div className="w-2 h-2 lg:w-2.5 lg:h-2.5 bg-blue-500 rounded-full shadow-[0_0_8px_rgba(59,130,246,0.8)]" />}
-                                <span className="text-blue-100 font-black text-[10px] sm:text-xs lg:text-sm uppercase tracking-widest text-left leading-tight">
+                                {isAnalyzing ? <div className="w-2.5 h-2.5 lg:w-3 lg:h-3 border-2 border-accent border-t-transparent rounded-full animate-spin" /> : <div className="w-2 h-2 lg:w-2.5 lg:h-2.5 bg-accent rounded-full shadow-[0_0_8px_rgba(59,130,246,0.8)]" />}
+                                <span className="text-accent font-black text-[10px] sm:text-xs lg:text-sm uppercase tracking-widest text-left leading-tight">
                                     {isAnalyzing ? "Synthesizing..." : "Tactical Deep Dive"}
                                 </span>
                             </div>
-                            <div className="bg-slate-950 border border-blue-900/50 px-2 lg:px-3 py-1 lg:py-1.5 rounded-lg text-[9px] lg:text-[10px] font-mono font-bold text-blue-400 shrink-0">
+                            <div className="bg-bg-primary border border-accent/30 px-2 lg:px-3 py-1 lg:py-1.5 rounded-lg text-[9px] lg:text-[10px] font-mono font-bold text-accent shrink-0">
                                 -3 TKN
                             </div>
                         </button>
@@ -869,35 +874,35 @@ function TerminalContent() {
                         <button 
                             onClick={() => setAuthModal({ isOpen: true, title: "Quantitative Risk Protocol", cost: 2, actionName: "GENERATE EXIT STRATEGY", onConfirm: runExitStrategy })}
                             disabled={isGeneratingExit || !data}
-                            className="w-full bg-red-900/20 border border-red-500/40 hover:bg-red-900/40 hover:border-red-400 py-4 lg:py-5 px-4 lg:px-6 rounded-xl lg:rounded-2xl transition-all shadow-[0_0_20px_rgba(239,68,68,0.1)] disabled:opacity-50 flex items-center justify-between group"
+                            className="w-full bg-loss/20 border border-loss/40 hover:bg-loss/40 hover:border-loss py-4 lg:py-5 px-4 lg:px-6 rounded-xl lg:rounded-2xl transition-all shadow-[0_0_20px_rgba(239,68,68,0.1)] disabled:opacity-50 flex items-center justify-between group"
                         >
                             <div className="flex items-center gap-3 lg:gap-4">
-                                {isGeneratingExit ? <div className="w-2.5 h-2.5 lg:w-3 lg:h-3 border-2 border-red-500 border-t-transparent rounded-full animate-spin" /> : <div className="w-2 h-2 lg:w-2.5 lg:h-2.5 bg-red-500 rounded-full shadow-[0_0_8px_rgba(239,68,68,0.8)]" />}
-                                <span className="text-red-100 font-black text-[10px] sm:text-xs lg:text-sm uppercase tracking-widest text-left leading-tight">
+                                {isGeneratingExit ? <div className="w-2.5 h-2.5 lg:w-3 lg:h-3 border-2 border-loss border-t-transparent rounded-full animate-spin" /> : <div className="w-2 h-2 lg:w-2.5 lg:h-2.5 bg-loss rounded-full shadow-[0_0_8px_rgba(239,68,68,0.8)]" />}
+                                <span className="text-loss font-black text-[10px] sm:text-xs lg:text-sm uppercase tracking-widest text-left leading-tight">
                                     {isGeneratingExit ? "Calculating..." : "Exit Strategy"}
                                 </span>
                             </div>
-                            <div className="bg-slate-950 border border-red-900/50 px-2 lg:px-3 py-1 lg:py-1.5 rounded-lg text-[9px] lg:text-[10px] font-mono font-bold text-red-400 shrink-0">
+                            <div className="bg-bg-primary border border-loss/40 px-2 lg:px-3 py-1 lg:py-1.5 rounded-lg text-[9px] lg:text-[10px] font-mono font-bold text-loss shrink-0">
                                 -2 TKN
                             </div>
                         </button>
                     </div>
                     
-                    <div className="mb-4 lg:mb-6 p-4 lg:p-5 bg-blue-500/5 border-l-2 border-blue-500 rounded-r-xl lg:rounded-r-2xl min-h-[50px]">
-                        <p className="text-slate-200 text-xs lg:text-sm font-bold italic leading-relaxed">
+                    <div className="mb-4 lg:mb-6 p-4 lg:p-5 bg-accent/5 border-l-2 border-accent rounded-r-xl lg:rounded-r-2xl min-h-[50px]">
+                        <p className="text-text-primary text-xs lg:text-sm font-bold italic leading-relaxed">
                             "{data.ai_tactical || "Market conditions currently being synthesized by the neural engine. Please wait for signal calibration."}"
                         </p>
                     </div>
 
                     {/* EXIT STRATEGY OUTPUT DISPLAY */}
                     {exitStrategyResult && (
-                        <div className="mb-8 lg:mb-10 bg-slate-950 border border-red-500/30 rounded-2xl lg:rounded-3xl p-5 lg:p-6 shadow-[inset_0_0_20px_rgba(239,68,68,0.05)] relative overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
-                            <button onClick={() => setExitStrategyResult(null)} className="absolute top-3 right-3 lg:top-4 lg:right-4 text-slate-500 hover:text-white transition-colors p-2">
+                        <div className="mb-8 lg:mb-10 bg-bg-primary border border-loss/30 rounded-2xl lg:rounded-3xl p-5 lg:p-6 shadow-[inset_0_0_20px_rgba(239,68,68,0.05)] relative overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
+                            <button onClick={() => setExitStrategyResult(null)} className="absolute top-3 right-3 lg:top-4 lg:right-4 text-text-secondary hover:text-text-primary transition-colors p-2">
                                 <svg className="w-4 h-4 lg:w-5 lg:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                             </button>
                             <div className="flex items-center gap-2 mb-4">
-                                <div className="w-1.5 h-1.5 lg:w-2 lg:h-2 bg-red-500 rounded-full animate-pulse" />
-                                <p className="text-[9px] lg:text-[10px] font-black uppercase tracking-[0.3em] text-red-500 pr-6">Quantitative Risk Protocol</p>
+                                <div className="w-1.5 h-1.5 lg:w-2 lg:h-2 bg-loss rounded-full animate-pulse" />
+                                <p className="text-[9px] lg:text-[10px] font-black uppercase tracking-[0.3em] text-loss pr-6">Quantitative Risk Protocol</p>
                             </div>
                             <div className="prose prose-invert max-w-none text-xs lg:text-sm font-medium leading-relaxed">
                                 <style dangerouslySetInnerHTML={{__html: `
@@ -913,23 +918,23 @@ function TerminalContent() {
                         </div>
                     )}
                  </>
-               ) : ( <p className="text-slate-600 font-bold uppercase text-[9px] lg:text-[10px] tracking-widest italic text-center">Scan required...</p> )}
+               ) : ( <p className="text-text-secondary font-bold uppercase text-[9px] lg:text-[10px] tracking-widest italic text-center">Scan required...</p> )}
             </div>
 
-            <div className="bg-slate-900/40 border border-slate-800 rounded-[32px] md:rounded-[40px] p-6 lg:p-8 flex flex-col h-auto min-h-[400px] lg:h-[600px] overflow-hidden shrink-0">
-               <p className="text-[10px] lg:text-[11px] font-black text-slate-400 uppercase tracking-widest mb-4 lg:mb-6 text-center">AI Intelligence Wire</p>
+            <div className="bg-bg-surface border border-border rounded-[32px] md:rounded-[40px] p-6 lg:p-8 flex flex-col h-auto min-h-[400px] lg:h-[600px] overflow-hidden shrink-0">
+               <p className="text-[10px] lg:text-[11px] font-black text-text-secondary uppercase tracking-widest mb-4 lg:mb-6 text-center">AI Intelligence Wire</p>
 
                <div className="space-y-3 lg:space-y-4 overflow-y-auto custom-scrollbar flex-1 pr-1 lg:pr-2">
                   {((data && data.news && data.news.length > 0) ? data.news : globalNews).map((item: any, i: number) => (
-                      <div key={i} onClick={() => triggerArticleAnalysis(item)} className="bg-slate-950 border border-slate-800 p-4 lg:p-5 rounded-2xl lg:rounded-3xl cursor-pointer hover:border-blue-500/50 group transition-all">
-                          <p className="text-xs lg:text-sm font-bold text-slate-200 group-hover:text-blue-400 leading-snug line-clamp-3">
+                      <div key={i} onClick={() => triggerArticleAnalysis(item)} className="bg-bg-primary border border-border p-4 lg:p-5 rounded-2xl lg:rounded-3xl cursor-pointer hover:border-accent/50 group transition-all">
+                          <p className="text-xs lg:text-sm font-bold text-text-primary group-hover:text-accent leading-snug line-clamp-3">
                             {item.title}
                           </p>
-                          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mt-3 lg:mt-4 pt-3 lg:pt-4 border-t border-slate-800/30 gap-2 sm:gap-0">
-                              <p className="text-[8px] lg:text-[9px] font-black text-slate-400 group-hover:text-slate-200 uppercase tracking-wider">
+                          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mt-3 lg:mt-4 pt-3 lg:pt-4 border-t border-border gap-2 sm:gap-0">
+                              <p className="text-[8px] lg:text-[9px] font-black text-text-secondary group-hover:text-text-primary uppercase tracking-wider">
                                   {item.publisher} {item.date ? `• ${item.date}` : ""}
                               </p>
-                              <span className="text-[7px] lg:text-[8px] bg-blue-600/10 text-blue-500 px-2 py-1 rounded-full uppercase font-black tracking-wider">
+                              <span className="text-[7px] lg:text-[8px] bg-accent/10 text-accent px-2 py-1 rounded-full uppercase font-black tracking-wider">
                                   AI Synthesis
                               </span>
                           </div>
@@ -941,33 +946,33 @@ function TerminalContent() {
           </div>
         </div>
         
-        <footer className="border-t border-slate-800/50 pt-6 lg:pt-8 mt-8 lg:mt-12 text-center w-full">
-            <p className="text-[9px] lg:text-[10px] uppercase tracking-[0.2em] font-black text-slate-600">© 2026 TradeBotics AI. All Systems Operational.</p>
+        <footer className="border-t border-border pt-6 lg:pt-8 mt-8 lg:mt-12 text-center w-full">
+            <p className="text-[9px] lg:text-[10px] uppercase tracking-[0.2em] font-black text-text-secondary">© 2026 TradeBotics AI. All Systems Operational.</p>
         </footer>
       </div>
 
       {/* 🚨 NEURAL AUTHORIZATION MODAL */}
       {authModal.isOpen && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md">
-              <div className="bg-[#0B0F19] border border-red-900/50 rounded-2xl shadow-[0_0_40px_rgba(220,38,38,0.15)] w-full max-w-sm overflow-hidden relative">
-                  <div className="p-3 md:p-4 border-b border-red-900/30 bg-red-950/20 flex items-center gap-2 md:gap-3">
-                      <div className="w-1.5 h-1.5 md:w-2 md:h-2 bg-red-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.8)]"></div>
-                      <h2 className="text-[10px] md:text-xs font-bold text-red-500 uppercase tracking-[0.2em]">Bandwidth Auth Required</h2>
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-bg-primary">
+              <div className="bg-bg-primary border border-loss/40 rounded-2xl shadow-[0_0_40px_rgba(220,38,38,0.15)] w-full max-w-sm overflow-hidden relative">
+                  <div className="p-3 md:p-4 border-b border-loss/30 bg-loss/20 flex items-center gap-2 md:gap-3">
+                      <div className="w-1.5 h-1.5 md:w-2 md:h-2 bg-loss rounded-full animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.8)]"></div>
+                      <h2 className="text-[10px] md:text-xs font-bold text-loss uppercase tracking-[0.2em]">Bandwidth Auth Required</h2>
                   </div>
                   <div className="p-5 md:p-6 text-center space-y-4">
-                      <p className="text-xs md:text-sm text-slate-300 font-mono leading-relaxed">
-                          Executing the <span className="text-white font-bold">{authModal.title}</span> protocol will consume standard neural bandwidth.
+                      <p className="text-xs md:text-sm text-text-secondary font-mono leading-relaxed">
+                          Executing the <span className="text-text-primary font-bold">{authModal.title}</span> protocol will consume standard neural bandwidth.
                       </p>
-                      <div className="py-3 md:py-4 bg-slate-900/50 rounded-xl border border-slate-800 flex flex-col items-center justify-center">
-                          <p className="text-[9px] md:text-[10px] text-slate-500 uppercase tracking-widest mb-1">Compute Cost</p>
+                      <div className="py-3 md:py-4 bg-bg-surface rounded-xl border border-border flex flex-col items-center justify-center">
+                          <p className="text-[9px] md:text-[10px] text-text-secondary uppercase tracking-widest mb-1">Compute Cost</p>
                           <p className="text-2xl md:text-3xl font-mono text-purple-400 font-bold">-{authModal.cost} TOKENS</p>
                       </div>
                   </div>
-                  <div className="flex border-t border-slate-800">
-                      <button onClick={() => setAuthModal({ ...authModal, isOpen: false })} className="flex-1 py-3 md:py-4 text-[10px] md:text-xs font-bold text-slate-500 hover:text-white uppercase tracking-widest hover:bg-slate-800/50 transition-colors">
+                  <div className="flex border-t border-border">
+                      <button onClick={() => setAuthModal({ ...authModal, isOpen: false })} className="flex-1 py-3 md:py-4 text-[10px] md:text-xs font-bold text-text-secondary hover:text-text-primary uppercase tracking-widest hover:bg-bg-surface-hover/50 transition-colors">
                           Abort
                       </button>
-                      <button onClick={() => { setAuthModal({ ...authModal, isOpen: false }); authModal.onConfirm(); }} className="flex-1 py-3 md:py-4 text-[10px] md:text-xs font-bold text-blue-400 hover:text-white uppercase tracking-widest hover:bg-blue-600 transition-colors border-l border-slate-800">
+                      <button onClick={() => { setAuthModal({ ...authModal, isOpen: false }); authModal.onConfirm(); }} className="flex-1 py-3 md:py-4 text-[10px] md:text-xs font-bold text-accent hover:text-text-primary uppercase tracking-widest hover:bg-accent-hover transition-colors border-l border-border">
                           {authModal.actionName}
                       </button>
                   </div>
@@ -982,9 +987,9 @@ function TerminalContent() {
 export default function TerminalPage() {
   return (
     <React.Suspense fallback={
-      <div className="min-h-screen bg-[#020617] flex flex-col items-center justify-center p-4">
-        <div className="w-12 h-12 md:w-16 md:h-16 border-4 border-slate-800 border-t-blue-500 rounded-full animate-spin mb-4 md:mb-6" />
-        <p className="text-[9px] md:text-[10px] text-blue-500 font-black uppercase tracking-widest animate-pulse text-center">
+      <div className="min-h-screen bg-bg-primary flex flex-col items-center justify-center p-4">
+        <div className="w-12 h-12 md:w-16 md:h-16 border-4 border-border border-t-accent rounded-full animate-spin mb-4 md:mb-6" />
+        <p className="text-[9px] md:text-[10px] text-accent font-black uppercase tracking-widest animate-pulse text-center">
           Establishing Secure Link...
         </p>
       </div>

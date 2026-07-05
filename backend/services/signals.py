@@ -37,14 +37,17 @@ def build_signal(
     earnings_within_5d: bool,
     price: float,
     atr: float,
+    smart_money: float | None = None,
 ) -> dict:
     """Assembles the full signal record for one ticker/horizon: confidence,
     verdict, plain-language reason, consensus view, and (for BUYs only) a
-    mandatory ATR-based exit plan."""
+    mandatory ATR-based exit plan. smart_money (Phase 2b) is an optional
+    6th consensus lens plus a small bounded confidence nudge -- omitted
+    entirely when not supplied."""
     if horizon not in HORIZON_LOOKBACKS:
         raise ValueError(f"Unknown horizon '{horizon}'; expected one of {list(HORIZON_LOOKBACKS)}")
 
-    confidence = scoring.confidence_score(trend, momentum, rel_strength, volume, fundamentals, regime)
+    confidence = scoring.confidence_score(trend, momentum, rel_strength, volume, fundamentals, regime, smart_money)
     signal_verdict, reason = scoring.verdict(confidence, extension, gap_pct, regime, earnings_within_5d)
 
     result = {
@@ -53,13 +56,36 @@ def build_signal(
         "confidence": confidence,
         "verdict": signal_verdict,
         "reason": reason,
-        "consensus": scoring.consensus(trend, momentum, rel_strength, volume, fundamentals),
+        "consensus": scoring.consensus(trend, momentum, rel_strength, volume, fundamentals, smart_money),
     }
 
     if signal_verdict == "BUY":
         result["exit_plan"] = scoring.exit_plan(price, atr)
 
     return result
+
+
+def signal_log_row(
+    signal: dict, price: float, d: str, inputs_snapshot: dict,
+    engine_version: str = "v1", source: str = "nightly",
+) -> dict:
+    """Shapes a build_signal() result into a row for the Phase 3 `signals`
+    log table (public track record). stop/target are only populated for
+    BUY verdicts -- the mandatory exit plan only exists on BUYs."""
+    exit_plan = signal.get("exit_plan")
+    return {
+        "ticker": signal["ticker"],
+        "horizon": signal["horizon"],
+        "verdict": signal["verdict"],
+        "confidence": signal["confidence"],
+        "price_at_signal": price,
+        "stop_price": exit_plan["stop"] if exit_plan else None,
+        "target_price": exit_plan["target"] if exit_plan else None,
+        "inputs": inputs_snapshot,
+        "engine_version": engine_version,
+        "source": source,
+        "d": d,
+    }
 
 
 def is_defensive_mode(regime: str, breadth_pct: float) -> bool:

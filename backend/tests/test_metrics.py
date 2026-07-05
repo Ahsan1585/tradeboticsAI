@@ -1,4 +1,3 @@
-import math
 from services.metrics import safe_float, sanitize_nans
 
 def test_safe_float_handles_none():
