@@ -172,16 +172,27 @@ async def execute_screener(req: ScreenerRequest):
         above_sma50 = [r["price"] is not None and r["sma50"] is not None and r["price"] > r["sma50"] for r in rows]
         breadth = breadth_pct(above_sma50)
 
-        if is_defensive_mode(regime, breadth):
+        defensive_mode = is_defensive_mode(regime, breadth)
+        buys = [r for r in rows if (r.get("signals") or {}).get(horizon, {}).get("verdict") == "BUY"]
+
+        # A risk-off regime alone (independent of breadth) already makes BUY
+        # structurally unreachable in services.scoring.verdict(), so relying
+        # on is_defensive_mode()'s breadth condition to decide whether to
+        # show the watchlist left a gap: risk-off + healthy breadth produced
+        # zero BUYs *and* no watchlist/message -- a blank, unexplained
+        # screen. Fall back to the watchlist any time there are no BUYs.
+        if defensive_mode or not buys:
             watchlist = [r for r in rows if (r.get("signals") or {}).get(horizon, {}).get("verdict") in ("HOLD", "WAIT")]
             watchlist.sort(key=lambda r: (r.get("signals") or {}).get(horizon, {}).get("confidence") or 0, reverse=True)
             payload = {
                 "results": [_screener_row(r, horizon, sector_lookup) for r in watchlist[:_MAX_SCREENER_RESULTS]],
-                "defensive_mode": True,
-                "message": defensive_mode_message(),
+                "defensive_mode": defensive_mode,
+                "message": defensive_mode_message() if defensive_mode else (
+                    "No new BUY signals today -- market conditions don't currently support a "
+                    "high-confidence entry. Here's what's on the watchlist."
+                ),
             }
         else:
-            buys = [r for r in rows if (r.get("signals") or {}).get(horizon, {}).get("verdict") == "BUY"]
             buys.sort(key=lambda r: (r.get("signals") or {}).get(horizon, {}).get("confidence") or 0, reverse=True)
             payload = {
                 "results": [_screener_row(r, horizon, sector_lookup) for r in buys[:_MAX_SCREENER_RESULTS]],

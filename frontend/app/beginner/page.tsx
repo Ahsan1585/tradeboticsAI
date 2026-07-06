@@ -186,7 +186,7 @@ export default function BeginnerPage() {
 
         <h3 className="text-lg font-black uppercase tracking-wide mb-4 mt-10">Today&apos;s Top Picks</h3>
 
-        {defensiveMode && (
+        {defensiveMessage && (
           <div className="bg-warn/10 border border-warn/30 rounded-2xl p-4 mb-6">
             <p className="text-warn text-sm font-medium">🛡️ {defensiveMessage}</p>
           </div>

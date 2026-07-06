@@ -148,6 +148,40 @@ def test_run_screener_defensive_mode_when_risk_off_and_weak_breadth(client):
     assert "cash" in data["message"].lower()
 
 
+def test_run_screener_shows_watchlist_when_risk_off_but_breadth_healthy(client):
+    """Regression: risk_off alone already makes BUY unreachable in
+    scoring.verdict(), but is_defensive_mode() also requires weak breadth.
+    Without a fallback, that gap produced zero results AND no explanation
+    -- a blank, unexplained screen -- whenever breadth stayed healthy
+    during a risk-off regime."""
+    main.SCREENER_CACHE.clear()
+    mock_supabase = MagicMock()
+
+    def fake_table(name):
+        m = MagicMock()
+        if name == "daily_metrics":
+            m.select.return_value.execute.return_value.data = [
+                _fake_daily_metrics_row(ticker="HEALTHY1", verdict="WAIT", regime="risk_off", price=150.0, sma50=140.0),
+                _fake_daily_metrics_row(ticker="HEALTHY2", verdict="WAIT", regime="risk_off", price=150.0, sma50=140.0),
+            ]
+        elif name == "market_universe":
+            m.select.return_value.execute.return_value.data = [
+                {"ticker": "HEALTHY1", "sector": "Technology"}, {"ticker": "HEALTHY2", "sector": "Technology"},
+            ]
+        return m
+
+    mock_supabase.table.side_effect = fake_table
+
+    with patch.object(main, "supabase", mock_supabase):
+        resp = client.post("/run-screener", json={"trade_style": "Swing Trade", "risk_level": "Moderate"})
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["defensive_mode"] is False  # breadth is healthy -- not "full" defensive mode
+    assert len(data["results"]) == 2  # but the watchlist still shows, not a blank list
+    assert "message" in data and "no new buy" in data["message"].lower()
+
+
 def test_track_record_aggregates_signals(client):
     main.TRACK_RECORD_CACHE.clear()
     mock_supabase = MagicMock()
