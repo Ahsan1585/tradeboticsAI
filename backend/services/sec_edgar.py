@@ -20,7 +20,10 @@ import requests
 _SEC_BASE = "https://data.sec.gov"
 _SEC_ARCHIVES = "https://www.sec.gov/Archives/edgar/data"
 _OPENFIGI_URL = "https://api.openfigi.com/v3/mapping"
-_OPENFIGI_BATCH_SIZE = 100
+# OpenFIGI's unauthenticated tier rejects batches near the documented max of
+# 100 with a 413 -- 10 is the largest size that has worked reliably without
+# an API key.
+_OPENFIGI_BATCH_SIZE = 10
 
 # SEC EDGAR's fair-access policy caps unauthenticated traffic at 10 req/s;
 # OpenFIGI's free (no-API-key) tier is far stricter (~25 req/min). Hammering
@@ -128,14 +131,18 @@ def parse_form4_transactions(xml_text: str) -> dict:
             if amounts is not None:
                 for child in amounts:
                     tag = _strip_ns(child.tag)
-                    value_el = child.find("value") if child.find("value") is not None else child
-                    text = value_el.text if value_el is not None else None
+                    # Some fields (e.g. transactionPricePerShare on a
+                    # conversion) carry no <value> at all, only a
+                    # <footnoteId> -- falling back to the parent's text then
+                    # picks up inter-element whitespace, not real data.
+                    value_el = child.find("value")
+                    text = value_el.text.strip() if value_el is not None and value_el.text else None
                     if tag == "transactionShares" and text:
                         shares = int(float(text))
                     elif tag == "transactionPricePerShare" and text:
                         price = float(text)
                     elif tag == "transactionAcquiredDisposedCode" and text:
-                        acquired_disposed = text.strip()
+                        acquired_disposed = text
 
             date_el = txn_fields.get("transactionDate")
             if date_el is not None:

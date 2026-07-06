@@ -127,7 +127,12 @@ def ingest_form4(supabase_client, lookback_days: int = FORM4_LOOKBACK_DAYS) -> d
         try:
             filings = sec_edgar.get_recent_form4_filings(cik, since_date=since)
             for filing in filings:
-                xml = sec_edgar.get_filing_document(cik, filing["accession"], filing["primary_document"])
+                # submissions.json's primaryDocument for Form 4s points at the
+                # XSLT-rendered HTML view (e.g. "xslF345X06/ownership.xml");
+                # the raw machine-readable XML sits under the same filename
+                # directly in the accession root.
+                raw_document = filing["primary_document"].rsplit("/", 1)[-1]
+                xml = sec_edgar.get_filing_document(cik, filing["accession"], raw_document)
                 parsed = sec_edgar.parse_form4_transactions(xml)
                 for txn in parsed["transactions"]:
                     if txn["code"] not in _OPEN_MARKET_CODES or txn["shares"] is None:
