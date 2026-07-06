@@ -216,7 +216,7 @@ def run(supabase_client, tickers: list[str]) -> dict:
                 continue
 
             universe_row = (
-                supabase_client.table("market_universe").select("sector,pe,margins,rev_growth")
+                supabase_client.table("market_universe").select("sector,pe")
                 .eq("ticker", ticker).limit(1).execute()
             )
             info = universe_row.data[0] if universe_row.data else {}
@@ -225,10 +225,11 @@ def run(supabase_client, tickers: list[str]) -> dict:
             if etf not in sector_close_cache:
                 sector_close_cache[etf] = load_price_history_df(supabase_client, etf, lookback_days=250)["Close"]
 
+            # market_universe only tracks pe (see eod_ingest._score_ticker) --
+            # margins/rev_growth were never actually written there, so the
+            # fundamentals score is PE-only until that data is tracked.
             fscore = indicators.fundamentals_score(
-                pe=safe_float(info.get("pe", 0)),
-                margins=safe_float(info.get("margins", 0)),
-                rev_growth=safe_float(info.get("rev_growth", 0)),
+                pe=safe_float(info.get("pe", 0)), margins=0.0, rev_growth=0.0,
             )
             earnings_soon = has_earnings_within_5d(ticker)
             fund_signals = fund_signals_by_ticker.get(ticker)

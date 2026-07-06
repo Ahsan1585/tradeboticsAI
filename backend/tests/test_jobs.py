@@ -326,7 +326,7 @@ def test_compute_daily_metrics_run_writes_row_per_ticker():
         return long_hist
 
     mock_client = _mock_client_with_tables({
-        "market_universe": [{"sector": "Technology", "pe": 20.0, "margins": 0.2, "rev_growth": 0.1}],
+        "market_universe": [{"sector": "Technology", "pe": 20.0}],
         "smart_money_13f": [],
         "smart_money_insider": [],
     })
@@ -351,7 +351,7 @@ def test_compute_daily_metrics_run_logs_signals_for_every_horizon():
         return long_hist
 
     mock_client = _mock_client_with_tables({
-        "market_universe": [{"sector": "Technology", "pe": 20.0, "margins": 0.2, "rev_growth": 0.1}],
+        "market_universe": [{"sector": "Technology", "pe": 20.0}],
         "smart_money_13f": [],
         "smart_money_insider": [],
     })
@@ -375,7 +375,7 @@ def test_compute_daily_metrics_run_feeds_smart_money_into_row():
         return long_hist
 
     mock_client = _mock_client_with_tables({
-        "market_universe": [{"sector": "Technology", "pe": 20.0, "margins": 0.2, "rev_growth": 0.1}],
+        "market_universe": [{"sector": "Technology", "pe": 20.0}],
         "smart_money_13f": [{"ticker": "AAPL", "change_type": "increased"}, {"ticker": "AAPL", "change_type": "new"}],
         "smart_money_insider": [
             {"ticker": "AAPL", "transaction_code": "P", "shares": 1000, "price": 100.0},
@@ -405,7 +405,7 @@ def test_compute_daily_metrics_run_isolates_per_ticker_failure():
         return long_hist
 
     mock_client = _mock_client_with_tables({
-        "market_universe": [{"sector": "Technology", "pe": 20.0, "margins": 0.2, "rev_growth": 0.1}],
+        "market_universe": [{"sector": "Technology", "pe": 20.0}],
         "smart_money_13f": [],
         "smart_money_insider": [],
     })
