@@ -12,6 +12,7 @@ SEC requires a descriptive User-Agent with contact info on every request.
 """
 import os
 import sys
+import time
 import xml.etree.ElementTree as ET
 
 import requests
@@ -21,6 +22,28 @@ _SEC_ARCHIVES = "https://www.sec.gov/Archives/edgar/data"
 _OPENFIGI_URL = "https://api.openfigi.com/v3/mapping"
 _OPENFIGI_BATCH_SIZE = 100
 
+# SEC EDGAR's fair-access policy caps unauthenticated traffic at 10 req/s;
+# OpenFIGI's free (no-API-key) tier is far stricter (~25 req/min). Hammering
+# either without pacing gets responses throttled to empty/HTML bodies that
+# fail JSON parsing -- which looked like "resolution failed for every fund"
+# and "malformed XML for every ticker" until traced back to rate limiting.
+_SEC_MIN_INTERVAL_S = 0.12
+_OPENFIGI_MIN_INTERVAL_S = 2.5
+_last_sec_call = 0.0
+_last_openfigi_call = 0.0
+
+
+def _throttle(min_interval: float, last_call_attr: str) -> None:
+    global _last_sec_call, _last_openfigi_call
+    last = _last_sec_call if last_call_attr == "sec" else _last_openfigi_call
+    wait = min_interval - (time.monotonic() - last)
+    if wait > 0:
+        time.sleep(wait)
+    if last_call_attr == "sec":
+        _last_sec_call = time.monotonic()
+    else:
+        _last_openfigi_call = time.monotonic()
+
 
 def _sec_headers() -> dict:
     ua = os.getenv("SEC_EDGAR_USER_AGENT", "TradeBotics contact@tradebotics.app")
@@ -28,7 +51,10 @@ def _sec_headers() -> dict:
 
 
 def _sec_get(url: str) -> requests.Response:
-    return requests.get(url, headers=_sec_headers(), timeout=15)
+    _throttle(_SEC_MIN_INTERVAL_S, "sec")
+    resp = requests.get(url, headers=_sec_headers(), timeout=15)
+    resp.raise_for_status()
+    return resp
 
 
 def _strip_ns(tag: str) -> str:
@@ -214,7 +240,9 @@ def resolve_cusips_to_tickers(cusips: list[str]) -> dict[str, str]:
         for i in range(0, len(cusips), _OPENFIGI_BATCH_SIZE):
             batch = cusips[i:i + _OPENFIGI_BATCH_SIZE]
             jobs = [{"idType": "ID_CUSIP", "idValue": c} for c in batch]
+            _throttle(_OPENFIGI_MIN_INTERVAL_S, "openfigi")
             resp = requests.post(_OPENFIGI_URL, json=jobs, timeout=15)
+            resp.raise_for_status()
             mappings = resp.json()
             for cusip, mapping in zip(batch, mappings):
                 data = mapping.get("data") or []
