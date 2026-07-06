@@ -25,7 +25,88 @@ function ConfidenceMeter({ value }: { value: number }) {
   );
 }
 
-function VerdictCard({ item, onOpen }: { item: any; onOpen: (ticker: string) => void }) {
+const PERSONA_EMOJI: Record<string, string> = {
+  buffett: "🏛️", lynch: "📈", wood: "🚀", burry: "🔍",
+};
+
+function PersonaPicker({ ticker, horizon }: { ticker: string; horizon: string }) {
+  const [personas, setPersonas] = useState<{ id: string; name: string; philosophy: string }[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [take, setTake] = useState<any>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    apiFetch("/personas")
+      .then((res) => res.json())
+      .then((data) => setPersonas(data.personas || []))
+      .catch(() => {});
+  }, []);
+
+  const ask = async (personaId: string) => {
+    setActiveId(personaId);
+    setLoading(true);
+    setError("");
+    setTake(null);
+    try {
+      const res = await apiFetch("/persona-take", {
+        method: "POST",
+        body: JSON.stringify({ ticker, persona_id: personaId, horizon }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setTake(data);
+      } else {
+        setError(data.detail || "Couldn't get a take on this one -- try again.");
+      }
+    } catch {
+      setError("Something went wrong. Please try again.");
+    }
+    setLoading(false);
+  };
+
+  if (personas.length === 0) return null;
+
+  return (
+    <div className="mt-4 pt-4 border-t border-border">
+      <p className="text-[10px] uppercase font-bold text-text-secondary mb-2">
+        Ask a legendary investor (1 token)
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {personas.map((p) => (
+          <button
+            key={p.id}
+            onClick={() => ask(p.id)}
+            disabled={loading}
+            className={`text-xs font-bold px-3 py-1.5 rounded-full border transition-colors ${
+              activeId === p.id
+                ? "bg-accent text-white border-accent"
+                : "bg-bg-primary text-text-primary border-border hover:border-accent"
+            }`}
+          >
+            {PERSONA_EMOJI[p.id] || "💬"} {p.name}
+          </button>
+        ))}
+      </div>
+
+      {loading && (
+        <div className="flex items-center gap-2 mt-3 text-xs text-text-secondary">
+          <div className="w-4 h-4 border-2 border-border border-t-accent rounded-full animate-spin" />
+          Thinking like {personas.find((p) => p.id === activeId)?.name}...
+        </div>
+      )}
+      {error && <p className="text-loss text-xs mt-3">{error}</p>}
+      {take && !loading && (
+        <div className="mt-3 bg-bg-primary rounded-xl p-4">
+          <p className="text-sm font-black mb-1">{take.persona}&apos;s Take</p>
+          <p className="text-sm text-text-secondary leading-relaxed whitespace-pre-wrap">{take.analysis}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function VerdictCard({ item, onOpen, showPersonas }: { item: any; onOpen: (ticker: string) => void; showPersonas?: boolean }) {
   const style = VERDICT_STYLES[item.verdict] || VERDICT_STYLES.HOLD;
   const confidence = item.confidence ?? item.score ?? 0;
   return (
@@ -58,6 +139,12 @@ function VerdictCard({ item, onOpen }: { item: any; onOpen: (ticker: string) => 
 
       {item.smart_money_score != null && item.smart_money_score > 60 && (
         <p className="text-xs text-accent mt-2 font-bold">🏦 Hedge funds/insiders are buying</p>
+      )}
+
+      {showPersonas && (
+        <div onClick={(e) => e.stopPropagation()}>
+          <PersonaPicker ticker={item.ticker} horizon="swing" />
+        </div>
       )}
     </Card>
   );
@@ -180,7 +267,7 @@ export default function BeginnerPage() {
         {searchError && <p className="text-loss text-sm text-center mb-6">{searchError}</p>}
         {searchResult && (
           <div className="mb-10">
-            <VerdictCard item={searchResult} onOpen={(t) => router.push(`/terminal?ticker=${t}`)} />
+            <VerdictCard item={searchResult} onOpen={(t) => router.push(`/terminal?ticker=${t}`)} showPersonas />
           </div>
         )}
 
