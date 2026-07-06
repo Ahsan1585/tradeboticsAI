@@ -167,6 +167,86 @@ def test_track_record_aggregates_signals(client):
     assert data["tracks"][0]["wins"] == 1
 
 
+def _mock_client_for_translate(daily_metrics_rows, token_balance=10, new_balance=7, cache_hit=None):
+    tables = {}
+
+    def fake_table(name):
+        if name not in tables:
+            m = MagicMock()
+            if name == "daily_metrics":
+                m.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value.data = daily_metrics_rows
+            elif name == "profiles":
+                m.select.return_value.eq.return_value.execute.return_value.data = [{"ai_token_balance": token_balance}]
+            elif name == "ai_scan_cache":
+                m.select.return_value.eq.return_value.execute.return_value.data = [cache_hit] if cache_hit else []
+                m.upsert.return_value.execute.return_value = MagicMock()
+            tables[name] = m
+        return tables[name]
+
+    client = MagicMock()
+    client.table.side_effect = fake_table
+    client.rpc.return_value.execute.return_value.data = new_balance
+    return client
+
+
+def test_translate_returns_404_when_no_swing_signal(client):
+    mock_supabase = _mock_client_for_translate(daily_metrics_rows=[])
+    with patch.object(main, "supabase", mock_supabase):
+        resp = client.post("/translate", json={"ticker": "NODATA", "data_context": {}})
+    assert resp.status_code == 404
+
+
+def test_translate_narrates_computed_verdict_without_letting_llm_override_it(client):
+    row = _fake_daily_metrics_row(ticker="AAPL", verdict="BUY", price=150.0)
+    mock_supabase = _mock_client_for_translate(daily_metrics_rows=[row], token_balance=10, new_balance=7)
+
+    captured_prompt = {}
+
+    async def fake_generate_text(prompt, **kwargs):
+        captured_prompt["prompt"] = prompt
+        captured_prompt["system_extra"] = kwargs.get("system_extra", "")
+        return "### AI Signal: BUY\nSome narrative text."
+
+    with patch.object(main, "supabase", mock_supabase), \
+         patch("main.llm_available", return_value=True), \
+         patch("main.generate_text", side_effect=fake_generate_text):
+        resp = client.post("/translate", json={
+            "ticker": "AAPL",
+            "data_context": {"fundamentals": {"pe_ratio": "20"}, "ledger": []},
+        })
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["remaining_tokens"] == 7
+    # The prompt must carry the server-computed verdict verbatim, and forbid
+    # the LLM from proposing a different one -- this is the anti-hallucination
+    # guarantee this endpoint was rewritten to enforce.
+    assert "BUY" in captured_prompt["prompt"]
+    assert "150" in captured_prompt["prompt"]
+    assert "do not" in captured_prompt["prompt"].lower() or "must" in captured_prompt["prompt"].lower()
+
+
+def test_translate_uses_real_exit_plan_not_invented_price_targets(client):
+    row = _fake_daily_metrics_row(ticker="AAPL", verdict="BUY", price=150.0)
+    mock_supabase = _mock_client_for_translate(daily_metrics_rows=[row])
+
+    captured_prompt = {}
+
+    async def fake_generate_text(prompt, **kwargs):
+        captured_prompt["prompt"] = prompt
+        return "narrative"
+
+    with patch.object(main, "supabase", mock_supabase), \
+         patch("main.llm_available", return_value=True), \
+         patch("main.generate_text", side_effect=fake_generate_text):
+        resp = client.post("/translate", json={"ticker": "AAPL", "data_context": {}})
+
+    assert resp.status_code == 200
+    # exit_plan from _fake_daily_metrics_row: entry=150.0, stop=145.0, target=160.0
+    assert "145" in captured_prompt["prompt"]
+    assert "160" in captured_prompt["prompt"]
+
+
 def test_billing_status_initializes_trial_on_first_call(client):
     mock_supabase = MagicMock()
     mock_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [

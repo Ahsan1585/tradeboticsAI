@@ -389,8 +389,10 @@ async def analyze_ticker(ticker: str):
 @limiter.limit(LLM_RATE_LIMIT)
 async def translate_ai(request: Request, req: TranslationRequest, user_id: str = Depends(get_current_user)):
     if not llm_available(): return {"analysis": "AI Node Offline."}
+    if not supabase: raise HTTPException(status_code=500, detail="Database connection offline.")
+    ticker_upper = req.ticker.upper()
     try:
-        cache_key = f"TRANSLATE_{req.ticker.upper()}"
+        cache_key = f"TRANSLATE_{ticker_upper}"
         cached_data = check_ai_cache(cache_key)
 
         current_tokens = get_token_balance(user_id)
@@ -400,74 +402,50 @@ async def translate_ai(request: Request, req: TranslationRequest, user_id: str =
             return cached_data
 
         if current_tokens < 3:
-            raise HTTPException(status_code=402, detail="INSUFFICIENT BANDWIDTH. 3 Tokens required.")
+            raise HTTPException(status_code=402, detail="Out of AI tokens. 3 tokens required.")
 
-        quant_score = safe_float(req.data_context.get('score', 0))
-        
-        # 🚨 ENHANCEMENT 5: DYNAMIC PRICE DISCOVERY
-        price = safe_float(req.data_context.get('price', 0))
-        support_raw = safe_float(req.data_context.get('support_level', 0))
-        res_raw = safe_float(req.data_context.get('resistance_level', 0))
-        
-        support_str = f"${support_raw}" if support_raw > 0 else "Calculating Base..."
-        
-        if res_raw == 0 or price >= res_raw:
-            low_t = round(price * 1.05, 2)
-            high_t = round(price * 1.15, 2)
-            res_str = f"Price Discovery (${low_t} - ${high_t})"
-            price_instruction = f"CRITICAL: {req.ticker} is in PRICE DISCOVERY (above resistance). Project asymmetrical upside targets between ${low_t} and ${high_t} based on momentum, ignoring historical ceilings."
-        else:
-            res_str = f"${res_raw}"
-            price_instruction = "Calculate the target price range realistically using the provided structural zones."
+        # Verdict/confidence/exit-plan come from the deterministic engine
+        # (daily_metrics), never from client-supplied data_context -- the
+        # LLM narrates this fixed verdict, it never decides one itself.
+        metrics_resp = (
+            supabase.table('daily_metrics').select('signals,price')
+            .eq('ticker', ticker_upper).order('d', desc=True).limit(1).execute()
+        )
+        if not metrics_resp.data:
+            raise HTTPException(status_code=404, detail="No honest metrics available for this ticker yet.")
+        metrics_row = metrics_resp.data[0]
+        swing_signal = (metrics_row.get('signals') or {}).get('swing')
+        if not swing_signal:
+            raise HTTPException(status_code=404, detail="No swing signal computed for this ticker yet.")
 
-        prompt = f"Act as an elite quantitative analyst. Provide a definitive briefing on {req.ticker}.\n\n"
-        prompt += f"CURRENT MARKET CONTEXT:\n- Current Price: ${price}\n- Quant Score: {quant_score}\n- Major Support (Floor): {support_str}\n- Major Resistance (Ceiling): {res_str}\n\n"
-        prompt += f"TARGET DIRECTIVE:\n{price_instruction}\n\n"
-        
+        verdict = swing_signal['verdict']
+        confidence = swing_signal['confidence']
+        reason = swing_signal['reason']
+        exit_plan = swing_signal.get('exit_plan')
+        price = metrics_row.get('price')
+
+        prompt = f"Write a detailed, professional market briefing on {ticker_upper}.\n\n"
+        prompt += f"COMPUTED VERDICT: {verdict}\nConfidence score: {confidence}/100\nReason: {reason}\nCurrent price: ${price}\n"
+        if exit_plan:
+            prompt += f"Exit plan already computed by the rules engine -- entry ${exit_plan['entry']}, stop ${exit_plan['stop']}, target ${exit_plan['target']}.\n"
+
         funds = req.data_context.get("fundamentals", {})
-        if funds: prompt += f"FUNDAMENTAL DNA:\n- Market Cap: {funds.get('market_cap', 'N/A')}\n- P/E Ratio: {funds.get('pe_ratio', 'N/A')}\n- Margin: {funds.get('margin', 'N/A')}\n\n"
+        if funds: prompt += f"\nFundamentals:\n- Market Cap: {funds.get('market_cap', 'N/A')}\n- P/E Ratio: {funds.get('pe_ratio', 'N/A')}\n- Margin: {funds.get('margin', 'N/A')}\n"
 
         ledger = req.data_context.get("ledger", [])
         if ledger:
-            prompt += "TECHNICAL LEDGER:\n"
+            prompt += "\nTechnical Ledger:\n"
             for item in ledger: prompt += f"- {item.get('factor')}: {item.get('val')} ({item.get('status')})\n"
 
-        # 🚨 ENHANCEMENT 4: PYTHON OVERRIDE LOGIC (Stops WDC Buy Signal)
-        is_overextended = False
-        if ledger:
-            for item in ledger:
-                factor = str(item.get("factor", ""))
-                val = str(item.get("val", ""))
-                if "MACD Divergence" in factor and "Negative" in val:
-                    is_overextended = True
-                if "Options Flow" in factor and "Put Heavy" in val:
-                    is_overextended = True
-
-        if is_overextended:
-            verdict_block = (
-                "### 3. The Verdict\n"
-                "[You MUST issue a 'WAIT FOR MEAN REVERSION' or 'SELL' signal. Explain that despite strong fundamentals, momentum is breaking down and smart money is hedging (buying puts), making the current price a high-risk bull trap. Anchor your target entry to the Mathematical Floor.]"
-            )
-            allowed_signals = "[SELL/TRIM/WAIT FOR MEAN REVERSION]"
-        elif quant_score >= 90:
-            verdict_block = (
-                "### ⚡ CONVICTION RATING: STRONG BUY\n"
-                "[Forcefully list exactly which premium parameters have aligned to create an asymmetrical upside opportunity.]"
-            )
-            allowed_signals = "[STRONG BUY/BUY]"
-        else:
-            verdict_block = "### 3. The Verdict\n[A punchy 2-sentence conclusion justifying your AI Signal]"
-            allowed_signals = "[BUY/HOLD/TRIM/SELL]"
-
         prompt += (
-            "\n🚨 CRITICAL FORMATTING MANDATE:\nOUTPUT STRICTLY IN CLEAN MARKDOWN. DO NOT use HTML tags.\n\n"
-            "### 🎯 TARGET PRICE RANGE: $[low] - $[high]\n"
-            f"### ⚖️ AI SIGNAL: {allowed_signals}\n"
-            f"**📊 STRUCTURAL ZONES:** Support Floor at {support_str} | Resistance Ceiling at {res_str}\n\n"
-            "---\n\n"
+            "\nCRITICAL RULES:\n"
+            f"- The verdict above was already computed by TradeBotics' deterministic rules engine. You must state it as exactly '{verdict}' -- do not propose a different action or invent your own signal.\n"
+            "- Do not invent a price target range; only reference the exit plan numbers given above, if any.\n"
+            "- Output strictly in clean markdown. Do not use HTML tags.\n\n"
+            f"### AI Signal: {verdict}\n\n"
             "### 1. Macro & Fundamentals\n* **Valuation & Efficiency:** [1 sentence evaluating P/E, Margin, and Cash Flow]\n* **Balance Sheet & Sentiment:** [1 sentence on Debt-to-Equity and Sentiment]\n* **Catalyst Risk:** [1 sentence on Earnings Risk]\n\n"
-            "### 2. Market Mechanics & Technicals\n* **Price Action & Consolidation:** [Analyze price vs structural zones]\n* **Smart Money & Options Flow:** [Synthesize Institutional Volume and Flow]\n* **Momentum (RSI & MACD):** [Synthesize ledger signals]\n\n"
-            f"{verdict_block}"
+            "### 2. Market Mechanics & Technicals\n* **Price Action:** [Explain the reason given above in plain terms]\n* **Momentum:** [Synthesize the technical ledger signals]\n\n"
+            "### 3. The Verdict\n[A punchy 2-3 sentence conclusion consistent with the given verdict and reason -- do not contradict it]"
         )
         raw_text = await generate_text(prompt, max_tokens=1200, purpose="deep_dive")
 

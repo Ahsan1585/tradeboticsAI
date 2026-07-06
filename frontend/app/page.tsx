@@ -148,17 +148,29 @@ function MarketingLanding({ onLoginClick, onRegisterClick }: { onLoginClick: () 
             <section className="py-16 md:py-24 max-w-7xl mx-auto px-6">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-10 md:gap-12 text-center md:text-left">
                     <div className="flex flex-col items-center md:items-start">
-                        <div className="w-12 h-12 bg-accent/10 rounded-2xl flex items-center justify-center mb-4 md:mb-6 border border-accent/20"><span className="text-accent text-xl">🧠</span></div>
+                        <div className="w-12 h-12 bg-accent/10 rounded-2xl flex items-center justify-center mb-4 md:mb-6 border border-accent/20">
+                            <svg className="w-6 h-6 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                            </svg>
+                        </div>
                         <h4 className="text-lg md:text-xl font-black mb-3 md:mb-4">Honest, Deterministic Signals</h4>
                         <p className="text-text-secondary text-xs md:text-sm leading-relaxed">Real technical indicators and market-regime checks compute a transparent verdict -- the AI narrates it, it never invents it.</p>
                     </div>
                     <div className="flex flex-col items-center md:items-start">
-                        <div className="w-12 h-12 bg-warn/10 rounded-2xl flex items-center justify-center mb-4 md:mb-6 border border-warn/20"><span className="text-warn text-xl">🎯</span></div>
+                        <div className="w-12 h-12 bg-warn/10 rounded-2xl flex items-center justify-center mb-4 md:mb-6 border border-warn/20">
+                            <svg className="w-6 h-6 text-warn" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 9.75a2.25 2.25 0 114.5 0 2.25 2.25 0 01-4.5 0zM12 3a9 9 0 100 18 9 9 0 000-18zm0 4.5a4.5 4.5 0 100 9 4.5 4.5 0 000-9z" />
+                            </svg>
+                        </div>
                         <h4 className="text-lg md:text-xl font-black mb-3 md:mb-4">Built-In Exit Plan</h4>
                         <p className="text-text-secondary text-xs md:text-sm leading-relaxed">Every BUY ships with an ATR-based stop and target, so you always know when to walk away -- winning or losing.</p>
                     </div>
                     <div className="flex flex-col items-center md:items-start">
-                        <div className="w-12 h-12 bg-accent/10 rounded-2xl flex items-center justify-center mb-4 md:mb-6 border border-accent/20"><span className="text-accent text-xl">🏦</span></div>
+                        <div className="w-12 h-12 bg-accent/10 rounded-2xl flex items-center justify-center mb-4 md:mb-6 border border-accent/20">
+                            <svg className="w-6 h-6 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 21h18M4 21V9l8-6 8 6v12M9 21v-6h6v6" />
+                            </svg>
+                        </div>
                         <h4 className="text-lg md:text-xl font-black mb-3 md:mb-4">See What Smart Money Is Doing</h4>
                         <p className="text-text-secondary text-xs md:text-sm leading-relaxed">We track hedge-fund 13F filings and insider trades directly from SEC EDGAR, so you know when the pros are buying too.</p>
                     </div>
